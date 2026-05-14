@@ -79,7 +79,7 @@ router.put("/:id", async (req, res) => {
         trama = $2,
         volumiposseduti = $3,
         volumitotali = $4
-      WHERE id = $5
+      WHERE "ID" = $5
     `,
     [
       coverurl || null,
