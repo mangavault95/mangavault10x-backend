@@ -25,12 +25,17 @@ router.post("/enrich", async (req, res) => {
 
     const manga = data.data[0];
 
-    const result = {
-      titolo: manga.title,
-      trama: manga.synopsis,
-      coverurl: manga.images?.jpg?.image_url,
-      volumitotali: manga.volumes || 0
-    };
+    const { translateToItalian } = require("../services/translate");
+
+// 🔥 TRADUZIONE QUI
+const tramaIT = await translateToItalian(manga.synopsis);
+
+const result = {
+  titolo: manga.title,
+  trama: tramaIT,
+  coverurl: manga.images?.jpg?.image_url,
+  volumitotali: manga.volumes || 0
+};
 
     res.json(result);
 
