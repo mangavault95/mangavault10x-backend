@@ -12,10 +12,9 @@ router.get("/", async (req, res) => {
     `);
 
     res.json(result.rows);
-
   } catch (err) {
-    console.error(err);
-    res.status(500).send(err.message);
+    console.error("❌ ERRORE GET ALL MANGA:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -35,8 +34,8 @@ router.get("/stats", async (req, res) => {
 
     res.json(result.rows[0]);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({});
+    console.error("❌ ERRORE STATS:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -54,8 +53,8 @@ router.get("/latest", async (req, res) => {
 
     res.json(result.rows);
   } catch (err) {
-    console.error(err);
-    res.status(500).json([]);
+    console.error("❌ ERRORE LATEST:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -82,23 +81,19 @@ router.put("/:id", async (req, res) => {
         volumitotali = $4
       WHERE id = $5
     `,
-      [
-        coverurl || null,
-        trama || null,
-        volumiposseduti || 0,
-        volumitotali || 0,
-        id
-      ]
-    );
+    [
+      coverurl || null,
+      trama || null,
+      volumiposseduti || 0,
+      volumitotali || 0,
+      id
+    ]);
 
     res.json({ success: true });
 
   } catch (err) {
     console.error("❌ ERRORE UPDATE MANGA:", err);
-    res.status(500).json({
-      message: "Errore UPDATE Manga",
-      error: err.message
-    });
+    res.status(500).json({ error: err.message });
   }
 });
 
