@@ -73,21 +73,22 @@ router.put("/:id", async (req, res) => {
     } = req.body;
 
     await pool.query(`
-      UPDATE "Manga"
-      SET
-        coverurl = $1,
-        trama = $2,
-        volumiposseduti = $3,
-        volumitotali = $4
-      WHERE "ID" = $5
-    `,
-    [
-      coverurl || null,
-      trama || null,
-      volumiposseduti || 0,
-      volumitotali || 0,
-      id
-    ]);
+  UPDATE "Manga"
+  SET
+    coverurl = $1,
+    trama = $2,
+    volumiposseduti = $3,
+    volumitotali = $4
+  WHERE "ID" = $5
+`,
+[
+  coverurl || null,
+  trama || null,
+  volumiposseduti || 0,
+  volumitotali || 0,
+  id
+]);
+
 
     res.json({ success: true });
 
