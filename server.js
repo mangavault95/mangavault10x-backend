@@ -13,13 +13,17 @@ app.use(cors({
 
 app.use(express.json());
 
+// DB TEST IMPORTANTE
+const pool = require("./db");
+
+// ROUTES
 const mangaRoutes = require("./routes/manga");
 app.use("/api/manga", mangaRoutes);
 
 app.get("/", (req, res) => {
-  res.send("MangaVault API attiva 🚀");
+  res.send("🚀 MangaVault API attiva");
 });
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
