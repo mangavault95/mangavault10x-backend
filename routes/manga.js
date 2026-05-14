@@ -75,10 +75,10 @@ router.put("/:id", async (req, res) => {
     await pool.query(`
   UPDATE "Manga"
   SET
-    coverurl = $1,
-    trama = $2,
-    volumiposseduti = $3,
-    volumitotali = $4
+    "CoverURL" = $1,
+    "Trama" = $2,
+    "VolumiPosseduti" = $3,
+    "VolumiTotali" = $4
   WHERE "ID" = $5
 `,
 [
