@@ -95,9 +95,13 @@ router.put("/:id", async (req, res) => {
     res.json({ success: true });
 
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false });
-  }
+  console.error("❌ ERRORE GET MANGA:", err);
+  res.status(500).json({
+    message: "Errore GET manga",
+    error: err.message,
+    detail: err
+  });
+}
 });
 
 module.exports = router;
