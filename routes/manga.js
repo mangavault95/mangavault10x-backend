@@ -3,6 +3,48 @@ const router = express.Router();
 const pool = require("../db");
 
 //
+// AUTO ENRICH
+//
+
+const fetch = require("node-fetch");
+
+router.post("/enrich", async (req, res) => {
+  try {
+    const { titolo } = req.body;
+
+    if (!titolo) {
+      return res.status(400).json({ error: "Titolo mancante" });
+    }
+
+    // 🔍 chiamata Jikan API (MyAnimeList)
+    const response = await fetch(
+      `https://api.jikan.moe/v4/manga?q=${encodeURIComponent(titolo)}&limit=1`
+    );
+
+    const data = await response.json();
+
+    if (!data.data || data.data.length === 0) {
+      return res.status(404).json({ error: "Nessun risultato" });
+    }
+
+    const manga = data.data[0];
+
+    const result = {
+      titolo: manga.title,
+      trama: manga.synopsis,
+      coverurl: manga.images?.jpg?.image_url,
+      volumitotali: manga.volumes || 0
+    };
+
+    res.json(result);
+
+  } catch (err) {
+    console.error("❌ ERRORE ENRICH:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+//
 // GET ALL MANGA
 //
 router.get("/", async (req, res) => {
