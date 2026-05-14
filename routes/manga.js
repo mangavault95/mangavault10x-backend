@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 const { translateToItalian } = require("../services/translate");
+const jwt = require("jsonwebtoken");
 
 //
 // AUTO ENRICH
@@ -42,6 +43,22 @@ router.post("/enrich", async (req, res) => {
     console.error("❌ ERRORE ENRICH:", err);
     res.status(500).json({ error: err.message });
   }
+});
+
+router.post("/login", (req, res) => {
+  const { username, password } = req.body;
+
+  if (username === "admin" && password === "1234") {
+    const token = jwt.sign(
+      { user: "admin" },
+      "SUPER_SECRET",
+      { expiresIn: "2h" }
+    );
+
+    return res.json({ token });
+  }
+
+  res.status(401).json({ error: "Credenziali errate" });
 });
 
 //
@@ -100,10 +117,25 @@ router.get("/latest", async (req, res) => {
   }
 });
 
+
+function auth(req, res, next) {
+  const header = req.headers.authorization;
+
+  if (!header) return res.status(401).json({ error: "No token" });
+
+  const token = header.split(" ")[1];
+
+  try {
+    jwt.verify(token, "SUPER_SECRET");
+    next();
+  } catch {
+    res.status(403).json({ error: "Token non valido" });
+  }
+}
 //
 // UPDATE MANGA
 //
-router.put("/:id", async (req, res) => {
+router.put("/:id", auth, async (req, res) => {
   try {
     const { id } = req.params;
 
