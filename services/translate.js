@@ -14,7 +14,16 @@ async function translateToItalian(text) {
       }
     );
 
-    return res.data.responseData.translatedText || text;
+    const translated = res.data?.responseData?.translatedText;
+
+if (
+  !translated ||
+  translated.includes("QUERY LENGTH LIMIT")
+) {
+  return text; // fallback
+}
+
+return translated;
 
   } catch (err) {
     console.log("Errore traduzione:", err.message);
