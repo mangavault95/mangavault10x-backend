@@ -13,7 +13,7 @@ app.use(express.json());
 const dbConfig = {
   user: "sa",
   password: "manga95",
-  server: "localhost",
+  server: process.env.DB_SERVER,
   database: "MangaDB",
   options: {
     encrypt: false,
