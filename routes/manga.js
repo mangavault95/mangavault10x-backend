@@ -78,6 +78,25 @@ router.get("/stats", async (req, res) => {
 });
 
 //
+// TRANSLATE
+//
+
+const { translateToItalian } = require("../services/translate");
+
+router.post("/translate", async (req, res) => {
+  try {
+    const { text } = req.body;
+
+    const translated = await translateToItalian(text);
+
+    res.json({ text: translated });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+//
 // LATEST
 //
 router.get("/latest", async (req, res) => {
