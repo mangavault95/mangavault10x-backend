@@ -7,7 +7,6 @@ const pool = require("../db");
 //
 router.get("/", async (req, res) => {
   try {
-
     const result = await pool.query(`
       SELECT * FROM "Manga"
     `);
@@ -28,14 +27,10 @@ router.get("/stats", async (req, res) => {
     const result = await pool.query(`
       SELECT
         COUNT(*) AS "totalSeries",
-
         COALESCE(SUM(volumiposseduti), 0) AS "totalVolumes",
-
         COALESCE(SUM(volumiposseduti * costo), 0) AS "totalCost",
-
         COALESCE(SUM(CASE WHEN concluso = false THEN 1 ELSE 0 END), 0) AS "inProgress"
-
-      FROM Manga
+      FROM "Manga"
     `);
 
     res.json(result.rows[0]);
@@ -50,12 +45,12 @@ router.get("/stats", async (req, res) => {
 //
 router.get("/latest", async (req, res) => {
   try {
-    const result = await pool.query(
+    const result = await pool.query(`
       SELECT *
       FROM "Manga"
       ORDER BY dataaggiunta DESC
       LIMIT 12
-    );
+    `);
 
     res.json(result.rows);
   } catch (err) {
@@ -78,16 +73,15 @@ router.put("/:id", async (req, res) => {
       volumitotali
     } = req.body;
 
-    await pool.query(
-      `
-      UPDATE Manga
+    await pool.query(`
+      UPDATE "Manga"
       SET
         coverurl = $1,
         trama = $2,
         volumiposseduti = $3,
         volumitotali = $4
       WHERE id = $5
-      `,
+    `,
       [
         coverurl || null,
         trama || null,
@@ -100,13 +94,12 @@ router.put("/:id", async (req, res) => {
     res.json({ success: true });
 
   } catch (err) {
-  console.error("❌ ERRORE GET MANGA:", err);
-  res.status(500).json({
-    message: "Errore GET Manga",
-    error: err.message,
-    detail: err
-  });
-}
+    console.error("❌ ERRORE UPDATE MANGA:", err);
+    res.status(500).json({
+      message: "Errore UPDATE Manga",
+      error: err.message
+    });
+  }
 });
 
 module.exports = router;
