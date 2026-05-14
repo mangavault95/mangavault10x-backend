@@ -3,41 +3,55 @@ const cors = require("cors");
 const sql = require("mssql");
 
 const app = express();
-const PORT = 3001;
+
+// 🔥 PORT (OBBLIGATORIO PER RENDER)
+const PORT = process.env.PORT || 3001;
 
 // 🔥 MIDDLEWARE
-app.use(cors());
+app.use(cors({
+  origin: [
+    "http://localhost:5173",
+    "https://mangavault10x.vercel.app"
+  ]
+}));
 app.use(express.json());
 
-// 🔥 CONNESSIONE DB (se già la hai altrove puoi rimuovere questo blocco)
+// 🔥 DATABASE CONFIG (CLOUD READY)
 const dbConfig = {
-  user: "sa",
-  password: "manga95",
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
   server: process.env.DB_SERVER,
-  database: "MangaDB",
+  database: process.env.DB_DATABASE,
   options: {
-    encrypt: false,
+    encrypt: true,
     trustServerCertificate: true
   }
 };
 
-// 🔥 CONNECT SQL (IMPORTANTE)
-sql.connect(dbConfig)
-  .then(() => console.log("SQL Connected"))
-  .catch(err => console.log("SQL Error:", err));
+// 🔥 CONNESSIONE DB SAFE (NON BLOCCA IL SERVER)
+let pool;
+
+async function connectDB() {
+  try {
+    pool = await sql.connect(dbConfig);
+    console.log("✅ SQL Connected");
+  } catch (err) {
+    console.log("❌ SQL Error (non bloccante):", err.message);
+  }
+}
+
+connectDB();
 
 // 🔥 ROUTES
 const mangaRoutes = require("./routes/manga");
-
-// 🔥 MOUNT ROUTES (QUESTO È FONDAMENTALE)
 app.use("/api/manga", mangaRoutes);
 
-// 🔥 TEST ROUTE
+// 🔥 HEALTH CHECK
 app.get("/", (req, res) => {
-  res.send("MangaVault API attiva");
+  res.send("🚀 MangaVault API attiva");
 });
 
-// 🔥 START SERVER
+// 🔥 START SERVER (RENDER COMPATIBLE)
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
