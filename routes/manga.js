@@ -35,7 +35,7 @@ router.get("/stats", async (req, res) => {
 
         COALESCE(SUM(CASE WHEN concluso = false THEN 1 ELSE 0 END), 0) AS "inProgress"
 
-      FROM manga
+      FROM Manga
     `);
 
     res.json(result.rows[0]);
@@ -52,7 +52,7 @@ router.get("/latest", async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT *
-      FROM manga
+      FROM Manga
       ORDER BY dataaggiunta DESC
       LIMIT 12
     `);
@@ -80,7 +80,7 @@ router.put("/:id", async (req, res) => {
 
     await pool.query(
       `
-      UPDATE manga
+      UPDATE Manga
       SET
         coverurl = $1,
         trama = $2,
@@ -102,7 +102,7 @@ router.put("/:id", async (req, res) => {
   } catch (err) {
   console.error("❌ ERRORE GET MANGA:", err);
   res.status(500).json({
-    message: "Errore GET manga",
+    message: "Errore GET Manga",
     error: err.message,
     detail: err
   });
