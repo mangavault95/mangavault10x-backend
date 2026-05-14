@@ -50,12 +50,12 @@ router.get("/stats", async (req, res) => {
 //
 router.get("/latest", async (req, res) => {
   try {
-    const result = await pool.query(`
+    const result = await pool.query(
       SELECT *
-      FROM Manga
+      FROM "Manga"
       ORDER BY dataaggiunta DESC
       LIMIT 12
-    `);
+    );
 
     res.json(result.rows);
   } catch (err) {
