@@ -1,14 +1,14 @@
 const express = require("express");
 const router = express.Router();
-const sql = require("mssql");
+const pool = require("../db");
 
 //
 // GET ALL MANGA
 //
 router.get("/", async (req, res) => {
   try {
-    const result = await sql.query("SELECT * FROM Manga");
-    res.json(result.recordset);
+    const result = await pool.query("SELECT * FROM manga ORDER BY id DESC");
+    res.json(result.rows);
   } catch (err) {
     console.error(err);
     res.status(500).send("Errore GET manga");
@@ -20,25 +20,20 @@ router.get("/", async (req, res) => {
 //
 router.get("/stats", async (req, res) => {
   try {
-    const result = await sql.query(`
+    const result = await pool.query(`
       SELECT
-        COUNT(*) AS totalSeries,
+        COUNT(*) AS "totalSeries",
 
-        SUM(CAST(ISNULL(VolumiPosseduti, 0) AS INT)) AS totalVolumes,
+        COALESCE(SUM(volumiposseduti), 0) AS "totalVolumes",
 
-        SUM(
-          CAST(ISNULL(VolumiPosseduti, 0) AS FLOAT)
-          * CAST(ISNULL(Costo, 0) AS FLOAT)
-        ) AS totalCost,
+        COALESCE(SUM(volumiposseduti * costo), 0) AS "totalCost",
 
-        SUM(
-          CASE WHEN Concluso = 0 THEN 1 ELSE 0 END
-        ) AS inProgress
+        COALESCE(SUM(CASE WHEN concluso = false THEN 1 ELSE 0 END), 0) AS "inProgress"
 
-      FROM Manga
+      FROM manga
     `);
 
-    res.json(result.recordset[0]);
+    res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({});
@@ -50,13 +45,14 @@ router.get("/stats", async (req, res) => {
 //
 router.get("/latest", async (req, res) => {
   try {
-    const result = await sql.query(`
-      SELECT TOP 12 *
-      FROM Manga
-      ORDER BY DataAggiunta DESC
+    const result = await pool.query(`
+      SELECT *
+      FROM manga
+      ORDER BY dataaggiunta DESC
+      LIMIT 12
     `);
 
-    res.json(result.recordset);
+    res.json(result.rows);
   } catch (err) {
     console.error(err);
     res.status(500).json([]);
@@ -71,29 +67,30 @@ router.put("/:id", async (req, res) => {
     const { id } = req.params;
 
     const {
-      CoverURL,
-      Trama,
-      VolumiPosseduti,
-      VolumiTotali
+      coverurl,
+      trama,
+      volumiposseduti,
+      volumitotali
     } = req.body;
 
-    const request = new sql.Request();
-
-    request.input("id", sql.Int, Number(id));
-    request.input("CoverURL", sql.NVarChar(sql.MAX), CoverURL || null);
-    request.input("Trama", sql.NVarChar(sql.MAX), Trama || null);
-    request.input("VolumiPosseduti", sql.Int, Number(VolumiPosseduti || 0));
-    request.input("VolumiTotali", sql.Int, Number(VolumiTotali || 0));
-
-    await request.query(`
-      UPDATE Manga
+    await pool.query(
+      `
+      UPDATE manga
       SET
-        CoverURL = @CoverURL,
-        Trama = @Trama,
-        VolumiPosseduti = @VolumiPosseduti,
-        VolumiTotali = @VolumiTotali
-      WHERE Id = @id
-    `);
+        coverurl = $1,
+        trama = $2,
+        volumiposseduti = $3,
+        volumitotali = $4
+      WHERE id = $5
+      `,
+      [
+        coverurl || null,
+        trama || null,
+        volumiposseduti || 0,
+        volumitotali || 0,
+        id
+      ]
+    );
 
     res.json({ success: true });
 
