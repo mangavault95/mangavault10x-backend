@@ -26,17 +26,15 @@ router.post("/enrich", async (req, res) => {
 
     const manga = data.data[0];
 
-    const { translateToItalian } = require("../services/translate");
+    // ✅ TRADUZIONE CORRETTA
+    const tramaIT = await translateToItalian(manga.synopsis);
 
-// 🔥 TRADUZIONE QUI
-const tramaIT = await translateToItalian(manga.synopsis);
-
-const result = {
-  titolo: manga.title,
-  trama: tramaIT,
-  coverurl: manga.images?.jpg?.image_url,
-  volumitotali: manga.volumes || 0
-};
+    const result = {
+      titolo: manga.title,
+      trama: tramaIT,
+      coverurl: manga.images?.jpg?.image_url,
+      volumitotali: manga.volumes || 0
+    };
 
     res.json(result);
 
@@ -83,25 +81,6 @@ router.get("/stats", async (req, res) => {
   }
 });
 
-//
-// TRANSLATE
-//
-
-const { translateToItalian } = require("../services/translate");
-
-router.post("/translate", async (req, res) => {
-  try {
-    const { text } = req.body;
-
-    const translated = await translateToItalian(text);
-
-    res.json({ text: translated });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
-});
 //
 // LATEST
 //
