@@ -5,9 +5,6 @@ const pool = require("../db");
 //
 // AUTO ENRICH
 //
-
-const fetch = require("node-fetch");
-
 router.post("/enrich", async (req, res) => {
   try {
     const { titolo } = req.body;
@@ -16,7 +13,6 @@ router.post("/enrich", async (req, res) => {
       return res.status(400).json({ error: "Titolo mancante" });
     }
 
-    // 🔍 chiamata Jikan API (MyAnimeList)
     const response = await fetch(
       `https://api.jikan.moe/v4/manga?q=${encodeURIComponent(titolo)}&limit=1`
     );
@@ -115,22 +111,21 @@ router.put("/:id", async (req, res) => {
     } = req.body;
 
     await pool.query(`
-  UPDATE "Manga"
-  SET
-    "CoverURL" = $1,
-    "Trama" = $2,
-    "VolumiPosseduti" = $3,
-    "VolumiTotali" = $4
-  WHERE "ID" = $5
-`,
-[
-  coverurl || null,
-  trama || null,
-  volumiposseduti || 0,
-  volumitotali || 0,
-  id
-]);
-
+      UPDATE "Manga"
+      SET
+        "CoverURL" = $1,
+        "Trama" = $2,
+        "VolumiPosseduti" = $3,
+        "VolumiTotali" = $4
+      WHERE "ID" = $5
+    `,
+    [
+      coverurl || null,
+      trama || null,
+      volumiposseduti || 0,
+      volumitotali || 0,
+      id
+    ]);
 
     res.json({ success: true });
 
