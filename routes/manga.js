@@ -67,7 +67,8 @@ router.post("/login", (req, res) => {
 router.get("/", async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT * FROM "Manga"
+     SELECT * FROM "Manga"
+ORDER BY "ID" DESC
     `);
 
     res.json(result.rows);
