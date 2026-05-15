@@ -3,15 +3,12 @@ const router = express.Router();
 const pool = require("../db");
 const jwt = require("jsonwebtoken");
 
-//
-// PULIZIA HTML
-//
 function cleanHtml(text) {
   return text?.replace(/<[^>]*>/g, "") || "";
 }
 
 //
-// AUTO ENRICH (SOLO ANILIST, STABILE)
+// AUTO ENRICH (AniList)
 //
 router.post("/enrich", async (req, res) => {
   try {
@@ -48,7 +45,6 @@ router.post("/enrich", async (req, res) => {
       }
     `;
 
-    // ✅ SOLO TITOLO (IMPORTANTISSIMO)
     const response = await fetch("https://graphql.anilist.co", {
       method: "POST",
       headers: {
@@ -67,36 +63,7 @@ router.post("/enrich", async (req, res) => {
       return res.json({ error: "Nessun risultato trovato" });
     }
 
-    // ✅ match migliorato autore
-    let manga = list[0];
-
-    if (autore) {
-      const found = list.find(m =>
-        m.staff?.edges?.some(s =>
-          s.node.name.full.toLowerCase().includes(autore.toLowerCase())
-        )
-      );
-
-      if (found) manga = found;
-    }
-
-    // ✅ pulizia HTML
-    const tramaPulita = manga.description?.replace(/<[^>]*>/g, "");
-
-    res.json({
-      titolo: manga.title.romaji || manga.title.english,
-      trama: tramaPulita,
-      coverurl: manga.coverImage?.large,
-      volumitotali: manga.volumes || 0
-    });
-
-  } catch (err) {
-    console.error("❌ ENRICH ERROR:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-    // ✅ Match migliore con autore
+    // ✅ migliora match autore
     let manga = list[0];
 
     if (autore) {
@@ -216,4 +183,4 @@ router.put("/:id", auth, async (req, res) => {
   }
 });
 
-module.exports = router;
+module.exports = router
