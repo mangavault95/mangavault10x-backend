@@ -9,7 +9,7 @@ function cleanHtml(text) {
 }
 
 //
-// ENRICH
+// ✅ ENRICH (PRECISO + TRADUZIONE)
 //
 router.post("/enrich", async (req, res) => {
   try {
@@ -55,8 +55,13 @@ router.post("/enrich", async (req, res) => {
       return res.json({ error: "Nessun risultato trovato" });
     }
 
-    let manga = list[0];
+    // ✅ MATCH PIÙ PRECISO
+    let manga =
+      list.find(m =>
+        m.title.romaji?.toLowerCase().includes(titolo.toLowerCase())
+      ) || list[0];
 
+    // ✅ MATCH AUTORE
     if (autore) {
       const found = list.find(m =>
         m.staff?.edges?.some(s =>
@@ -68,11 +73,15 @@ router.post("/enrich", async (req, res) => {
 
     let trama = cleanHtml(manga.description);
 
-    if (trama && trama.length < 500) {
-      try {
-        trama = await translateToItalian(trama);
-      } catch {}
+    // ✅ LIMIT PER TRADUZIONE
+    if (trama.length > 400) {
+      trama = trama.substring(0, 400);
     }
+
+    // ✅ TRADUZIONE
+    try {
+      trama = await translateToItalian(trama);
+    } catch {}
 
     res.json({
       titolo: manga.title.romaji || manga.title.english,
@@ -82,12 +91,13 @@ router.post("/enrich", async (req, res) => {
     });
 
   } catch (err) {
+    console.error("❌ ENRICH ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
 //
-// LOGIN
+// ✅ LOGIN
 //
 router.post("/login", (req, res) => {
   const { username, password } = req.body;
@@ -103,10 +113,11 @@ router.post("/login", (req, res) => {
 });
 
 //
-// AUTH
+// ✅ AUTH
 //
 function auth(req, res, next) {
   const header = req.headers.authorization;
+
   if (!header) return res.status(401).json({ error: "No token" });
 
   const token = header.split(" ")[1];
@@ -120,12 +131,17 @@ function auth(req, res, next) {
 }
 
 //
-// UPDATE (SAVE FIX)
+// ✅ UPDATE (SALVATAGGIO FIXATO)
 //
 router.put("/:id", auth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { coverurl, trama, volumiposseduti, volumitotali } = req.body;
+    const {
+      coverurl,
+      trama,
+      volumiposseduti,
+      volumitotali
+    } = req.body;
 
     await pool.query(`
       UPDATE "Manga"
@@ -135,23 +151,25 @@ router.put("/:id", auth, async (req, res) => {
         "VolumiPosseduti" = $3,
         "VolumiTotali" = $4
       WHERE "ID" = $5
-    `, [
-      coverurl,
-      trama,
-      volumiposseduti,
-      volumitotali,
+    `,
+    [
+      coverurl || null,
+      trama || null,
+      volumiposseduti || 0,
+      volumitotali || 0,
       id
     ]);
 
     res.json({ success: true });
-  } catch {
+
+  } catch (err) {
     res.status(500).json({ error: "Errore server" });
   }
 });
 
 router.get("/", async (req, res) => {
-  const result = await pool.query(`SELECT * FROM "Manga" ORDER BY "ID" DESC`);
-  res.json(result.rows);
+  const r = await pool.query(`SELECT * FROM "Manga" ORDER BY "ID" DESC`);
+  res.json(r.rows);
 });
 
 module.exports = router;
