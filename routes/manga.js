@@ -3,7 +3,8 @@ const router = express.Router();
 const pool = require("../db");
 const { translateToItalian } = require("../services/translate");
 const jwt = require("jsonwebtoken");
-const fetch = require("node-fetch"); // ✅ IMPORT FONDAMENTALE
+await fetch(...)
+
 
 //
 // AUTO ENRICH
