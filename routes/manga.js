@@ -22,7 +22,7 @@ router.post("/enrich", async (req, res) => {
     const data = await response.json();
 
     if (!data.data || data.data.length === 0) {
-      return res.status(404).json({ error: "Nessun risultato" });
+      return res.json({ error: "Nessun risultato" });
     }
 
     const manga = data.data[0];
