@@ -23,7 +23,7 @@ router.post("/enrich", async (req, res) => {
 
     const query = `
       query ($search: String) {
-        Page(perPage: 5) {
+        Page(perPage: 10) {
           media(search: $search, type: MANGA) {
             title {
               romaji
@@ -48,10 +48,7 @@ router.post("/enrich", async (req, res) => {
       }
     `;
 
-    const searchString = autore
-      ? `${titolo} ${autore}`
-      : titolo;
-
+    // ✅ SOLO TITOLO (IMPORTANTISSIMO)
     const response = await fetch("https://graphql.anilist.co", {
       method: "POST",
       headers: {
@@ -59,17 +56,45 @@ router.post("/enrich", async (req, res) => {
       },
       body: JSON.stringify({
         query,
-        variables: { search: searchString }
+        variables: { search: titolo }
       })
     });
 
     const result = await response.json();
-
     const list = result.data?.Page?.media;
 
     if (!list || list.length === 0) {
       return res.json({ error: "Nessun risultato trovato" });
     }
+
+    // ✅ match migliorato autore
+    let manga = list[0];
+
+    if (autore) {
+      const found = list.find(m =>
+        m.staff?.edges?.some(s =>
+          s.node.name.full.toLowerCase().includes(autore.toLowerCase())
+        )
+      );
+
+      if (found) manga = found;
+    }
+
+    // ✅ pulizia HTML
+    const tramaPulita = manga.description?.replace(/<[^>]*>/g, "");
+
+    res.json({
+      titolo: manga.title.romaji || manga.title.english,
+      trama: tramaPulita,
+      coverurl: manga.coverImage?.large,
+      volumitotali: manga.volumes || 0
+    });
+
+  } catch (err) {
+    console.error("❌ ENRICH ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
     // ✅ Match migliore con autore
     let manga = list[0];
