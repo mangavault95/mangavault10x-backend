@@ -1,15 +1,17 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
-const { translateToItalian } = require("../services/translate");
 const jwt = require("jsonwebtoken");
 
+//
+// PULIZIA HTML
+//
 function cleanHtml(text) {
-  return text?.replace(/<[^>]*>?/gm, "") || "";
+  return text?.replace(/<[^>]*>/g, "") || "";
 }
 
 //
-// AUTO ENRICH (Jikan + fallback AniList)
+// AUTO ENRICH (SOLO ANILIST, STABILE)
 //
 router.post("/enrich", async (req, res) => {
   try {
@@ -19,7 +21,6 @@ router.post("/enrich", async (req, res) => {
       return res.status(400).json({ error: "Titolo mancante" });
     }
 
-    // ✅ QUERY ANILIST CON AUTORE
     const query = `
       query ($search: String) {
         Page(perPage: 5) {
@@ -70,7 +71,7 @@ router.post("/enrich", async (req, res) => {
       return res.json({ error: "Nessun risultato trovato" });
     }
 
-    // ✅ migliora selezione (match autore)
+    // ✅ Match migliore con autore
     let manga = list[0];
 
     if (autore) {
@@ -82,101 +83,13 @@ router.post("/enrich", async (req, res) => {
       if (found) manga = found;
     }
 
-    // ✅ PULIZIA HTML DESCRIZIONE
-    const cleanDesc = manga.description?.replace(/<[^>]*>/g, "");
+    const tramaPulita = cleanHtml(manga.description);
 
     res.json({
       titolo: manga.title.romaji || manga.title.english,
-      trama: cleanDesc,
+      trama: tramaPulita,
       coverurl: manga.coverImage?.large,
       volumitotali: manga.volumes || 0
-    });
-
-  } catch (err) {
-    console.error("❌ ENRICH ERROR:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-    // ✅ JIKAN
-    try {
-      const response = await fetch(
-        `https://api.jikan.moe/v4/manga?q=${encodeURIComponent(cleanTitle)}&limit=3`
-      );
-
-      const data = await response.json();
-
-      if (data.data && data.data.length > 0) {
-        const m = data.data[0];
-
-        manga = {
-          titolo: m.title,
-          trama: m.synopsis,
-          coverurl: m.images?.jpg?.image_url,
-          volumitotali: m.volumes || 0
-        };
-      }
-
-    } catch (e) {
-      console.log("⚠️ Jikan down");
-    }
-
-    // ✅ FALLBACK ANILIST
-    if (!manga) {
-      const query = `
-        query ($search: String) {
-          Media(search: $search, type: MANGA) {
-            title { romaji }
-            description
-            coverImage { large }
-            volumes
-          }
-        }
-      `;
-
-      const response = await fetch("https://graphql.anilist.co", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          query,
-          variables: { search: titolo }
-        })
-      });
-
-      const result = await response.json();
-      const m = result.data?.Media;
-
-      if (!m) {
-        return res.json({ error: "Nessun risultato trovato" });
-      }
-
-      manga = {
-        titolo: m.title?.romaji,
-        trama: m.description,
-        coverurl: m.coverImage?.large,
-        volumitotali: m.volumes || 0
-      };
-    }
-
-    // ✅ PULIZIA HTML
-    manga.trama = cleanHtml(manga.trama);
-
-    // ✅ TRADUZIONE
-    let tramaIT = manga.trama;
-
-    if (manga.trama && manga.trama.length < 500) {
-      try {
-        tramaIT = await translateToItalian(manga.trama);
-      } catch {}
-    }
-
-    res.json({
-      titolo: manga.titolo,
-      trama: tramaIT,
-      coverurl: manga.coverurl,
-      volumitotali: manga.volumitotali
     });
 
   } catch (err) {
@@ -222,7 +135,7 @@ router.get("/", async (req, res) => {
 });
 
 //
-// UPDATE
+// AUTH
 //
 function auth(req, res, next) {
   const header = req.headers.authorization;
@@ -239,6 +152,9 @@ function auth(req, res, next) {
   }
 }
 
+//
+// UPDATE
+//
 router.put("/:id", auth, async (req, res) => {
   try {
     const { id } = req.params;
@@ -276,4 +192,3 @@ router.put("/:id", auth, async (req, res) => {
 });
 
 module.exports = router;
-``
