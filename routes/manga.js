@@ -13,15 +13,90 @@ function cleanHtml(text) {
 //
 router.post("/enrich", async (req, res) => {
   try {
-    const { titolo } = req.body;
+    const { titolo, autore } = req.body;
 
     if (!titolo) {
       return res.status(400).json({ error: "Titolo mancante" });
     }
 
-    const cleanTitle = titolo.toLowerCase().trim();
+    // ✅ QUERY ANILIST CON AUTORE
+    const query = `
+      query ($search: String) {
+        Page(perPage: 5) {
+          media(search: $search, type: MANGA) {
+            title {
+              romaji
+              english
+            }
+            description
+            coverImage {
+              large
+            }
+            volumes
+            staff {
+              edges {
+                node {
+                  name {
+                    full
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
 
-    let manga = null;
+    const searchString = autore
+      ? `${titolo} ${autore}`
+      : titolo;
+
+    const response = await fetch("https://graphql.anilist.co", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        query,
+        variables: { search: searchString }
+      })
+    });
+
+    const result = await response.json();
+
+    const list = result.data?.Page?.media;
+
+    if (!list || list.length === 0) {
+      return res.json({ error: "Nessun risultato trovato" });
+    }
+
+    // ✅ migliora selezione (match autore)
+    let manga = list[0];
+
+    if (autore) {
+      const found = list.find(m =>
+        m.staff?.edges?.some(s =>
+          s.node.name.full.toLowerCase().includes(autore.toLowerCase())
+        )
+      );
+      if (found) manga = found;
+    }
+
+    // ✅ PULIZIA HTML DESCRIZIONE
+    const cleanDesc = manga.description?.replace(/<[^>]*>/g, "");
+
+    res.json({
+      titolo: manga.title.romaji || manga.title.english,
+      trama: cleanDesc,
+      coverurl: manga.coverImage?.large,
+      volumitotali: manga.volumes || 0
+    });
+
+  } catch (err) {
+    console.error("❌ ENRICH ERROR:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
     // ✅ JIKAN
     try {
