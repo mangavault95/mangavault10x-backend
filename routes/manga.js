@@ -3,8 +3,6 @@ const router = express.Router();
 const pool = require("../db");
 const { translateToItalian } = require("../services/translate");
 const jwt = require("jsonwebtoken");
-await fetch(...)
-
 
 //
 // AUTO ENRICH
@@ -29,21 +27,19 @@ router.post("/enrich", async (req, res) => {
 
     const manga = data.data[0];
 
-    // ✅ TRADUZIONE
+    // ✅ TRADUZIONE SICURA
     let tramaIT = manga.synopsis;
 
     if (manga.synopsis && manga.synopsis.length < 500) {
       tramaIT = await translateToItalian(manga.synopsis);
     }
 
-    const result = {
+    res.json({
       titolo: manga.title,
       trama: tramaIT,
       coverurl: manga.images?.jpg?.image_url,
-      volumitotali: manga.volumes || 0
-    };
-
-    res.json(result);
+      volumitotali: manga.volumes || 0,
+    });
 
   } catch (err) {
     console.error("❌ ERRORE ENRICH:", err);
@@ -128,7 +124,7 @@ router.get("/latest", async (req, res) => {
 });
 
 //
-// AUTH MIDDLEWARE
+// AUTH
 //
 function auth(req, res, next) {
   const header = req.headers.authorization;
@@ -146,7 +142,7 @@ function auth(req, res, next) {
 }
 
 //
-// UPDATE MANGA
+// UPDATE
 //
 router.put("/:id", auth, async (req, res) => {
   try {
