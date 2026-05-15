@@ -5,7 +5,7 @@ const { translateToItalian } = require("../services/translate");
 const jwt = require("jsonwebtoken");
 
 //
-// AUTO ENRICH (VERSIONE MIGLIORATA)
+// AUTO ENRICH (Jikan + fallback AniList)
 //
 router.post("/enrich", async (req, res) => {
   try {
@@ -15,53 +15,95 @@ router.post("/enrich", async (req, res) => {
       return res.status(400).json({ error: "Titolo mancante" });
     }
 
-    // ✅ PULIZIA TITOLO (IMPORTANTISSIMO)
-    const cleanTitle = titolo
-      .toLowerCase()
-      .replace(/[^a-z0-9 ]/g, "")
-      .trim();
+    const cleanTitle = titolo.toLowerCase().trim();
 
-    console.log("🔍 SEARCH:", cleanTitle);
+    let manga = null;
 
-    // ✅ CHIAMATA API MIGLIORATA
-    const response = await fetch(
-      `https://api.jikan.moe/v4/manga?q=${encodeURIComponent(cleanTitle)}&limit=5`
-    );
+    // ✅ 1. JIKAN (prova)
+    try {
+      const response = await fetch(
+        `https://api.jikan.moe/v4/manga?q=${encodeURIComponent(cleanTitle)}&limit=3`
+      );
 
-    const data = await response.json();
+      const data = await response.json();
 
-    if (!data.data || data.data.length === 0) {
-      return res.json({ error: "Nessun risultato" });
+      if (data.data && data.data.length > 0) {
+        const m = data.data[0];
+
+        manga = {
+          titolo: m.title,
+          trama: m.synopsis,
+          coverurl: m.images?.jpg?.image_url,
+          volumitotali: m.volumes || 0
+        };
+      }
+
+    } catch (e) {
+      console.log("⚠️ Jikan down");
     }
 
-    // ✅ MATCH MIGLIORE (NON SOLO IL PRIMO)
-    const manga =
-      data.data.find(m =>
-        m.title.toLowerCase().includes(cleanTitle)
-      ) || data.data[0];
+    // ✅ 2. FALLBACK ANILIST
+    if (!manga) {
+      const query = `
+        query ($search: String) {
+          Media(search: $search, type: MANGA) {
+            title {
+              romaji
+            }
+            description
+            coverImage {
+              large
+            }
+            volumes
+          }
+        }
+      `;
 
-    console.log("✅ MATCH:", manga.title);
+      const response = await fetch("https://graphql.anilist.co", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          query,
+          variables: { search: titolo }
+        })
+      });
 
-    // ✅ TRADUZIONE SICURA
-    let tramaIT = manga.synopsis;
+      const result = await response.json();
 
-    if (manga.synopsis && manga.synopsis.length < 500) {
-      try {
-        tramaIT = await translateToItalian(manga.synopsis);
-      } catch {
-        tramaIT = manga.synopsis;
+      const m = result.data?.Media;
+
+      if (!m) {
+        return res.json({ error: "Nessun risultato trovato" });
       }
+
+      manga = {
+        titolo: m.title?.romaji,
+        trama: m.description,
+        coverurl: m.coverImage?.large,
+        volumitotali: m.volumes || 0
+      };
+    }
+
+    // ✅ traduzione
+    let tramaIT = manga.trama;
+
+    if (manga.trama && manga.trama.length < 500) {
+      try {
+        tramaIT = await translateToItalian(manga.trama);
+      } catch {}
     }
 
     res.json({
-      titolo: manga.title,
+      titolo: manga.titolo,
       trama: tramaIT,
-      coverurl: manga.images?.jpg?.image_url,
-      volumitotali: manga.volumes || 0
+      coverurl: manga.coverurl,
+      volumitotali: manga.volumitotali
     });
 
   } catch (err) {
-    console.error("❌ ERRORE ENRICH:", err);
+    console.error("❌ ENRICH ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -86,117 +128,12 @@ router.post("/login", (req, res) => {
 });
 
 //
-// GET ALL MANGA
+// GET ALL
 //
 router.get("/", async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT * FROM "Manga"
-      ORDER BY "ID" DESC
-    `);
-
-    res.json(result.rows);
-  } catch (err) {
-    console.error("❌ ERRORE GET ALL MANGA:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-//
-// STATS
-//
-router.get("/stats", async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT
-        COUNT(*) AS "totalSeries",
-        COALESCE(SUM(volumiposseduti), 0) AS "totalVolumes",
-        COALESCE(SUM(volumiposseduti * costo), 0) AS "totalCost",
-        COALESCE(SUM(CASE WHEN concluso = false THEN 1 ELSE 0 END), 0) AS "inProgress"
-      FROM "Manga"
-    `);
-
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error("❌ ERRORE STATS:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-//
-// LATEST
-//
-router.get("/latest", async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT *
-      FROM "Manga"
-      ORDER BY dataaggiunta DESC
-      LIMIT 12
-    `);
-
-    res.json(result.rows);
-  } catch (err) {
-    console.error("❌ ERRORE LATEST:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-//
-// AUTH
-//
-function auth(req, res, next) {
-  const header = req.headers.authorization;
-
-  if (!header) return res.status(401).json({ error: "No token" });
-
-  const token = header.split(" ")[1];
-
-  try {
-    jwt.verify(token, "SUPER_SECRET");
-    next();
-  } catch {
-    res.status(403).json({ error: "Token non valido" });
-  }
-}
-
-//
-// UPDATE
-//
-router.put("/:id", auth, async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const {
-      coverurl,
-      trama,
-      volumiposseduti,
-      volumitotali
-    } = req.body;
-
-    await pool.query(`
-      UPDATE "Manga"
-      SET
-        "CoverURL" = $1,
-        "Trama" = $2,
-        "VolumiPosseduti" = $3,
-        "VolumiTotali" = $4
-      WHERE "ID" = $5
-    `,
-    [
-      coverurl || null,
-      trama || null,
-      volumiposseduti || 0,
-      volumitotali || 0,
-      id
-    ]);
-
-    res.json({ success: true });
-
-  } catch (err) {
-    console.error("❌ ERRORE UPDATE MANGA:", err);
-    res.status(500).json({ error: err.message });
-  }
+  const r = await pool.query(`SELECT * FROM "Manga" ORDER BY "ID" DESC`);
+  res.json(r.rows);
 });
 
 module.exports = router;
+``
