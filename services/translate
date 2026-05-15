@@ -1,0 +1,6 @@
+function translateToItalian(text) {
+  if (!text) return "";
+  return text;
+}
+
+module.exports = { translateToItalian };
