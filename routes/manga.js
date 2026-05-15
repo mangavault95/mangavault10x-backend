@@ -2,13 +2,14 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 const jwt = require("jsonwebtoken");
+const { translateToItalian } = require("../services/translate");
 
 function cleanHtml(text) {
   return text?.replace(/<[^>]*>/g, "") || "";
 }
 
 //
-// AUTO ENRICH (AniList)
+// ENRICH
 //
 router.post("/enrich", async (req, res) => {
   try {
@@ -22,21 +23,14 @@ router.post("/enrich", async (req, res) => {
       query ($search: String) {
         Page(perPage: 10) {
           media(search: $search, type: MANGA) {
-            title {
-              romaji
-              english
-            }
+            title { romaji english }
             description
-            coverImage {
-              large
-            }
+            coverImage { large }
             volumes
             staff {
               edges {
                 node {
-                  name {
-                    full
-                  }
+                  name { full }
                 }
               }
             }
@@ -47,9 +41,7 @@ router.post("/enrich", async (req, res) => {
 
     const response = await fetch("https://graphql.anilist.co", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         query,
         variables: { search: titolo }
@@ -63,7 +55,6 @@ router.post("/enrich", async (req, res) => {
       return res.json({ error: "Nessun risultato trovato" });
     }
 
-    // ✅ migliora match autore
     let manga = list[0];
 
     if (autore) {
@@ -75,17 +66,22 @@ router.post("/enrich", async (req, res) => {
       if (found) manga = found;
     }
 
-    const tramaPulita = cleanHtml(manga.description);
+    let trama = cleanHtml(manga.description);
+
+    if (trama && trama.length < 500) {
+      try {
+        trama = await translateToItalian(trama);
+      } catch {}
+    }
 
     res.json({
       titolo: manga.title.romaji || manga.title.english,
-      trama: tramaPulita,
+      trama,
       coverurl: manga.coverImage?.large,
       volumitotali: manga.volumes || 0
     });
 
   } catch (err) {
-    console.error("❌ ENRICH ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -97,12 +93,9 @@ router.post("/login", (req, res) => {
   const { username, password } = req.body;
 
   if (username === "admin" && password === "1234") {
-    const token = jwt.sign(
-      { user: "admin" },
-      "SUPER_SECRET",
-      { expiresIn: "2h" }
-    );
-
+    const token = jwt.sign({ user: "admin" }, "SUPER_SECRET", {
+      expiresIn: "2h"
+    });
     return res.json({ token });
   }
 
@@ -110,28 +103,10 @@ router.post("/login", (req, res) => {
 });
 
 //
-// GET ALL
-//
-router.get("/", async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT * FROM "Manga"
-      ORDER BY "ID" DESC
-    `);
-
-    res.json(result.rows);
-  } catch (err) {
-    console.error("❌ ERRORE GET MANGA:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-//
 // AUTH
 //
 function auth(req, res, next) {
   const header = req.headers.authorization;
-
   if (!header) return res.status(401).json({ error: "No token" });
 
   const token = header.split(" ")[1];
@@ -145,18 +120,12 @@ function auth(req, res, next) {
 }
 
 //
-// UPDATE
+// UPDATE (SAVE FIX)
 //
 router.put("/:id", auth, async (req, res) => {
   try {
     const { id } = req.params;
-
-    const {
-      coverurl,
-      trama,
-      volumiposseduti,
-      volumitotali
-    } = req.body;
+    const { coverurl, trama, volumiposseduti, volumitotali } = req.body;
 
     await pool.query(`
       UPDATE "Manga"
@@ -166,21 +135,23 @@ router.put("/:id", auth, async (req, res) => {
         "VolumiPosseduti" = $3,
         "VolumiTotali" = $4
       WHERE "ID" = $5
-    `,
-    [
-      coverurl || null,
-      trama || null,
-      volumiposseduti || 0,
-      volumitotali || 0,
+    `, [
+      coverurl,
+      trama,
+      volumiposseduti,
+      volumitotali,
       id
     ]);
 
     res.json({ success: true });
-
-  } catch (err) {
-    console.error("❌ UPDATE ERROR:", err);
-    res.status(500).json({ error: err.message });
+  } catch {
+    res.status(500).json({ error: "Errore server" });
   }
 });
 
-module.exports = router
+router.get("/", async (req, res) => {
+  const result = await pool.query(`SELECT * FROM "Manga" ORDER BY "ID" DESC`);
+  res.json(result.rows);
+});
+
+module.exports = router;
