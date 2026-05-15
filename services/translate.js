@@ -12,7 +12,6 @@ async function translateToItalian(text) {
 
     const translated = data?.responseData?.translatedText;
 
-    // ✅ fallback se API fallisce
     if (
       !translated ||
       translated.includes("QUERY LENGTH") ||
