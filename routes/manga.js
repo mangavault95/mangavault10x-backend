@@ -5,7 +5,7 @@ const { translateToItalian } = require("../services/translate");
 const jwt = require("jsonwebtoken");
 
 //
-// AUTO ENRICH
+// AUTO ENRICH (VERSIONE MIGLIORATA)
 //
 router.post("/enrich", async (req, res) => {
   try {
@@ -15,8 +15,17 @@ router.post("/enrich", async (req, res) => {
       return res.status(400).json({ error: "Titolo mancante" });
     }
 
+    // ✅ PULIZIA TITOLO (IMPORTANTISSIMO)
+    const cleanTitle = titolo
+      .toLowerCase()
+      .replace(/[^a-z0-9 ]/g, "")
+      .trim();
+
+    console.log("🔍 SEARCH:", cleanTitle);
+
+    // ✅ CHIAMATA API MIGLIORATA
     const response = await fetch(
-      `https://api.jikan.moe/v4/manga?q=${encodeURIComponent(titolo)}&limit=1`
+      `https://api.jikan.moe/v4/manga?q=${encodeURIComponent(cleanTitle)}&limit=5`
     );
 
     const data = await response.json();
@@ -25,20 +34,30 @@ router.post("/enrich", async (req, res) => {
       return res.json({ error: "Nessun risultato" });
     }
 
-    const manga = data.data[0];
+    // ✅ MATCH MIGLIORE (NON SOLO IL PRIMO)
+    const manga =
+      data.data.find(m =>
+        m.title.toLowerCase().includes(cleanTitle)
+      ) || data.data[0];
+
+    console.log("✅ MATCH:", manga.title);
 
     // ✅ TRADUZIONE SICURA
     let tramaIT = manga.synopsis;
 
     if (manga.synopsis && manga.synopsis.length < 500) {
-      tramaIT = await translateToItalian(manga.synopsis);
+      try {
+        tramaIT = await translateToItalian(manga.synopsis);
+      } catch {
+        tramaIT = manga.synopsis;
+      }
     }
 
     res.json({
       titolo: manga.title,
       trama: tramaIT,
       coverurl: manga.images?.jpg?.image_url,
-      volumitotali: manga.volumes || 0,
+      volumitotali: manga.volumes || 0
     });
 
   } catch (err) {
