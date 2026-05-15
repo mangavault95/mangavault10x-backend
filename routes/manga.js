@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require("../db");
 const { translateToItalian } = require("../services/translate");
 const jwt = require("jsonwebtoken");
+const fetch = require("node-fetch"); // ✅ IMPORT FONDAMENTALE
 
 //
 // AUTO ENRICH
@@ -27,8 +28,12 @@ router.post("/enrich", async (req, res) => {
 
     const manga = data.data[0];
 
-    // ✅ TRADUZIONE CORRETTA
-    const tramaIT = await translateToItalian(manga.synopsis);
+    // ✅ TRADUZIONE
+    let tramaIT = manga.synopsis;
+
+    if (manga.synopsis && manga.synopsis.length < 500) {
+      tramaIT = await translateToItalian(manga.synopsis);
+    }
 
     const result = {
       titolo: manga.title,
@@ -45,6 +50,9 @@ router.post("/enrich", async (req, res) => {
   }
 });
 
+//
+// LOGIN
+//
 router.post("/login", (req, res) => {
   const { username, password } = req.body;
 
@@ -67,8 +75,8 @@ router.post("/login", (req, res) => {
 router.get("/", async (req, res) => {
   try {
     const result = await pool.query(`
-     SELECT * FROM "Manga"
-ORDER BY "ID" DESC
+      SELECT * FROM "Manga"
+      ORDER BY "ID" DESC
     `);
 
     res.json(result.rows);
@@ -118,7 +126,9 @@ router.get("/latest", async (req, res) => {
   }
 });
 
-
+//
+// AUTH MIDDLEWARE
+//
 function auth(req, res, next) {
   const header = req.headers.authorization;
 
@@ -133,6 +143,7 @@ function auth(req, res, next) {
     res.status(403).json({ error: "Token non valido" });
   }
 }
+
 //
 // UPDATE MANGA
 //
