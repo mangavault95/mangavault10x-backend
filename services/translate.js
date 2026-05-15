@@ -1,33 +1,31 @@
-const axios = require("axios");
+const fetch = global.fetch;
 
 async function translateToItalian(text) {
-  if (!text) return "";
+  if (!text) return "");
 
   try {
-    const res = await axios.get(
-      "https://api.mymemory.translated.net/get",
-      {
-        params: {
-          q: text,
-          langpair: "en|it"
-        }
-      }
+    const response = await fetch("https://api.mymemory.translated.net/get?q=" 
+      + encodeURIComponent(text) + "&langpair=en|it"
     );
 
-    const translated = res.data?.responseData?.translatedText;
+    const data = await response.json();
 
-if (
-  !translated ||
-  translated.includes("QUERY LENGTH LIMIT")
-) {
-  return text; // fallback
-}
+    const translated = data?.responseData?.translatedText;
 
-return translated;
+    // ✅ fallback se API fallisce o ritorna roba strana
+    if (
+      !translated ||
+      translated.includes("QUERY LENGTH") ||
+      translated.length < 10
+    ) {
+      return text;
+    }
+
+    return translated;
 
   } catch (err) {
-    console.log("Errore traduzione:", err.message);
-    return text; // fallback sicuro
+    console.error("❌ ERRORE TRADUZIONE:", err);
+    return text;
   }
 }
 
