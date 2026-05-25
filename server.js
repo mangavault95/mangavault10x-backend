@@ -11,15 +11,6 @@ app.use(cors({
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
-app.use(cors({
-  origin: [
-    "http://localhost:5173",
-    "https://mangavault10x-frontend.vercel.app"
-  ],
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  credentials: true
-}));
-
 app.use(express.json());
 
 const mangaRoutes = require("./routes/manga");
@@ -32,4 +23,4 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-``
+
