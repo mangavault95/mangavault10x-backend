@@ -4,7 +4,7 @@ const cors = require("cors");
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// ✅ CORS COMPLETO (Render + Express 5)
+// ✅ CORS (Express 5 compatibile)
 app.use(
   cors({
     origin: [
@@ -16,8 +16,7 @@ app.use(
   })
 );
 
-// ⭐ FIX PRE-FLIGHT (Express 5 richiede un pattern valido)
-app.options("/api/*", cors());
+// ❌ NON mettere app.options() — Express 5 lo gestisce da solo
 
 app.use(express.json());
 
