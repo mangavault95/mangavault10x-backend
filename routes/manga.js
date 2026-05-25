@@ -9,7 +9,7 @@ function cleanHtml(text) {
 }
 
 //
-// ✅ ENRICH
+// ENRICH
 //
 router.post("/enrich", async (req, res) => {
   try {
@@ -93,7 +93,7 @@ router.post("/enrich", async (req, res) => {
 });
 
 //
-// ✅ LOGIN
+// LOGIN
 //
 router.post("/login", (req, res) => {
   const { username, password } = req.body;
@@ -109,62 +109,86 @@ router.post("/login", (req, res) => {
 });
 
 //
-// ✅ AUTH
+// AUTH middleware
 //
 function auth(req, res, next) {
   const header = req.headers.authorization;
 
-  if (!header) return res.status(401).json({ error: "No token" });
+  if (!header) {
+    console.error("AUTH: no Authorization header");
+    return res.status(401).json({ error: "No token" });
+  }
 
   const token = header.split(" ")[1];
 
   try {
-    jwt.verify(token, "SUPER_SECRET");
+    const decoded = jwt.verify(token, "SUPER_SECRET");
+    // opzionale: attach decoded to req.user
+    req.user = decoded;
     next();
-  } catch {
+  } catch (err) {
+    console.error("AUTH: token verify error:", err.message);
     res.status(403).json({ error: "Token non valido" });
   }
 }
 
 //
-// ✅ UPDATE MANGA
+// UPDATE MANGA (ora aggiorna più campi)
 //
 router.put("/:id", auth, async (req, res) => {
   try {
     const { id } = req.params;
+    // accettiamo più campi dal client
     const {
       coverurl,
       trama,
       volumiposseduti,
-      volumitotali
+      volumitotali,
+      titolo,
+      autore,
+      genere,
+      costo,
+      editore
     } = req.body;
 
+    // aggiorniamo solo i campi che vogliamo persistenti
     await pool.query(`
       UPDATE "Manga"
       SET
         "CoverURL" = $1,
         "Trama" = $2,
         "VolumiPosseduti" = $3,
-        "VolumiTotali" = $4
-      WHERE "ID" = $5
+        "VolumiTotali" = $4,
+        "Titolo" = COALESCE($5, "Titolo"),
+        "Autore" = COALESCE($6, "Autore"),
+        "Genere" = COALESCE($7, "Genere"),
+        "Costo" = COALESCE($8, "Costo"),
+        "Editore" = COALESCE($9, "Editore")
+      WHERE "ID" = $10
     `,
     [
       coverurl || null,
       trama || null,
       volumiposseduti || 0,
       volumitotali || 0,
+      titolo || null,
+      autore || null,
+      genere || null,
+      costo || null,
+      editore || null,
       id
     ]);
 
     res.json({ success: true });
 
   } catch (err) {
+    console.error("❌ UPDATE MANGA ERROR:", err);
     res.status(500).json({ error: "Errore server" });
   }
 });
 
 //
-// ⭐ NEW — UPDATE RATING
+// UPDATE RATING
 //
 router.post("/updateRating", auth, async (req, res) => {
   const { id, rating } = req.body;
