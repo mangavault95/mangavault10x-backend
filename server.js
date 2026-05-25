@@ -4,7 +4,7 @@ const cors = require("cors");
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// ✅ CORS COMPLETO (FUNZIONA SU RENDER)
+// ✅ CORS COMPLETO (Render + Express 5)
 app.use(
   cors({
     origin: [
@@ -16,21 +16,19 @@ app.use(
   })
 );
 
-// ⭐ FIX PRE-FLIGHT (Render lo richiede)
-app.options("*", cors());
+// ⭐ FIX PRE-FLIGHT (Express 5 richiede un pattern valido)
+app.options("/api/*", cors());
 
 app.use(express.json());
 
-// ✅ ROUTES CORRETTE
+// ROUTES
 const mangaRoutes = require("./routes/manga");
 app.use("/api/manga", mangaRoutes);
 
-// ROOT
 app.get("/", (req, res) => {
   res.send("MangaVault API attiva 🚀");
 });
 
-// START
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
