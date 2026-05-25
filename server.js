@@ -4,7 +4,7 @@ const cors = require("cors");
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// ✅ CORS CONFIGURATO CORRETTAMENTE (senza duplicati)
+// CORS
 app.use(
   cors({
     origin: [
@@ -18,16 +18,14 @@ app.use(
 
 app.use(express.json());
 
-// ROUTES
+// ROUTES (CORRETTO)
 const mangaRoutes = require("./routes/manga");
-app.use("/manga", mangaRoutes); // <-- ATTENZIONE: il frontend chiama /manga/updateRating
+app.use("/api/manga", mangaRoutes);
 
-// ROOT
 app.get("/", (req, res) => {
   res.send("MangaVault API attiva 🚀");
 });
 
-// START SERVER
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
