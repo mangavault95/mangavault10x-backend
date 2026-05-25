@@ -132,7 +132,7 @@ function auth(req, res, next) {
 }
 
 //
-// UPDATE MANGA (aggiorna campi e ritorna la riga aggiornata)
+// UPDATE MANGA (PUT /:id) - mantiene compatibilità
 //
 router.put("/:id", auth, async (req, res) => {
   try {
@@ -149,10 +149,7 @@ router.put("/:id", auth, async (req, res) => {
       editore
     } = req.body;
 
-    // log payload per debug
-    console.log(`UPDATE /api/manga/${id} payload:`, {
-      coverurl, trama, volumiposseduti, volumitotali, titolo, autore, genere, costo, editore
-    });
+    console.log(`PUT /api/manga/${id} payload:`, req.body);
 
     const result = await pool.query(`
       UPDATE "Manga"
@@ -183,16 +180,84 @@ router.put("/:id", auth, async (req, res) => {
     ]);
 
     if (!result || !result.rows || result.rows.length === 0) {
-      console.warn(`UPDATE returned no rows for ID ${id}`);
+      console.warn(`PUT UPDATE returned no rows for ID ${id}`);
       return res.status(404).json({ error: "Record non trovato" });
     }
 
     const updated = result.rows[0];
-    console.log(`UPDATE success for ID ${id}:`, updated);
+    console.log(`PUT UPDATE success for ID ${id}:`, updated);
 
     res.json({ success: true, updated });
   } catch (err) {
-    console.error("❌ UPDATE MANGA ERROR:", err);
+    console.error("❌ PUT UPDATE MANGA ERROR:", err);
+    res.status(500).json({ error: "Errore server" });
+  }
+});
+
+//
+// NEW: UPDATE MANGA via POST /update (pattern come updateRating)
+// - accetta id nel body, utile per client che usano POST
+//
+router.post("/update", auth, async (req, res) => {
+  try {
+    const {
+      id,
+      coverurl,
+      trama,
+      volumiposseduti,
+      volumitotali,
+      titolo,
+      autore,
+      genere,
+      costo,
+      editore
+    } = req.body;
+
+    if (!id) {
+      return res.status(400).json({ error: "ID mancante" });
+    }
+
+    console.log(`POST /api/manga/update payload:`, req.body);
+
+    const result = await pool.query(`
+      UPDATE "Manga"
+      SET
+        "CoverURL" = $1,
+        "Trama" = $2,
+        "VolumiPosseduti" = $3,
+        "VolumiTotali" = $4,
+        "Titolo" = COALESCE($5, "Titolo"),
+        "Autore" = COALESCE($6, "Autore"),
+        "Genere" = COALESCE($7, "Genere"),
+        "Costo" = COALESCE($8, "Costo"),
+        "Editore" = COALESCE($9, "Editore")
+      WHERE "ID" = $10
+      RETURNING *
+    `,
+    [
+      coverurl || null,
+      trama || null,
+      volumiposseduti || 0,
+      volumitotali || 0,
+      titolo || null,
+      autore || null,
+      genere || null,
+      costo || null,
+      editore || null,
+      id
+    ]);
+
+    if (!result || !result.rows || result.rows.length === 0) {
+      console.warn(`POST UPDATE returned no rows for ID ${id}`);
+      return res.status(404).json({ error: "Record non trovato" });
+    }
+
+    const updated = result.rows[0];
+    console.log(`POST UPDATE success for ID ${id}:`, updated);
+
+    res.json({ success: true, updated });
+  } catch (err) {
+    console.error("❌ POST UPDATE MANGA ERROR:", err);
     res.status(500).json({ error: "Errore server" });
   }
 });
