@@ -123,7 +123,6 @@ function auth(req, res, next) {
 
   try {
     const decoded = jwt.verify(token, "SUPER_SECRET");
-    // opzionale: attach decoded to req.user
     req.user = decoded;
     next();
   } catch (err) {
@@ -133,12 +132,11 @@ function auth(req, res, next) {
 }
 
 //
-// UPDATE MANGA (ora aggiorna più campi)
+// UPDATE MANGA (aggiorna campi e ritorna la riga aggiornata)
 //
 router.put("/:id", auth, async (req, res) => {
   try {
     const { id } = req.params;
-    // accettiamo più campi dal client
     const {
       coverurl,
       trama,
@@ -151,8 +149,12 @@ router.put("/:id", auth, async (req, res) => {
       editore
     } = req.body;
 
-    // aggiorniamo solo i campi che vogliamo persistenti
-    await pool.query(`
+    // log payload per debug
+    console.log(`UPDATE /api/manga/${id} payload:`, {
+      coverurl, trama, volumiposseduti, volumitotali, titolo, autore, genere, costo, editore
+    });
+
+    const result = await pool.query(`
       UPDATE "Manga"
       SET
         "CoverURL" = $1,
@@ -165,6 +167,7 @@ router.put("/:id", auth, async (req, res) => {
         "Costo" = COALESCE($8, "Costo"),
         "Editore" = COALESCE($9, "Editore")
       WHERE "ID" = $10
+      RETURNING *
     `,
     [
       coverurl || null,
@@ -179,8 +182,15 @@ router.put("/:id", auth, async (req, res) => {
       id
     ]);
 
-    res.json({ success: true });
+    if (!result || !result.rows || result.rows.length === 0) {
+      console.warn(`UPDATE returned no rows for ID ${id}`);
+      return res.status(404).json({ error: "Record non trovato" });
+    }
 
+    const updated = result.rows[0];
+    console.log(`UPDATE success for ID ${id}:`, updated);
+
+    res.json({ success: true, updated });
   } catch (err) {
     console.error("❌ UPDATE MANGA ERROR:", err);
     res.status(500).json({ error: "Errore server" });
