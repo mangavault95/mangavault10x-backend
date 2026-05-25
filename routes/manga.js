@@ -9,7 +9,7 @@ function cleanHtml(text) {
 }
 
 //
-// ✅ ENRICH (PRECISO + TRADUZIONE)
+// ✅ ENRICH
 //
 router.post("/enrich", async (req, res) => {
   try {
@@ -55,13 +55,11 @@ router.post("/enrich", async (req, res) => {
       return res.json({ error: "Nessun risultato trovato" });
     }
 
-    // ✅ MATCH PIÙ PRECISO
     let manga =
       list.find(m =>
         m.title.romaji?.toLowerCase().includes(titolo.toLowerCase())
       ) || list[0];
 
-    // ✅ MATCH AUTORE
     if (autore) {
       const found = list.find(m =>
         m.staff?.edges?.some(s =>
@@ -73,12 +71,10 @@ router.post("/enrich", async (req, res) => {
 
     let trama = cleanHtml(manga.description);
 
-    // ✅ LIMIT PER TRADUZIONE
     if (trama.length > 400) {
       trama = trama.substring(0, 400);
     }
 
-    // ✅ TRADUZIONE
     try {
       trama = await translateToItalian(trama);
     } catch {}
@@ -131,7 +127,7 @@ function auth(req, res, next) {
 }
 
 //
-// ✅ UPDATE (SALVATAGGIO FIXATO)
+// ✅ UPDATE MANGA
 //
 router.put("/:id", auth, async (req, res) => {
   try {
@@ -167,6 +163,28 @@ router.put("/:id", auth, async (req, res) => {
   }
 });
 
+//
+// ⭐ NEW — UPDATE RATING
+//
+router.post("/updateRating", auth, async (req, res) => {
+  const { id, rating } = req.body;
+
+  try {
+    await pool.query(
+      `UPDATE "Manga" SET "Valutazione" = $1 WHERE "ID" = $2`,
+      [rating, id]
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("❌ UPDATE RATING ERROR:", err);
+    res.status(500).json({ error: "Errore server" });
+  }
+});
+
+//
+// GET ALL
+//
 router.get("/", async (req, res) => {
   const r = await pool.query(`SELECT * FROM "Manga" ORDER BY "ID" DESC`);
   res.json(r.rows);
