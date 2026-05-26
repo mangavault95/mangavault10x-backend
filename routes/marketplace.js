@@ -18,18 +18,6 @@ function mean(values) {
   return values.reduce((s,v) => s + v, 0) / values.length;
 }
 
-// helper: normalize price object {value, currency}
-function extractPriceFromEbayItem(item) {
-  // item.itemId / item.price / item.price.value depending on endpoint
-  // try common shapes
-  const p = item.price || item.price?.value || item.buyingOptions?.[0]?.price;
-  if (!p) return null;
-  const value = Number(p.value ?? p);
-  const currency = p.currency ?? p.currencyCode ?? "EUR";
-  if (isNaN(value)) return null;
-  return { value, currency };
-}
-
 // convert currency if needed - placeholder (in prod usa un servizio FX)
 async function convertToEUR(amount, currency) {
   if (!currency || currency === "EUR") return amount;
@@ -58,17 +46,14 @@ async function getEbayAppToken() {
 // eBay search (Browse API) - best-effort: collects itemSummaries prices
 async function searchEbay(query, months = 3, limit = 50) {
   const token = await getEbayAppToken();
-  // endpoint Browse API search
   const url = `https://api.ebay.com/buy/browse/v1/item_summary/search?q=${encodeURIComponent(query)}&limit=${limit}`;
   const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } });
   const items = resp.data.itemSummaries || [];
-  // map to prices
   const prices = items.map(it => {
-    // item.price is {value, currency}
     const p = it.price || it.price?.value;
     if (!p) return null;
     const value = Number(p.value ?? p);
-    const currency = p.currency ?? p.currencyCode ?? "EUR";
+    const currency = p.currency || p.currencyCode || "EUR";
     if (isNaN(value)) return null;
     return { value, currency };
   }).filter(Boolean);
@@ -94,7 +79,6 @@ router.get("/avg-price", async (req, res) => {
         return res.status(502).json({ error: "Errore fetching from eBay" });
       }
     } else {
-      // fallback: no official integration, return empty
       return res.status(400).json({ error: "Market non supportato", supported: ["ebay"] });
     }
 
