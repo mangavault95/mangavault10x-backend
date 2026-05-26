@@ -4,6 +4,9 @@ const express = require("express");
 const cors = require("cors");
 const app = express();
 const port = process.env.PORT || 3000;
+const wishlistRouter = require("./routes/wishlist");
+app.use("/api/wishlist", wishlistRouter);
+
 
 app.use(cors());
 app.use(express.json());
