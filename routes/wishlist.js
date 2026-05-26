@@ -25,5 +25,17 @@ router.post("/", async (req, res) => {
     return res.status(500).json({ error: "Errore server" });
   }
 });
+// GET ALL WISHLIST
+router.get("/all", async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      "SELECT * FROM wishlist_custom ORDER BY created_at DESC"
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json([]);
+  }
+});
 
 module.exports = router;
