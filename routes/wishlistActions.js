@@ -3,7 +3,6 @@ const router = express.Router();
 const pool = require("../db");
 
 // POST /api/wishlist-actions/purchase/:id
-// Sposta un elemento da wishlist_custom alla tabella principale "Manga"
 router.post("/purchase/:id", async (req, res) => {
   const client = await pool.connect();
 
@@ -12,7 +11,7 @@ router.post("/purchase/:id", async (req, res) => {
 
     await client.query("BEGIN");
 
-    // 1) Recupera elemento wishlist
+    // ✅ recupera wishlist item
     const wishlistResult = await client.query(
       `
       SELECT *
@@ -25,12 +24,15 @@ router.post("/purchase/:id", async (req, res) => {
 
     if (wishlistResult.rows.length === 0) {
       await client.query("ROLLBACK");
-      return res.status(404).json({ error: "Elemento wishlist non trovato" });
+
+      return res.status(404).json({
+        error: "Elemento wishlist non trovato"
+      });
     }
 
     const item = wishlistResult.rows[0];
 
-    // 2) Evita duplicati banali per titolo
+    // ✅ evita duplicati
     const duplicateCheck = await client.query(
       `
       SELECT "ID"
@@ -42,7 +44,8 @@ router.post("/purchase/:id", async (req, res) => {
     );
 
     if (duplicateCheck.rows.length > 0) {
-      // Se esiste già, rimuovilo dalla wishlist e basta
+
+      // già presente → rimuovi solo wishlist
       await client.query(
         `
         DELETE FROM wishlist_custom
@@ -56,16 +59,23 @@ router.post("/purchase/:id", async (req, res) => {
       return res.json({
         success: true,
         duplicated: true,
-        message: "Manga già presente in collezione: rimosso dalla wishlist",
-        existingId: duplicateCheck.rows[0].ID
+        message: "Già presente in collezione"
       });
     }
 
-    // 3) Inserisci nella tabella Manga
-    // NON passiamo "ID" perché nel tuo DB è bigint/autoincrement
+    // ✅ genera ID numerico manuale
+    const nextIdResult = await client.query(`
+      SELECT COALESCE(MAX("ID"), 0) + 1 AS next_id
+      FROM "Manga"
+    `);
+
+    const nextId = nextIdResult.rows[0].next_id;
+
+    // ✅ inserisci nella collezione
     const insertResult = await client.query(
       `
       INSERT INTO "Manga" (
+        "ID",
         "Titolo",
         "Autore",
         "CoverURL",
@@ -77,16 +87,17 @@ router.post("/purchase/:id", async (req, res) => {
         "Editore",
         "Valutazione"
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
       RETURNING *
       `,
       [
+        nextId,
         item.titolo || "",
         item.autori || "",
         item.coverurl || "",
         item.trama || "",
         item.generi || "",
-        item.volumitotali !== null && item.volumitotali !== undefined
+        item.volumitotali
           ? Number(item.volumitotali)
           : 0,
         0,
@@ -96,7 +107,7 @@ router.post("/purchase/:id", async (req, res) => {
       ]
     );
 
-    // 4) Elimina dalla wishlist
+    // ✅ elimina wishlist item
     await client.query(
       `
       DELETE FROM wishlist_custom
@@ -112,13 +123,18 @@ router.post("/purchase/:id", async (req, res) => {
       inserted: insertResult.rows[0],
       removedWishlistId: id
     });
+
   } catch (err) {
+
     await client.query("ROLLBACK");
+
     console.error("PURCHASE WISHLIST ERROR:", err);
+
     return res.status(500).json({
       error: "Errore server durante lo spostamento da wishlist a collection",
       details: err.message
     });
+
   } finally {
     client.release();
   }
