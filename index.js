@@ -25,11 +25,13 @@ const mangaRouter = require("./routes/manga");
 const wishlistRouter = require("./routes/wishlist");
 const wishlistActionsRouter = require("./routes/wishlistActions");
 const readingHistoryRouter = require("./routes/readingHistory");
+const readingSessionsRouter = require("./routes/readingSessions");
 
 app.use("/api/manga", mangaRouter);
 app.use("/api/wishlist", wishlistRouter);
 app.use("/api/wishlist-actions", wishlistActionsRouter);
 app.use("/api/reading-history", readingHistoryRouter);
+app.use("/api/reading-sessions", readingSessionsRouter);
 
 app.get("/", (req, res) => {
   res.send("MangaVault API attiva 🚀");
@@ -42,4 +44,3 @@ app.get("/health", (req, res) => {
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
-``
