@@ -1,10 +1,9 @@
 const express = require("express");
-const { randomUUID } = require("crypto");
 const router = express.Router();
 const pool = require("../db");
 
 // POST /api/wishlist-actions/purchase/:id
-// Legge da wishlist_custom, inserisce in "Manga", poi rimuove dalla wishlist
+// Sposta un elemento da wishlist_custom alla tabella principale "Manga"
 router.post("/purchase/:id", async (req, res) => {
   const client = await pool.connect();
 
@@ -13,7 +12,7 @@ router.post("/purchase/:id", async (req, res) => {
 
     await client.query("BEGIN");
 
-    // 1) prendo il manga dalla wishlist
+    // 1) Recupera elemento wishlist
     const wishlistResult = await client.query(
       `
       SELECT *
@@ -31,7 +30,7 @@ router.post("/purchase/:id", async (req, res) => {
 
     const item = wishlistResult.rows[0];
 
-    // 2) controllo se esiste già in Manga per evitare duplicati stupidi
+    // 2) Evita duplicati banali per titolo
     const duplicateCheck = await client.query(
       `
       SELECT "ID"
@@ -43,7 +42,7 @@ router.post("/purchase/:id", async (req, res) => {
     );
 
     if (duplicateCheck.rows.length > 0) {
-      // Se esiste già, lo tolgo solo dalla wishlist
+      // Se esiste già, rimuovilo dalla wishlist e basta
       await client.query(
         `
         DELETE FROM wishlist_custom
@@ -62,13 +61,11 @@ router.post("/purchase/:id", async (req, res) => {
       });
     }
 
-    // 3) inserisco nella tabella Manga
-    const newId = randomUUID();
-
+    // 3) Inserisci nella tabella Manga
+    // NON passiamo "ID" perché nel tuo DB è bigint/autoincrement
     const insertResult = await client.query(
       `
       INSERT INTO "Manga" (
-        "ID",
         "Titolo",
         "Autore",
         "CoverURL",
@@ -80,11 +77,10 @@ router.post("/purchase/:id", async (req, res) => {
         "Editore",
         "Valutazione"
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
       RETURNING *
       `,
       [
-        newId,
         item.titolo || "",
         item.autori || "",
         item.coverurl || "",
@@ -93,14 +89,14 @@ router.post("/purchase/:id", async (req, res) => {
         item.volumitotali !== null && item.volumitotali !== undefined
           ? Number(item.volumitotali)
           : 0,
-        0,          // appena acquistato, ma non ancora segnato come posseduto oltre 0
-        0,          // costo default
-        "",         // editore default
-        0           // valutazione default
+        0,
+        0,
+        "",
+        0
       ]
     );
 
-    // 4) lo elimino dalla wishlist
+    // 4) Elimina dalla wishlist
     await client.query(
       `
       DELETE FROM wishlist_custom
