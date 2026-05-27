@@ -5,7 +5,6 @@ const cors = require("cors");
 const app = express();
 const port = process.env.PORT || 3000;
 const wishlistRouter = require("./routes/wishlist");
-app.use("/api/wishlist", wishlistRouter);
 
 
 app.use(
@@ -17,6 +16,7 @@ app.use(
 );
 
 app.use(express.json());
+app.use("/api/wishlist", wishlistRouter);
 
 // importa le tue route esistenti
 try {
