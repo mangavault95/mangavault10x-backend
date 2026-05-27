@@ -8,9 +8,9 @@ function cleanHtml(text) {
   return text?.replace(/<[^>]*>/g, "") || "";
 }
 
-//
+// --------------------------------------------------
 // ENRICH
-//
+// --------------------------------------------------
 router.post("/enrich", async (req, res) => {
   try {
     const { titolo, autore } = req.body;
@@ -23,14 +23,23 @@ router.post("/enrich", async (req, res) => {
       query ($search: String) {
         Page(perPage: 10) {
           media(search: $search, type: MANGA) {
-            title { romaji english }
+            title {
+              romaji
+              english
+            }
             description
-            coverImage { large }
+            coverImage {
+              large
+            }
             volumes
+            genres
             staff {
               edges {
+                role
                 node {
-                  name { full }
+                  name {
+                    full
+                  }
                 }
               }
             }
@@ -41,7 +50,9 @@ router.post("/enrich", async (req, res) => {
 
     const response = await fetch("https://graphql.anilist.co", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json"
+      },
       body: JSON.stringify({
         query,
         variables: { search: titolo }
@@ -49,24 +60,35 @@ router.post("/enrich", async (req, res) => {
     });
 
     const result = await response.json();
-    const list = result.data?.Page?.media;
+    const list = result.data?.Page?.media || [];
 
     if (!list || list.length === 0) {
       return res.json({ error: "Nessun risultato trovato" });
     }
 
+    // 1) prova a scegliere il miglior match sul titolo
     let manga =
-      list.find(m =>
-        m.title.romaji?.toLowerCase().includes(titolo.toLowerCase())
-      ) || list[0];
+      list.find((m) => {
+        const romaji = m.title?.romaji?.toLowerCase() || "";
+        const english = m.title?.english?.toLowerCase() || "";
+        const search = titolo.toLowerCase();
 
-    if (autore) {
-      const found = list.find(m =>
-        m.staff?.edges?.some(s =>
-          s.node.name.full.toLowerCase().includes(autore.toLowerCase())
+        return romaji.includes(search) || english.includes(search);
+      }) || list[0];
+
+    // 2) se l'utente passa anche autore, usa quello per affinare
+    if (autore && autore.trim() !== "") {
+      const searchAuthor = autore.toLowerCase();
+
+      const foundByAuthor = list.find((m) =>
+        m.staff?.edges?.some((s) =>
+          s?.node?.name?.full?.toLowerCase().includes(searchAuthor)
         )
       );
-      if (found) manga = found;
+
+      if (foundByAuthor) {
+        manga = foundByAuthor;
+      }
     }
 
     let trama = cleanHtml(manga.description);
@@ -77,24 +99,38 @@ router.post("/enrich", async (req, res) => {
 
     try {
       trama = await translateToItalian(trama);
-    } catch {}
+    } catch (e) {
+      // se la traduzione fallisce, tengo il testo pulito così com'è
+    }
 
-    res.json({
-      titolo: manga.title.romaji || manga.title.english,
+    const authors = Array.from(
+      new Set(
+        (manga.staff?.edges || [])
+          .map((s) => s?.node?.name?.full)
+          .filter(Boolean)
+      )
+    );
+
+    const autoreFinale = authors.join(", ");
+    const genereFinale = (manga.genres || []).join(", ");
+
+    return res.json({
+      titolo: manga.title?.romaji || manga.title?.english || titolo,
+      autore: autoreFinale,
+      genere: genereFinale,
       trama,
-      coverurl: manga.coverImage?.large,
+      coverurl: manga.coverImage?.large || "",
       volumitotali: manga.volumes || 0
     });
-
   } catch (err) {
     console.error("❌ ENRICH ERROR:", err);
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 });
 
-//
+// --------------------------------------------------
 // LOGIN
-//
+// --------------------------------------------------
 router.post("/login", (req, res) => {
   const { username, password } = req.body;
 
@@ -102,15 +138,16 @@ router.post("/login", (req, res) => {
     const token = jwt.sign({ user: "admin" }, "SUPER_SECRET", {
       expiresIn: "2h"
     });
+
     return res.json({ token });
   }
 
-  res.status(401).json({ error: "Credenziali errate" });
+  return res.status(401).json({ error: "Credenziali errate" });
 });
 
-//
-// AUTH middleware
-//
+// --------------------------------------------------
+// AUTH MIDDLEWARE
+// --------------------------------------------------
 function auth(req, res, next) {
   const header = req.headers.authorization;
 
@@ -127,13 +164,13 @@ function auth(req, res, next) {
     next();
   } catch (err) {
     console.error("AUTH: token verify error:", err.message);
-    res.status(403).json({ error: "Token non valido" });
+    return res.status(403).json({ error: "Token non valido" });
   }
 }
 
-//
-// UPDATE MANGA (PUT /:id) - mantiene compatibilità
-//
+// --------------------------------------------------
+// UPDATE MANGA (PUT /:id)
+// --------------------------------------------------
 router.put("/:id", auth, async (req, res) => {
   try {
     const { id } = req.params;
@@ -151,7 +188,8 @@ router.put("/:id", auth, async (req, res) => {
 
     console.log(`PUT /api/manga/${id} payload:`, req.body);
 
-    const result = await pool.query(`
+    const result = await pool.query(
+      `
       UPDATE "Manga"
       SET
         "CoverURL" = $1,
@@ -165,19 +203,20 @@ router.put("/:id", auth, async (req, res) => {
         "Editore" = COALESCE($9, "Editore")
       WHERE "ID" = $10
       RETURNING *
-    `,
-    [
-      coverurl || null,
-      trama || null,
-      volumiposseduti || 0,
-      volumitotali || 0,
-      titolo || null,
-      autore || null,
-      genere || null,
-      costo || null,
-      editore || null,
-      id
-    ]);
+      `,
+      [
+        coverurl || null,
+        trama || null,
+        volumiposseduti || 0,
+        volumitotali || 0,
+        titolo || null,
+        autore || null,
+        genere || null,
+        costo || null,
+        editore || null,
+        id
+      ]
+    );
 
     if (!result || !result.rows || result.rows.length === 0) {
       console.warn(`PUT UPDATE returned no rows for ID ${id}`);
@@ -187,17 +226,16 @@ router.put("/:id", auth, async (req, res) => {
     const updated = result.rows[0];
     console.log(`PUT UPDATE success for ID ${id}:`, updated);
 
-    res.json({ success: true, updated });
+    return res.json({ success: true, updated });
   } catch (err) {
     console.error("❌ PUT UPDATE MANGA ERROR:", err);
-    res.status(500).json({ error: "Errore server" });
+    return res.status(500).json({ error: "Errore server" });
   }
 });
 
-//
-// NEW: UPDATE MANGA via POST /update (pattern come updateRating)
-// - accetta id nel body, utile per client che usano POST
-//
+// --------------------------------------------------
+// UPDATE MANGA via POST /update
+// --------------------------------------------------
 router.post("/update", auth, async (req, res) => {
   try {
     const {
@@ -219,7 +257,8 @@ router.post("/update", auth, async (req, res) => {
 
     console.log(`POST /api/manga/update payload:`, req.body);
 
-    const result = await pool.query(`
+    const result = await pool.query(
+      `
       UPDATE "Manga"
       SET
         "CoverURL" = $1,
@@ -233,19 +272,20 @@ router.post("/update", auth, async (req, res) => {
         "Editore" = COALESCE($9, "Editore")
       WHERE "ID" = $10
       RETURNING *
-    `,
-    [
-      coverurl || null,
-      trama || null,
-      volumiposseduti || 0,
-      volumitotali || 0,
-      titolo || null,
-      autore || null,
-      genere || null,
-      costo || null,
-      editore || null,
-      id
-    ]);
+      `,
+      [
+        coverurl || null,
+        trama || null,
+        volumiposseduti || 0,
+        volumitotali || 0,
+        titolo || null,
+        autore || null,
+        genere || null,
+        costo || null,
+        editore || null,
+        id
+      ]
+    );
 
     if (!result || !result.rows || result.rows.length === 0) {
       console.warn(`POST UPDATE returned no rows for ID ${id}`);
@@ -255,16 +295,16 @@ router.post("/update", auth, async (req, res) => {
     const updated = result.rows[0];
     console.log(`POST UPDATE success for ID ${id}:`, updated);
 
-    res.json({ success: true, updated });
+    return res.json({ success: true, updated });
   } catch (err) {
     console.error("❌ POST UPDATE MANGA ERROR:", err);
-    res.status(500).json({ error: "Errore server" });
+    return res.status(500).json({ error: "Errore server" });
   }
 });
 
-//
+// --------------------------------------------------
 // UPDATE RATING
-//
+// --------------------------------------------------
 router.post("/updateRating", auth, async (req, res) => {
   const { id, rating } = req.body;
 
@@ -274,19 +314,19 @@ router.post("/updateRating", auth, async (req, res) => {
       [rating, id]
     );
 
-    res.json({ success: true });
+    return res.json({ success: true });
   } catch (err) {
     console.error("❌ UPDATE RATING ERROR:", err);
-    res.status(500).json({ error: "Errore server" });
+    return res.status(500).json({ error: "Errore server" });
   }
 });
 
-//
+// --------------------------------------------------
 // GET ALL
-//
+// --------------------------------------------------
 router.get("/", async (req, res) => {
   const r = await pool.query(`SELECT * FROM "Manga" ORDER BY "ID" DESC`);
-  res.json(r.rows);
+  return res.json(r.rows);
 });
 
 module.exports = router;
