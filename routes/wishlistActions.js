@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
-
+ 
 // POST /api/wishlist-actions/purchase/:id
 router.post("/purchase/:id", async (req, res) => {
   const client = await pool.connect();
