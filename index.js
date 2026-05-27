@@ -6,14 +6,18 @@ const cors = require("cors");
 const app = express();
 const port = process.env.PORT || 3000;
 
-// ✅ CORS FIX COMPLETO
-app.use(
-  cors({
-    origin: "*",
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
+// ✅ CORS FIX DEFINITIVO
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+
+  next();
+});
 
 app.use(express.json());
 
@@ -21,11 +25,13 @@ app.use(express.json());
 const mangaRouter = require("./routes/manga");
 const wishlistRouter = require("./routes/wishlist");
 
-// usa le route
+// ✅ ROUTE ACQUISTO
+const wishlistActions = require("./routes/wishlistActions");
+
 app.use("/api/manga", mangaRouter);
 app.use("/api/wishlist", wishlistRouter);
+app.use("/api/wishlist-actions", wishlistActions);
 
-// ✅ TEST ROUTE
 app.get("/", (req, res) => {
   res.send("API OK 🚀");
 });
@@ -33,3 +39,4 @@ app.get("/", (req, res) => {
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
+``
