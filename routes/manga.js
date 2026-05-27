@@ -8,6 +8,54 @@ function cleanHtml(text) {
   return text?.replace(/<[^>]*>/g, "") || "";
 }
 
+function normalizeSpaces(text) {
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+function isTranslationWarning(text) {
+  const value = String(text || "").toLowerCase();
+
+  return (
+    value.includes("mymemory warning") ||
+    value.includes("all available free translations") ||
+    value.includes("mymemory.translated.net") ||
+    value.includes("doc/usagelimits.php") ||
+    value.includes("you used all available free translations")
+  );
+}
+
+function uniqueStrings(list) {
+  return Array.from(new Set((list || []).filter(Boolean)));
+}
+
+function getFilteredAuthors(staffEdges = []) {
+  const safeEdges = Array.isArray(staffEdges) ? staffEdges : [];
+
+  // Escludo ruoli non autoriali
+  const excludedRolePattern =
+    /(translator|translation|localization|lettering|letterer|assistant|editor|supervisor)/i;
+
+  // Privilegio ruoli “creator”
+  const preferredRolePattern =
+    /(story|art|story & art|original creator|creator|script|illustration|manga)/i;
+
+  const creatorEdges = safeEdges.filter((edge) => {
+    const role = edge?.role || "";
+    return !excludedRolePattern.test(role);
+  });
+
+  const preferredCreators = creatorEdges.filter((edge) => {
+    const role = edge?.role || "";
+    return preferredRolePattern.test(role);
+  });
+
+  const finalEdges = preferredCreators.length > 0 ? preferredCreators : creatorEdges;
+
+  return uniqueStrings(
+    finalEdges.map((edge) => edge?.node?.name?.full).filter(Boolean)
+  );
+}
+
 // --------------------------------------------------
 // ENRICH
 // --------------------------------------------------
@@ -60,67 +108,70 @@ router.post("/enrich", async (req, res) => {
     });
 
     const result = await response.json();
-    const list = result.data?.Page?.media || [];
+    const list = result?.data?.Page?.media || [];
 
-    if (!list || list.length === 0) {
+    if (!Array.isArray(list) || list.length === 0) {
       return res.json({ error: "Nessun risultato trovato" });
     }
 
-    // 1) prova a scegliere il miglior match sul titolo
+    const searchTitle = titolo.toLowerCase();
+    const searchAuthor = normalizeSpaces(autore).toLowerCase();
+
+    // 1) priorità al titolo
     let manga =
       list.find((m) => {
-        const romaji = m.title?.romaji?.toLowerCase() || "";
-        const english = m.title?.english?.toLowerCase() || "";
-        const search = titolo.toLowerCase();
+        const romaji = (m?.title?.romaji || "").toLowerCase();
+        const english = (m?.title?.english || "").toLowerCase();
 
-        return romaji.includes(search) || english.includes(search);
+        return romaji.includes(searchTitle) || english.includes(searchTitle);
       }) || list[0];
 
-    // 2) se l'utente passa anche autore, usa quello per affinare
-    if (autore && autore.trim() !== "") {
-      const searchAuthor = autore.toLowerCase();
-
-      const foundByAuthor = list.find((m) =>
-        m.staff?.edges?.some((s) =>
-          s?.node?.name?.full?.toLowerCase().includes(searchAuthor)
-        )
-      );
+    // 2) se è stato passato autore, prova a raffinare sul vero autore (filtrato)
+    if (searchAuthor) {
+      const foundByAuthor = list.find((m) => {
+        const authors = getFilteredAuthors(m?.staff?.edges || []);
+        return authors.some((name) => name.toLowerCase().includes(searchAuthor));
+      });
 
       if (foundByAuthor) {
         manga = foundByAuthor;
       }
     }
 
-    let trama = cleanHtml(manga.description);
+    let trama = cleanHtml(manga?.description || "");
+    trama = normalizeSpaces(trama);
 
     if (trama.length > 400) {
       trama = trama.substring(0, 400);
     }
 
-    try {
-      trama = await translateToItalian(trama);
-    } catch (e) {
-      // se la traduzione fallisce, tengo il testo pulito così com'è
+    // Traduco solo se ottengo una traduzione sana.
+    // Se MyMemory è a quota finita e risponde con warning, tengo la trama originale.
+    let tramaFinale = trama;
+
+    if (trama) {
+      try {
+        const translated = await translateToItalian(trama);
+
+        if (translated && !isTranslationWarning(translated)) {
+          tramaFinale = translated;
+        }
+      } catch (e) {
+        // fallback silenzioso: tengo la trama originale
+      }
     }
 
-    const authors = Array.from(
-      new Set(
-        (manga.staff?.edges || [])
-          .map((s) => s?.node?.name?.full)
-          .filter(Boolean)
-      )
-    );
-
+    const authors = getFilteredAuthors(manga?.staff?.edges || []);
     const autoreFinale = authors.join(", ");
-    const genereFinale = (manga.genres || []).join(", ");
+    const genereFinale = uniqueStrings(manga?.genres || []).join(", ");
 
     return res.json({
-      titolo: manga.title?.romaji || manga.title?.english || titolo,
+      titolo: manga?.title?.romaji || manga?.title?.english || titolo,
       autore: autoreFinale,
       genere: genereFinale,
-      trama,
-      coverurl: manga.coverImage?.large || "",
-      volumitotali: manga.volumes || 0
+      trama: tramaFinale,
+      coverurl: manga?.coverImage?.large || "",
+      volumitotali: manga?.volumes || 0
     });
   } catch (err) {
     console.error("❌ ENRICH ERROR:", err);
@@ -223,10 +274,7 @@ router.put("/:id", auth, async (req, res) => {
       return res.status(404).json({ error: "Record non trovato" });
     }
 
-    const updated = result.rows[0];
-    console.log(`PUT UPDATE success for ID ${id}:`, updated);
-
-    return res.json({ success: true, updated });
+    return res.json({ success: true, updated: result.rows[0] });
   } catch (err) {
     console.error("❌ PUT UPDATE MANGA ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
@@ -292,10 +340,7 @@ router.post("/update", auth, async (req, res) => {
       return res.status(404).json({ error: "Record non trovato" });
     }
 
-    const updated = result.rows[0];
-    console.log(`POST UPDATE success for ID ${id}:`, updated);
-
-    return res.json({ success: true, updated });
+    return res.json({ success: true, updated: result.rows[0] });
   } catch (err) {
     console.error("❌ POST UPDATE MANGA ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
