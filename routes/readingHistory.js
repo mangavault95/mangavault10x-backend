@@ -27,7 +27,9 @@ router.post("/", async (req, res) => {
     const { manga_id, titolo, autore, coverurl, volume } = req.body;
 
     if (!manga_id || !titolo) {
-      return res.status(400).json({ error: "manga_id e titolo sono obbligatori" });
+      return res.status(400).json({
+        error: "manga_id e titolo sono obbligatori"
+      });
     }
 
     const result = await pool.query(
