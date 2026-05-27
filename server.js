@@ -3,6 +3,8 @@ const cors = require("cors");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const wishlistRouter = require("./routes/wishlist");
+app.use("/api/wishlist", wishlistRouter);
 
 // ✅ CORS (Express 5 compatibile)
 app.use(
