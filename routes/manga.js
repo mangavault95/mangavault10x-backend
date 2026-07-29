@@ -1,63 +1,11 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
-const jwt = require("jsonwebtoken");
-const { translateToItalian } = require("../services/translate");
-
-function cleanHtml(text) {
-  return text?.replace(/<[^>]*>/g, "") || "";
-}
-
-function normalizeSpaces(text) {
-  return String(text || "").replace(/\s+/g, " ").trim();
-}
-
-function isTranslationWarning(text) {
-  const value = String(text || "").toLowerCase();
-
-  return (
-    value.includes("mymemory warning") ||
-    value.includes("all available free translations") ||
-    value.includes("mymemory.translated.net") ||
-    value.includes("doc/usagelimits.php") ||
-    value.includes("you used all available free translations")
-  );
-}
-
-function uniqueStrings(list) {
-  return Array.from(new Set((list || []).filter(Boolean)));
-}
-
-function getFilteredAuthors(staffEdges = []) {
-  const safeEdges = Array.isArray(staffEdges) ? staffEdges : [];
-
-  // Escludo ruoli non autoriali
-  const excludedRolePattern =
-    /(translator|translation|localization|lettering|letterer|assistant|editor|supervisor)/i;
-
-  // Privilegio ruoli “creator”
-  const preferredRolePattern =
-    /(story|art|story & art|original creator|creator|script|illustration|manga)/i;
-
-  const creatorEdges = safeEdges.filter((edge) => {
-    const role = edge?.role || "";
-    return !excludedRolePattern.test(role);
-  });
-
-  const preferredCreators = creatorEdges.filter((edge) => {
-    const role = edge?.role || "";
-    return preferredRolePattern.test(role);
-  });
-
-  const finalEdges = preferredCreators.length > 0 ? preferredCreators : creatorEdges;
-
-  return uniqueStrings(
-    finalEdges.map((edge) => edge?.node?.name?.full).filter(Boolean)
-  );
-}
+const { login, requireAuth } = require("../services/auth");
+const { enrich } = require("../services/enrich");
 
 // --------------------------------------------------
-// ENRICH
+// ENRICH — dati di una serie dalle fonti esterne
 // --------------------------------------------------
 router.post("/enrich", async (req, res) => {
   try {
@@ -67,115 +15,151 @@ router.post("/enrich", async (req, res) => {
       return res.status(400).json({ error: "Titolo mancante" });
     }
 
-    const query = `
-      query ($search: String) {
-        Page(perPage: 10) {
-          media(search: $search, type: MANGA) {
-            title {
-              romaji
-              english
-            }
-            description
-            coverImage {
-              large
-            }
-            volumes
-            genres
-            staff {
-              edges {
-                role
-                node {
-                  name {
-                    full
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    `;
+    const result = await enrich(titolo, autore);
 
-    const response = await fetch("https://graphql.anilist.co", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        query,
-        variables: { search: titolo }
-      })
-    });
-
-    const result = await response.json();
-    const list = result?.data?.Page?.media || [];
-
-    if (!Array.isArray(list) || list.length === 0) {
-      return res.json({ error: "Nessun risultato trovato" });
+    if (!result.trovato) {
+      return res.json({ error: "Nessun risultato trovato", dettagli: result.errori });
     }
 
-    const searchTitle = titolo.toLowerCase();
-    const searchAuthor = normalizeSpaces(autore).toLowerCase();
-
-    // 1) priorità al titolo
-    let manga =
-      list.find((m) => {
-        const romaji = (m?.title?.romaji || "").toLowerCase();
-        const english = (m?.title?.english || "").toLowerCase();
-
-        return romaji.includes(searchTitle) || english.includes(searchTitle);
-      }) || list[0];
-
-    // 2) se è stato passato autore, prova a raffinare sul vero autore (filtrato)
-    if (searchAuthor) {
-      const foundByAuthor = list.find((m) => {
-        const authors = getFilteredAuthors(m?.staff?.edges || []);
-        return authors.some((name) => name.toLowerCase().includes(searchAuthor));
-      });
-
-      if (foundByAuthor) {
-        manga = foundByAuthor;
-      }
-    }
-
-    let trama = cleanHtml(manga?.description || "");
-    trama = normalizeSpaces(trama);
-
-    if (trama.length > 400) {
-      trama = trama.substring(0, 400);
-    }
-
-    // Traduco solo se ottengo una traduzione sana.
-    // Se MyMemory è a quota finita e risponde con warning, tengo la trama originale.
-    let tramaFinale = trama;
-
-    if (trama) {
-      try {
-        const translated = await translateToItalian(trama);
-
-        if (translated && !isTranslationWarning(translated)) {
-          tramaFinale = translated;
-        }
-      } catch (e) {
-        // fallback silenzioso: tengo la trama originale
-      }
-    }
-
-    const authors = getFilteredAuthors(manga?.staff?.edges || []);
-    const autoreFinale = authors.join(", ");
-    const genereFinale = uniqueStrings(manga?.genres || []).join(", ");
-
-    return res.json({
-      titolo: manga?.title?.romaji || manga?.title?.english || titolo,
-      autore: autoreFinale,
-      genere: genereFinale,
-      trama: tramaFinale,
-      coverurl: manga?.coverImage?.large || "",
-      volumitotali: manga?.volumes || 0
-    });
+    // Il titolo lo decide l'utente: le fonti danno il romaji/giapponese,
+    // ma in collezione vale l'edizione italiana.
+    return res.json({ titolo, ...result });
   } catch (err) {
     console.error("❌ ENRICH ERROR:", err);
     return res.status(500).json({ error: err.message });
+  }
+});
+
+// --------------------------------------------------
+// ENRICH BULK — ricompila le schede incomplete.
+//
+// Lavora a lotti (default 20) per non sforare i limiti
+// delle API e non far scadere la richiesta HTTP.
+// Rilanciarlo finché "rimanenti" non arriva a zero.
+// --------------------------------------------------
+router.post("/enrich-bulk", requireAuth, async (req, res) => {
+  const limit = Math.min(Number(req.body?.limit) || 20, 50);
+  const soloTrame = Boolean(req.body?.soloTrame);
+  const soloCover = Boolean(req.body?.soloCover);
+
+  try {
+    // Le copertine non AniList sono un problema a parte: miniature a
+    // bassa risoluzione (AnimeClick), URL che si rompono (MyAnimeList)
+    // o cache temporanee che scadono (gstatic). Queste schede possono
+    // essere complete sotto ogni altro aspetto, quindi servono un
+    // filtro dedicato.
+    let filtro;
+
+    if (soloCover) {
+      filtro = `("CoverURL" IS NULL OR "CoverURL" NOT LIKE '%anilist%')`;
+    } else if (soloTrame) {
+      filtro = `"Trama" IS NULL`;
+    } else {
+      filtro = `("Trama" IS NULL OR "Editore" IS NULL OR "VolumiTotali" IS NULL
+                 OR "Disegnatore" IS NULL OR "StatoSerie" IS NULL)`;
+    }
+
+    // L'offset serve a non riprovare all'infinito le schede che le
+    // fonti non riescono a risolvere: senza di esso ogni lotto
+    // riparte dalle stesse prime N e il conteggio non scende mai.
+    const offset = Math.max(Number(req.body?.offset) || 0, 0);
+
+    const { rows } = await pool.query(
+      `SELECT "ID", "Titolo", "Autore" FROM "Manga" WHERE ${filtro}
+       ORDER BY "ID" LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+
+    const esiti = [];
+    let quotaEsaurita = false;
+
+    for (const riga of rows) {
+      try {
+        const dati = await enrich(riga.Titolo, riga.Autore, { traduci: !soloCover });
+
+        if (!dati.trovato) {
+          esiti.push({ id: riga.ID, titolo: riga.Titolo, esito: "non trovato" });
+          continue;
+        }
+
+        // Regola: riempio solo i campi vuoti, non sovrascrivo mai un
+        // valore già presente — potresti averlo corretto a mano.
+        //
+        // Unica eccezione la copertina: una cover AniList è sempre
+        // meglio di una miniatura AnimeClick o di un URL che scade,
+        // quindi lì il dato nuovo vince.
+        await pool.query(
+          `
+          UPDATE "Manga" SET
+            "Trama"           = COALESCE("Trama",           $1),
+            "CoverURL"        = COALESCE($2,  "CoverURL"),
+            "Genere"          = COALESCE("Genere",          $3),
+            "Disegnatore"     = COALESCE("Disegnatore",     $4),
+            "VolumiTotali"    = COALESCE("VolumiTotali",    $5),
+            "Editore"         = COALESCE("Editore",         $6),
+            "Isbn"            = COALESCE("Isbn",            $7),
+            "PrezzoCopertina" = COALESCE("PrezzoCopertina", $8),
+            "StatoSerie"      = COALESCE("StatoSerie",      $9),
+            "TitoloOriginale" = COALESCE("TitoloOriginale", $10),
+            "AnnoInizio"      = COALESCE("AnnoInizio",      $11)
+          WHERE "ID" = $12
+          `,
+          [
+            dati.trama,
+            dati.coverurl,
+            dati.genere,
+            dati.disegnatore,
+            dati.volumitotali,
+            dati.editore,
+            dati.isbn,
+            dati.prezzoCopertina,
+            dati.statoSerie,
+            dati.titoloOriginale,
+            dati.annoInizio,
+            riga.ID
+          ]
+        );
+
+        esiti.push({
+          id: riga.ID,
+          titolo: riga.Titolo,
+          esito: "aggiornato",
+          tramaInItaliano: dati.tramaInItaliano
+        });
+      } catch (err) {
+        // Quota del traduttore finita: inutile continuare, le schede
+        // successive resterebbero senza trama. Mi fermo e lo dico.
+        if (err.quotaEsaurita) {
+          esiti.push({ id: riga.ID, titolo: riga.Titolo, esito: "quota esaurita" });
+          quotaEsaurita = true;
+          break;
+        }
+
+        esiti.push({ id: riga.ID, titolo: riga.Titolo, esito: "errore", messaggio: err.message });
+      }
+
+      // AniList consente 90 richieste/minuto: mi tengo largo.
+      await new Promise((r) => setTimeout(r, 800));
+    }
+
+    const { rows: conteggio } = await pool.query(
+      `SELECT COUNT(*)::int AS rimanenti FROM "Manga" WHERE ${filtro}`
+    );
+
+    return res.json({
+      elaborati: esiti.length,
+      aggiornati: esiti.filter((e) => e.esito === "aggiornato").length,
+      conTramaItaliana: esiti.filter((e) => e.tramaInItaliano).length,
+      rimanenti: conteggio[0].rimanenti,
+      quotaEsaurita,
+      messaggio: quotaEsaurita
+        ? "Quota giornaliera del traduttore esaurita: riprendi domani."
+        : undefined,
+      esiti
+    });
+  } catch (err) {
+    console.error("❌ ENRICH BULK ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
   }
 });
 
@@ -185,180 +169,146 @@ router.post("/enrich", async (req, res) => {
 router.post("/login", (req, res) => {
   const { username, password } = req.body;
 
-  if (username === "admin" && password === "1234") {
-    const token = jwt.sign({ user: "admin" }, "SUPER_SECRET", {
-      expiresIn: "2h"
-    });
+  try {
+    const token = login(username, password);
+
+    if (!token) {
+      return res.status(401).json({ error: "Credenziali errate" });
+    }
 
     return res.json({ token });
+  } catch (err) {
+    console.error("❌ LOGIN CONFIG ERROR:", err.message);
+    return res.status(500).json({ error: "Autenticazione non configurata" });
   }
-
-  return res.status(401).json({ error: "Credenziali errate" });
 });
 
 // --------------------------------------------------
-// AUTH MIDDLEWARE
+// UPDATE MANGA
 // --------------------------------------------------
-function auth(req, res, next) {
-  const header = req.headers.authorization;
+const CAMPI_AGGIORNABILI = {
+  titolo: "Titolo",
+  autore: "Autore",
+  disegnatore: "Disegnatore",
+  genere: "Genere",
+  trama: "Trama",
+  coverurl: "CoverURL",
+  editore: "Editore",
+  costo: "Costo",
+  volumiposseduti: "VolumiPosseduti",
+  volumitotali: "VolumiTotali",
+  valutazione: "Valutazione",
+  statoSerie: "StatoSerie",
+  prezzoCopertina: "PrezzoCopertina",
+  isbn: "Isbn",
+  annoInizio: "AnnoInizio",
+  titoloOriginale: "TitoloOriginale",
+  preferito: "Preferito"
+};
 
-  if (!header) {
-    console.error("AUTH: no Authorization header");
-    return res.status(401).json({ error: "No token" });
+async function aggiornaManga(id, body) {
+  const set = [];
+  const valori = [];
+
+  for (const [chiave, colonna] of Object.entries(CAMPI_AGGIORNABILI)) {
+    if (body[chiave] === undefined) continue;
+
+    valori.push(body[chiave] === "" ? null : body[chiave]);
+    set.push(`"${colonna}" = $${valori.length}`);
   }
 
-  const token = header.split(" ")[1];
-
-  try {
-    const decoded = jwt.verify(token, "SUPER_SECRET");
-    req.user = decoded;
-    next();
-  } catch (err) {
-    console.error("AUTH: token verify error:", err.message);
-    return res.status(403).json({ error: "Token non valido" });
+  if (set.length === 0) {
+    return { errore: "Nessun campo da aggiornare" };
   }
+
+  valori.push(id);
+
+  const { rows } = await pool.query(
+    `UPDATE "Manga" SET ${set.join(", ")} WHERE "ID" = $${valori.length} RETURNING *`,
+    valori
+  );
+
+  return rows.length === 0 ? { errore: "Record non trovato" } : { riga: rows[0] };
 }
 
 // --------------------------------------------------
-// UPDATE MANGA (PUT /:id)
+// CREA MANGA — una serie nuova, direttamente in collezione.
+//
+// Riusa la stessa mappa CAMPI_AGGIORNABILI dell'update: i campi
+// accettati sono identici, così una scheda creata a mano e una
+// modificata dopo passano dallo stesso filtro di sicurezza.
 // --------------------------------------------------
-router.put("/:id", auth, async (req, res) => {
+router.post("/", requireAuth, async (req, res) => {
   try {
-    const { id } = req.params;
-    const {
-      coverurl,
-      trama,
-      volumiposseduti,
-      volumitotali,
-      titolo,
-      autore,
-      genere,
-      costo,
-      editore
-    } = req.body;
+    const { titolo } = req.body;
 
-    console.log(`PUT /api/manga/${id} payload:`, req.body);
-
-    const result = await pool.query(
-      `
-      UPDATE "Manga"
-      SET
-        "CoverURL" = $1,
-        "Trama" = $2,
-        "VolumiPosseduti" = $3,
-        "VolumiTotali" = $4,
-        "Titolo" = COALESCE($5, "Titolo"),
-        "Autore" = COALESCE($6, "Autore"),
-        "Genere" = COALESCE($7, "Genere"),
-        "Costo" = COALESCE($8, "Costo"),
-        "Editore" = COALESCE($9, "Editore")
-      WHERE "ID" = $10
-      RETURNING *
-      `,
-      [
-        coverurl || null,
-        trama || null,
-        volumiposseduti || 0,
-        volumitotali || 0,
-        titolo || null,
-        autore || null,
-        genere || null,
-        costo || null,
-        editore || null,
-        id
-      ]
-    );
-
-    if (!result || !result.rows || result.rows.length === 0) {
-      console.warn(`PUT UPDATE returned no rows for ID ${id}`);
-      return res.status(404).json({ error: "Record non trovato" });
+    if (!titolo || !String(titolo).trim()) {
+      return res.status(400).json({ error: "Titolo obbligatorio" });
     }
 
-    return res.json({ success: true, updated: result.rows[0] });
+    const colonne = ['"Titolo"'];
+    const valori = [String(titolo).trim()];
+
+    for (const [chiave, colonna] of Object.entries(CAMPI_AGGIORNABILI)) {
+      if (chiave === "titolo" || req.body[chiave] === undefined) continue;
+
+      valori.push(req.body[chiave] === "" ? null : req.body[chiave]);
+      colonne.push(`"${colonna}"`);
+    }
+
+    const segnaposto = colonne.map((_, i) => `$${i + 1}`).join(", ");
+
+    const { rows } = await pool.query(
+      `INSERT INTO "Manga" (${colonne.join(", ")}) VALUES (${segnaposto}) RETURNING *`,
+      valori
+    );
+
+    return res.status(201).json({ success: true, creato: rows[0] });
+  } catch (err) {
+    console.error("❌ CREA MANGA ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+router.put("/:id", requireAuth, async (req, res) => {
+  try {
+    const esito = await aggiornaManga(req.params.id, req.body);
+
+    if (esito.errore) {
+      return res.status(esito.errore === "Record non trovato" ? 404 : 400).json({ error: esito.errore });
+    }
+
+    return res.json({ success: true, updated: esito.riga });
   } catch (err) {
     console.error("❌ PUT UPDATE MANGA ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
   }
 });
 
-// --------------------------------------------------
-// UPDATE MANGA via POST /update
-// --------------------------------------------------
-router.post("/update", auth, async (req, res) => {
+router.post("/update", requireAuth, async (req, res) => {
   try {
-    const {
-      id,
-      coverurl,
-      trama,
-      volumiposseduti,
-      volumitotali,
-      titolo,
-      autore,
-      genere,
-      costo,
-      editore
-    } = req.body;
+    const { id, ...campi } = req.body;
 
-    if (!id) {
-      return res.status(400).json({ error: "ID mancante" });
+    if (!id) return res.status(400).json({ error: "ID mancante" });
+
+    const esito = await aggiornaManga(id, campi);
+
+    if (esito.errore) {
+      return res.status(esito.errore === "Record non trovato" ? 404 : 400).json({ error: esito.errore });
     }
 
-    console.log(`POST /api/manga/update payload:`, req.body);
-
-    const result = await pool.query(
-      `
-      UPDATE "Manga"
-      SET
-        "CoverURL" = $1,
-        "Trama" = $2,
-        "VolumiPosseduti" = $3,
-        "VolumiTotali" = $4,
-        "Titolo" = COALESCE($5, "Titolo"),
-        "Autore" = COALESCE($6, "Autore"),
-        "Genere" = COALESCE($7, "Genere"),
-        "Costo" = COALESCE($8, "Costo"),
-        "Editore" = COALESCE($9, "Editore")
-      WHERE "ID" = $10
-      RETURNING *
-      `,
-      [
-        coverurl || null,
-        trama || null,
-        volumiposseduti || 0,
-        volumitotali || 0,
-        titolo || null,
-        autore || null,
-        genere || null,
-        costo || null,
-        editore || null,
-        id
-      ]
-    );
-
-    if (!result || !result.rows || result.rows.length === 0) {
-      console.warn(`POST UPDATE returned no rows for ID ${id}`);
-      return res.status(404).json({ error: "Record non trovato" });
-    }
-
-    return res.json({ success: true, updated: result.rows[0] });
+    return res.json({ success: true, updated: esito.riga });
   } catch (err) {
     console.error("❌ POST UPDATE MANGA ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
   }
 });
 
-// --------------------------------------------------
-// UPDATE RATING
-// --------------------------------------------------
-router.post("/updateRating", auth, async (req, res) => {
+router.post("/updateRating", requireAuth, async (req, res) => {
   const { id, rating } = req.body;
 
   try {
-    await pool.query(
-      `UPDATE "Manga" SET "Valutazione" = $1 WHERE "ID" = $2`,
-      [rating, id]
-    );
-
+    await pool.query(`UPDATE "Manga" SET "Valutazione" = $1 WHERE "ID" = $2`, [rating, id]);
     return res.json({ success: true });
   } catch (err) {
     console.error("❌ UPDATE RATING ERROR:", err);
@@ -367,11 +317,53 @@ router.post("/updateRating", auth, async (req, res) => {
 });
 
 // --------------------------------------------------
-// GET ALL
+// LETTURA
 // --------------------------------------------------
 router.get("/", async (req, res) => {
-  const r = await pool.query(`SELECT * FROM "Manga" ORDER BY "ID" DESC`);
-  return res.json(r.rows);
+  try {
+    const { rows } = await pool.query(`SELECT * FROM "Manga" ORDER BY "ID" DESC`);
+    return res.json(rows);
+  } catch (err) {
+    console.error("❌ GET MANGA ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+// Vista arricchita: completamento, spesa stimata, schede incomplete.
+router.get("/riepilogo", async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM v_collezione_riepilogo ORDER BY "Titolo"`
+    );
+    return res.json(rows);
+  } catch (err) {
+    console.error("❌ GET RIEPILOGO ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+// Numeri per la dashboard: il totale sempre sott'occhio.
+router.get("/statistiche", async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        COUNT(*)::int                                   AS serie,
+        COALESCE(SUM("VolumiPosseduti"), 0)::int        AS volumi,
+        ROUND(COALESCE(SUM(spesa_stimata), 0), 2)       AS valore_collezione,
+        ROUND(COALESCE(AVG(prezzo_volume), 0), 2)       AS prezzo_medio_volume,
+        COUNT(*) FILTER (WHERE "StatoSerie" = 'conclusa')::int  AS serie_concluse,
+        COUNT(*) FILTER (WHERE "StatoSerie" = 'in_corso')::int  AS serie_in_corso,
+        COUNT(*) FILTER (WHERE completamento_pct = 100)::int    AS serie_complete,
+        COUNT(*) FILTER (WHERE scheda_incompleta)::int          AS schede_incomplete,
+        COUNT(*) FILTER (WHERE trama_mancante)::int             AS trame_mancanti
+      FROM v_collezione_riepilogo
+    `);
+
+    return res.json(rows[0]);
+  } catch (err) {
+    console.error("❌ GET STATISTICHE ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
 });
 
 module.exports = router;

@@ -1,9 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { Pool } = require("pg");
-
-// Usa DATABASE_URL da env (Render/Heroku style)
-const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+const pool = require("../db");
 
 // POST /api/wishlist
 router.post("/", async (req, res) => {
@@ -26,6 +23,51 @@ router.post("/", async (req, res) => {
   }
 });
 
+// PUT /api/wishlist/:id — aggiorna senza ricreare il record,
+// così id e created_at restano quelli originali.
+router.put("/:id", async (req, res) => {
+  try {
+    const { titolo, autori, coverurl, trama, generi, volumitotali, dovecomprare } =
+      req.body;
+
+    if (!titolo) return res.status(400).json({ error: "titolo richiesto" });
+
+    const { rows } = await pool.query(
+      `
+      UPDATE wishlist_custom
+      SET titolo = $1,
+          autori = $2,
+          coverurl = $3,
+          trama = $4,
+          generi = $5,
+          volumitotali = $6,
+          dovecomprare = $7
+      WHERE id = $8
+      RETURNING id, titolo, autori, coverurl, trama, generi, volumitotali, dovecomprare, created_at
+      `,
+      [
+        titolo,
+        autori,
+        coverurl,
+        trama,
+        generi,
+        volumitotali,
+        dovecomprare || "",
+        req.params.id
+      ]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: "Elemento non trovato" });
+    }
+
+    return res.json({ item: rows[0] });
+  } catch (err) {
+    console.error("wishlist PUT error:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
 router.delete("/:id", async (req, res) => {
   try {
     await pool.query(
@@ -37,7 +79,7 @@ router.delete("/:id", async (req, res) => {
     res.status(500).json({ error: "Errore delete" });
   }
 });
-``
+
 // GET ALL WISHLIST
 router.get("/all", async (req, res) => {
   try {
