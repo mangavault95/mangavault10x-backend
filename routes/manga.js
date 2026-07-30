@@ -203,7 +203,8 @@ const CAMPI_AGGIORNABILI = {
   isbn: "Isbn",
   annoInizio: "AnnoInizio",
   titoloOriginale: "TitoloOriginale",
-  preferito: "Preferito"
+  preferito: "Preferito",
+  droppato: "Droppato"
 };
 
 async function aggiornaManga(id, body) {

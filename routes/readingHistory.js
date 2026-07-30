@@ -51,6 +51,7 @@ router.get("/per-serie", async (req, res) => {
         m."VolumiTotali"                          AS volumitotali,
         m."StatoSerie"                            AS statoserie,
         m."Editore"                               AS editore,
+        m."Droppato"                               AS droppato,
 
         -- I volumi distinti in ordine: rileggere lo stesso volume
         -- due volte non deve farlo comparire doppio sullo scaffale.
@@ -62,7 +63,7 @@ router.get("/per-serie", async (req, res) => {
       FROM reading_history h
       LEFT JOIN "Manga" m ON m."ID" = h.manga_id
       GROUP BY h.manga_id, m."Titolo", m."Autore", m."CoverURL",
-               m."VolumiTotali", m."StatoSerie", m."Editore"
+               m."VolumiTotali", m."StatoSerie", m."Editore", m."Droppato"
       ORDER BY MAX(h.read_at) DESC
     `);
 
