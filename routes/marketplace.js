@@ -40,6 +40,57 @@ async function convertToEUR(amount, currency) {
   return amount;
 }
 
+/* ==================================================
+   FILTRI SUGLI ANNUNCI
+   ================================================== */
+
+const PAROLE_COMPLETEZZA = /completa|integrale|cofanetto|raccolta/i;
+const PAROLE_VOLUME_SINGOLO = /\b(vol\.?|volume|n\.?)\s*\d{1,3}\b|\bsingolo\b|\bspaiat[oi]\b/i;
+
+/** Cerca un intervallo tipo "1-18" / "1/18" / "1 – 18" nel titolo. */
+function ampiezzaIntervallo(titolo) {
+  const m = titolo.match(/(\d{1,3})\s*[-/–]\s*(\d{1,3})/);
+
+  if (!m) return null;
+
+  const a = Number(m[1]);
+  const b = Number(m[2]);
+
+  return Number.isFinite(a) && Number.isFinite(b) && b > a ? b - a + 1 : null;
+}
+
+/**
+ * Un annuncio "sembra" la serie completa se dice esplicitamente di
+ * esserlo, o se elenca un intervallo di volumi ampio quanto la serie
+ * (tolleranza di 1: i box set aggiungono spesso un volume bonus).
+ * Senza nessuno di questi segnali, lo scarto solo se sembra
+ * esplicitamente un volume singolo — un titolo ambiguo (es. il nudo
+ * nome della serie, senza numeri né parole chiave) resta incluso:
+ * meglio un annuncio ambiguo che perdere un lotto completo descritto
+ * male. Non cattura i venditori che scrivono solo "Titolo 5" senza
+ * "vol." davanti: è un limite noto, non un bug.
+ */
+function sembraSerieCompleta(titoloAnnuncio, volumiTotali) {
+  const titolo = titoloAnnuncio || "";
+
+  if (PAROLE_COMPLETEZZA.test(titolo)) return true;
+
+  const ampiezza = ampiezzaIntervallo(titolo);
+
+  if (ampiezza != null) {
+    return volumiTotali ? Math.abs(ampiezza - volumiTotali) <= 1 : true;
+  }
+
+  return !PAROLE_VOLUME_SINGOLO.test(titolo);
+}
+
+/** True se il titolo dell'annuncio nomina esplicitamente un'altra edizione. */
+function nominaEdizione(titoloAnnuncio, etichetta) {
+  if (!etichetta) return false;
+
+  return (titoloAnnuncio || "").toLowerCase().includes(etichetta.toLowerCase().trim());
+}
+
 async function getEbayAppToken() {
   const { EBAY_CLIENT_ID, EBAY_CLIENT_SECRET } = process.env;
 
@@ -78,8 +129,12 @@ async function getEbayAppToken() {
  * senza, l'API guarda di default eBay.com USA e i prezzi arrivano in
  * dollari da venditori americani, inutili per stimare cosa costa
  * comprare in Italia.
+ *
+ * Il limite grezzo è più alto di quanti risultati serviranno davvero:
+ * il filtro per completezza/edizione ne scarta una parte, quindi si
+ * parte con più materiale per non restare con un campione minuscolo.
  */
-async function cercaAnnunciAttivi(query, limite = 50) {
+async function cercaAnnunciAttivi(query, limite = 100) {
   const token = await getEbayAppToken();
 
   // `buyingOptions:FIXED_PRICE` esclude le aste: il rilancio corrente
@@ -114,14 +169,14 @@ async function cercaAnnunciAttivi(query, limite = 50) {
 
       if (Number.isNaN(value)) return null;
 
-      return { value, currency: p.currency || "EUR" };
+      return { value, currency: p.currency || "EUR", title: it.title || "" };
     })
     .filter(Boolean);
 }
 
 router.get("/avg-price", async (req, res) => {
   try {
-    const { query, market = "ebay" } = req.query;
+    const { query, market = "ebay", edizione, altreEdizioni, volumiTotali } = req.query;
 
     if (!query) return res.status(400).json({ error: "Parametro query mancante" });
 
@@ -129,15 +184,30 @@ router.get("/avg-price", async (req, res) => {
       return res.status(400).json({ error: "Mercato non supportato", supported: ["ebay"] });
     }
 
-    const cacheKey = `avgprice:${market}:${query}`;
+    const etichettaEdizione = edizione ? String(edizione).trim() : null;
+
+    const etichetteAltreEdizioni = altreEdizioni
+      ? String(altreEdizioni)
+          .split(",")
+          .map((e) => e.trim())
+          .filter(Boolean)
+      : [];
+
+    const totaliAttesi = volumiTotali ? Number(volumiTotali) : null;
+
+    const cacheKey = `avgprice:${market}:${query}:${etichettaEdizione || ""}:${etichetteAltreEdizioni.join("|")}:${totaliAttesi ?? ""}`;
     const cached = cache.get(cacheKey);
 
     if (cached) return res.json({ ...cached, cached: true });
 
+    // Aggiungere l'edizione fra virgolette alla query spinge eBay a
+    // dare più peso agli annunci che la nominano esplicitamente.
+    const queryEbay = etichettaEdizione ? `${query} "${etichettaEdizione}"` : query;
+
     let grezzi;
 
     try {
-      grezzi = await cercaAnnunciAttivi(query);
+      grezzi = await cercaAnnunciAttivi(queryEbay);
     } catch (err) {
       if (err.nonConfigurato) {
         // Non è un guasto: è una funzione che richiede una chiave
@@ -151,16 +221,30 @@ router.get("/avg-price", async (req, res) => {
       return res.status(502).json({ error: "eBay non ha risposto" });
     }
 
+    // Tengo solo gli annunci che sembrano la serie completa e che non
+    // nominano esplicitamente un'edizione diversa da quella cercata
+    // (le sorelle note della stessa opera, se ce ne sono).
+    const filtrati = grezzi.filter((it) => {
+      if (!sembraSerieCompleta(it.title, totaliAttesi)) return false;
+      if (etichetteAltreEdizioni.some((e) => nominaEdizione(it.title, e))) return false;
+
+      return true;
+    });
+
     const normalizzati = [];
 
-    for (const p of grezzi) {
+    for (const p of filtrati) {
       const v = await convertToEUR(p.value, p.currency);
 
       if (v != null) normalizzati.push(Number(v));
     }
 
     if (normalizzati.length === 0) {
-      const payload = { campione: 0, message: "Nessun annuncio trovato" };
+      const payload = {
+        campione: 0,
+        campioneGrezzo: grezzi.length,
+        message: "Nessun annuncio trovato"
+      };
 
       cache.set(cacheKey, payload, 60 * 10);
 
@@ -171,6 +255,10 @@ router.get("/avg-price", async (req, res) => {
       mediana: Number(median(normalizzati).toFixed(2)),
       media: Number(mean(normalizzati).toFixed(2)),
       campione: normalizzati.length,
+      // Quanti annunci c'erano prima del filtro per completezza/edizione:
+      // se il calo è forte il fronte può dirlo invece di far sembrare
+      // il campione più solido di quanto sia.
+      campioneGrezzo: grezzi.length,
       // Il fronte usa questa etichetta per non promettere un dato che
       // l'API non fornisce: sono annunci in vendita ora, non incassi
       // passati.
