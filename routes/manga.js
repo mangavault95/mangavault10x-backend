@@ -257,8 +257,16 @@ router.post("/", requireAuth, async (req, res) => {
       return res.status(400).json({ error: "Titolo obbligatorio" });
     }
 
-    const colonne = ['"Titolo"'];
-    const valori = [String(titolo).trim()];
+    // "ID" non ha un default automatico in questa tabella (nessuna
+    // sequenza collegata) — va calcolato a mano, o l'INSERT fallisce
+    // con "null value in column ID". Stessa ricetta già usata in
+    // wishlistActions.js per portare una serie dalla wishlist qui.
+    const { rows: prossimoId } = await pool.query(
+      `SELECT COALESCE(MAX("ID"), 0) + 1 AS next_id FROM "Manga"`
+    );
+
+    const colonne = ['"ID"', '"Titolo"'];
+    const valori = [prossimoId[0].next_id, String(titolo).trim()];
 
     for (const [chiave, colonna] of Object.entries(CAMPI_AGGIORNABILI)) {
       if (chiave === "titolo" || req.body[chiave] === undefined) continue;
