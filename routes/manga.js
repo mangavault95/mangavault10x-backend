@@ -41,6 +41,7 @@ router.post("/enrich-bulk", requireAuth, async (req, res) => {
   const limit = Math.min(Number(req.body?.limit) || 20, 50);
   const soloTrame = Boolean(req.body?.soloTrame);
   const soloCover = Boolean(req.body?.soloCover);
+  const soloGenere = Boolean(req.body?.soloGenere);
 
   try {
     // Le copertine non AniList sono un problema a parte: miniature a
@@ -48,12 +49,19 @@ router.post("/enrich-bulk", requireAuth, async (req, res) => {
     // o cache temporanee che scadono (gstatic). Queste schede possono
     // essere complete sotto ogni altro aspetto, quindi servono un
     // filtro dedicato.
+    //
+    // Stessa storia per il genere: il filtro generico sotto non lo
+    // controlla, quindi una scheda già completa per il resto (trama,
+    // editore, disegnatore...) può restare senza genere per sempre
+    // se non la si cerca esplicitamente.
     let filtro;
 
     if (soloCover) {
       filtro = `("CoverURL" IS NULL OR "CoverURL" NOT LIKE '%anilist%')`;
     } else if (soloTrame) {
       filtro = `"Trama" IS NULL`;
+    } else if (soloGenere) {
+      filtro = `("Genere" IS NULL OR TRIM("Genere") = '')`;
     } else {
       filtro = `("Trama" IS NULL OR "Editore" IS NULL OR "VolumiTotali" IS NULL
                  OR "Disegnatore" IS NULL OR "StatoSerie" IS NULL)`;
