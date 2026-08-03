@@ -44,8 +44,7 @@ async function convertToEUR(amount, currency) {
    FILTRI SUGLI ANNUNCI
    ================================================== */
 
-const PAROLE_COMPLETEZZA = /completa|integrale|cofanetto|raccolta/i;
-const PAROLE_VOLUME_SINGOLO = /\b(vol\.?|volume|n\.?)\s*\d{1,3}\b|\bsingolo\b|\bspaiat[oi]\b/i;
+const PAROLE_COMPLETEZZA = /completa|integrale|cofanetto|box\s*set|raccolta/i;
 
 /** Cerca un intervallo tipo "1-18" / "1/18" / "1 – 18" nel titolo. */
 function ampiezzaIntervallo(titolo) {
@@ -59,29 +58,46 @@ function ampiezzaIntervallo(titolo) {
   return Number.isFinite(a) && Number.isFinite(b) && b > a ? b - a + 1 : null;
 }
 
+/** "10 volumi" / "in 10 vol": il numero totale scritto per esteso. */
+function menzionaTotaleVolumi(titolo, volumiTotali) {
+  if (!volumiTotali) return false;
+
+  return new RegExp(`\\b${volumiTotali}\\s*(volumi|vol\\.?)\\b`, "i").test(titolo);
+}
+
 /**
- * Un annuncio "sembra" la serie completa se dice esplicitamente di
- * esserlo, o se elenca un intervallo di volumi ampio quanto la serie
- * (tolleranza di 1: i box set aggiungono spesso un volume bonus).
- * Senza nessuno di questi segnali, lo scarto solo se sembra
- * esplicitamente un volume singolo — un titolo ambiguo (es. il nudo
- * nome della serie, senza numeri né parole chiave) resta incluso:
- * meglio un annuncio ambiguo che perdere un lotto completo descritto
- * male. Non cattura i venditori che scrivono solo "Titolo 5" senza
- * "vol." davanti: è un limite noto, non un bug.
+ * Un annuncio "sembra" la serie completa solo se c'è un segnale
+ * POSITIVO in questo senso: una parola di completezza, un intervallo
+ * di volumi ampio quanto la serie (tolleranza 2, i box set aggiungono
+ * spesso un volume bonus o un omaggio), o il totale scritto per
+ * esteso ("10 volumi").
+ *
+ * Senza nessuno di questi, un numero isolato nel titolo — con o senza
+ * "vol."/"n." davanti, es. "Titolo 5" o "Titolo #5" — è quasi sempre
+ * IL volume 5, non la serie: prima venivano inclusi per errore
+ * (nessuna parola "vol." da riconoscere) e trascinavano giù la
+ * mediana verso il prezzo di un volume singolo. Solo un titolo senza
+ * numeri né parole chiave (raro: di solito una foto senza descrizione
+ * in più) resta ambiguo e viene incluso.
  */
 function sembraSerieCompleta(titoloAnnuncio, volumiTotali) {
   const titolo = titoloAnnuncio || "";
 
   if (PAROLE_COMPLETEZZA.test(titolo)) return true;
+  if (menzionaTotaleVolumi(titolo, volumiTotali)) return true;
 
   const ampiezza = ampiezzaIntervallo(titolo);
 
   if (ampiezza != null) {
-    return volumiTotali ? Math.abs(ampiezza - volumiTotali) <= 1 : true;
+    return volumiTotali ? Math.abs(ampiezza - volumiTotali) <= 2 : ampiezza >= 3;
   }
 
-  return !PAROLE_VOLUME_SINGOLO.test(titolo);
+  const numeriNelTitolo = (titolo.match(/\d{1,3}/g) || []).map(Number);
+  const sembraNumeroDiVolume = numeriNelTitolo.some(
+    (n) => n >= 1 && n <= (volumiTotali || 60)
+  );
+
+  return !sembraNumeroDiVolume;
 }
 
 /** True se il titolo dell'annuncio nomina esplicitamente un'altra edizione. */
@@ -134,7 +150,7 @@ async function getEbayAppToken() {
  * il filtro per completezza/edizione ne scarta una parte, quindi si
  * parte con più materiale per non restare con un campione minuscolo.
  */
-async function cercaAnnunciAttivi(query, limite = 100) {
+async function cercaAnnunciAttivi(query, limite = 200) {
   const token = await getEbayAppToken();
 
   // `buyingOptions:FIXED_PRICE` esclude le aste: il rilancio corrente
