@@ -31,20 +31,32 @@ function mean(values) {
   return values.reduce((s, v) => s + v, 0) / values.length;
 }
 
-// Conversione valuta: placeholder onesto. In pratica, puntando al
-// marketplace italiano (vedi sotto), i prezzi arrivano già in euro
-// quasi sempre; il caso raro di valuta diversa non viene convertito.
-async function convertToEUR(amount, currency) {
-  if (!currency || currency === "EUR") return amount;
-
-  return amount;
-}
-
 /* ==================================================
    FILTRI SUGLI ANNUNCI
    ================================================== */
 
-const PAROLE_COMPLETEZZA = /completa|integrale|cofanetto|box\s*set|raccolta/i;
+// Interessano solo i fumetti italiani: invece di convertire le altre
+// valute (tasso di cambio da tenere aggiornato, per un caso raro),
+// gli annunci non in EUR vengono scartati direttamente in
+// cercaAnnunciAttivi.
+const PAROLE_COMPLETEZZA =
+  /complet[ao]|integrale|cofanetto|box\s*set|raccolta|lotto|tutt[ao]\s+(i\s+volumi|la\s+(serie|collezione))|inter[ao]\s+(serie|collezione)/i;
+
+// Merchandise che eBay restituisce comunque perché la ricerca è sul
+// nome della serie, non sulla categoria fumetti: portachiavi, poster,
+// action figure... Va escluso dalla query stessa (sintassi "-parola"
+// di eBay), non solo dopo aver scaricato gli annunci, o riempie le
+// prime pagine di risultati e lascia meno spazio a chi vende davvero
+// i volumi.
+const PAROLE_MERCHANDISE = [
+  "portachiavi", "funko", "figure", "statuina", "statua", "peluche",
+  "poster", "adesivo", "adesivi", "spilla", "spille", "tazza",
+  "felpa", "maglietta", "cover", "custodia", "braccialetto",
+  "collana", "quaderno", "diario", "calendario", "carte", "dvd",
+  "bluray", "cosplay", "gadget", "nendoroid"
+];
+
+const ESCLUSIONI_MERCHANDISE = PAROLE_MERCHANDISE.map((p) => `-${p}`).join(" ");
 
 /** Cerca un intervallo tipo "1-18" / "1/18" / "1 – 18" nel titolo. */
 function ampiezzaIntervallo(titolo) {
@@ -69,16 +81,19 @@ function menzionaTotaleVolumi(titolo, volumiTotali) {
  * Un annuncio "sembra" la serie completa solo se c'è un segnale
  * POSITIVO in questo senso: una parola di completezza, un intervallo
  * di volumi ampio quanto la serie (tolleranza 2, i box set aggiungono
- * spesso un volume bonus o un omaggio), o il totale scritto per
+ * spesso un volume bonus o un omaggio, e copre anche le serie non
+ * ancora finite: chi vende "1-36" di una Hunter x Hunter arrivata al
+ * 36 sta vendendo tutto quello che esiste), o il totale scritto per
  * esteso ("10 volumi").
  *
- * Senza nessuno di questi, un numero isolato nel titolo — con o senza
- * "vol."/"n." davanti, es. "Titolo 5" o "Titolo #5" — è quasi sempre
- * IL volume 5, non la serie: prima venivano inclusi per errore
- * (nessuna parola "vol." da riconoscere) e trascinavano giù la
- * mediana verso il prezzo di un volume singolo. Solo un titolo senza
- * numeri né parole chiave (raro: di solito una foto senza descrizione
- * in più) resta ambiguo e viene incluso.
+ * Senza nessuno di questi tre segnali, il titolo va ESCLUSO — non
+ * incluso "per sicurezza" come prima. Un numero isolato (es. "Titolo
+ * 5") è quasi sempre IL volume 5, non la serie. Ma anche senza numeri
+ * un titolo così è più spesso merchandise (portachiavi, poster...)
+ * intercettato dalla ricerca sul nome della serie che non un cofanetto
+ * senza descrizione: includerlo per default trascinava giù la
+ * mediana proprio sui franchise con più gadget in giro (Hunter x
+ * Hunter) o nomi ambigui (Happiness).
  */
 function sembraSerieCompleta(titoloAnnuncio, volumiTotali) {
   const titolo = titoloAnnuncio || "";
@@ -92,12 +107,7 @@ function sembraSerieCompleta(titoloAnnuncio, volumiTotali) {
     return volumiTotali ? Math.abs(ampiezza - volumiTotali) <= 2 : ampiezza >= 3;
   }
 
-  const numeriNelTitolo = (titolo.match(/\d{1,3}/g) || []).map(Number);
-  const sembraNumeroDiVolume = numeriNelTitolo.some(
-    (n) => n >= 1 && n <= (volumiTotali || 60)
-  );
-
-  return !sembraNumeroDiVolume;
+  return false;
 }
 
 /** True se il titolo dell'annuncio nomina esplicitamente un'altra edizione. */
@@ -139,6 +149,51 @@ async function getEbayAppToken() {
 }
 
 /**
+ * Id della categoria "Manga" su eBay Italia, cercato una volta con la
+ * Taxonomy API e tenuto in cache a lungo (le categorie non cambiano
+ * quasi mai). Se la ricerca fallisce per qualsiasi motivo — rete,
+ * risposta inattesa, nessun nodo che si chiami "Manga" — si prosegue
+ * senza restringere la categoria: meglio risultati più larghi che
+ * nessun risultato per un id sbagliato o non più valido.
+ */
+async function getCategoriaManga() {
+  const cacheKey = "ebay_categoria_manga";
+  const cached = cache.get(cacheKey);
+
+  if (cached !== undefined) return cached;
+
+  try {
+    const token = await getEbayAppToken();
+    const headers = { Authorization: `Bearer ${token}` };
+
+    const albero = await axios.get(
+      "https://api.ebay.com/commerce/taxonomy/v1/category_tree/get_default_category_tree_id?marketplace_id=EBAY_IT",
+      { headers }
+    );
+
+    const categoryTreeId = albero.data.categoryTreeId;
+
+    const suggerimenti = await axios.get(
+      `https://api.ebay.com/commerce/taxonomy/v1/category_tree/${categoryTreeId}/get_category_suggestions?q=manga`,
+      { headers }
+    );
+
+    const nodi = suggerimenti.data.categorySuggestions || [];
+    const match = nodi.find((n) => /manga/i.test(n.category?.categoryName || ""));
+    const id = match?.category?.categoryId || null;
+
+    cache.set(cacheKey, id, 60 * 60 * 24 * 30);
+
+    return id;
+  } catch (err) {
+    console.error("eBay categoria Manga non trovata, proseguo senza filtro categoria", err.response?.data || err.message);
+    cache.set(cacheKey, null, 60 * 60 * 6);
+
+    return null;
+  }
+}
+
+/**
  * Cerca annunci attivi su eBay Italia.
  *
  * L'intestazione `X-EBAY-C-MARKETPLACE-ID` punta al sito italiano:
@@ -152,6 +207,7 @@ async function getEbayAppToken() {
  */
 async function cercaAnnunciAttivi(query, limite = 200) {
   const token = await getEbayAppToken();
+  const categoriaManga = await getCategoriaManga();
 
   // `buyingOptions:FIXED_PRICE` esclude le aste: il rilancio corrente
   // di un'asta appena aperta non è un prezzo, è un numero che sta
@@ -162,6 +218,8 @@ async function cercaAnnunciAttivi(query, limite = 200) {
     limit: String(limite),
     filter: "buyingOptions:{FIXED_PRICE}"
   });
+
+  if (categoriaManga) parametri.set("category_ids", categoriaManga);
 
   const url = `https://api.ebay.com/buy/browse/v1/item_summary/search?${parametri.toString()}`;
 
@@ -180,12 +238,15 @@ async function cercaAnnunciAttivi(query, limite = 200) {
       const p = it.price;
 
       if (!p?.value) return null;
+      // Solo EUR: interessano i fumetti italiani, non il tasso di
+      // cambio di un annuncio da un altro paese.
+      if ((p.currency || "EUR") !== "EUR") return null;
 
       const value = Number(p.value);
 
       if (Number.isNaN(value)) return null;
 
-      return { value, currency: p.currency || "EUR", title: it.title || "" };
+      return { value, title: it.title || "" };
     })
     .filter(Boolean);
 }
@@ -218,7 +279,11 @@ router.get("/avg-price", async (req, res) => {
 
     // Aggiungere l'edizione fra virgolette alla query spinge eBay a
     // dare più peso agli annunci che la nominano esplicitamente.
-    const queryEbay = etichettaEdizione ? `${query} "${etichettaEdizione}"` : query;
+    // Le esclusioni per il merchandise vanno nella query stessa (non
+    // solo nel filtro dopo): tolgono spazio ai portachiavi e simili
+    // dentro il limite di annunci scaricati, lasciandone di più per i
+    // volumi veri.
+    const queryEbay = `${etichettaEdizione ? `${query} "${etichettaEdizione}"` : query} ${ESCLUSIONI_MERCHANDISE}`;
 
     let grezzi;
 
@@ -247,13 +312,9 @@ router.get("/avg-price", async (req, res) => {
       return true;
     });
 
-    const normalizzati = [];
-
-    for (const p of filtrati) {
-      const v = await convertToEUR(p.value, p.currency);
-
-      if (v != null) normalizzati.push(Number(v));
-    }
+    // Niente conversione valuta: cercaAnnunciAttivi ha già scartato
+    // tutto ciò che non è EUR.
+    const normalizzati = filtrati.map((p) => p.value);
 
     if (normalizzati.length === 0) {
       const payload = {
