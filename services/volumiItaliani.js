@@ -1,15 +1,18 @@
 // services/volumiItaliani.js
 //
-// Le regole con cui si aggiorna "VolumiTotali" per le serie in corso.
+// Le regole con cui si aggiorna "VolumiItalia" per le serie in corso.
 // Chi va a leggere il numero è services/providers/animeclick.js: qui
 // c'è solo la decisione, che è la parte da non sbagliare.
 //
-// Perché una fonte esterna: AniList, da cui "VolumiTotali" arriva
-// normalmente, quel numero non lo pubblica finché la serie è in corso
-// (`volumes: null`, `status: RELEASING`) — quindi 28 serie su 34 in
-// corso ce l'hanno vuoto e nessun enrich potrà mai riempirlo. Google
-// Books è stato provato e scartato: rispondeva numeri diversi a
-// pochi minuti di distanza sulle stesse serie.
+// Perché una colonna a parte da "VolumiTotali": quella è (o dovrebbe
+// essere) il totale in Giappone, da AniList — e AniList non lo
+// pubblica finché la serie è in corso (`volumes: null`,
+// `status: RELEASING`), quindi 28 serie su 34 in corso ce l'hanno
+// vuoto. "VolumiItalia" risponde a una domanda diversa: quanti ne ha
+// pubblicati l'editore italiano finora, l'unico numero sensato per
+// dire se manca qualcosa da comprare. Google Books è stato provato e
+// scartato come fonte: rispondeva numeri diversi a pochi minuti di
+// distanza sulle stesse serie.
 
 const { volumiUsciti } = require("./providers/animeclick");
 
@@ -85,7 +88,7 @@ async function controllaSerie(riga, opzioni = {}) {
   }
 
   const decisione = decidiAggiornamento({
-    attuale: riga.VolumiTotali ?? null,
+    attuale: riga.VolumiItalia ?? null,
     posseduti: Number(riga.VolumiPosseduti) || 0,
     trovato: esito.massimo,
     statoSerie: riga.StatoSerie

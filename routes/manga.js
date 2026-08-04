@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require("../db");
 const { login, requireAuth } = require("../services/auth");
 const { enrich } = require("../services/enrich");
+const { eseguiRapportoVolumi } = require("../services/rapportoVolumi");
 
 // --------------------------------------------------
 // ENRICH — dati di una serie dalle fonti esterne
@@ -167,6 +168,56 @@ router.post("/enrich-bulk", requireAuth, async (req, res) => {
     });
   } catch (err) {
     console.error("❌ ENRICH BULK ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+// --------------------------------------------------
+// RAPPORTO VOLUMI — quanti volumi sono usciti in Italia.
+//
+// Chiamata dal job mensile su GitHub Actions (vedi
+// .github/workflows/rapporto-volumi.yml), non da un browser: niente
+// login admin, un segreto condiviso nell'header. `requireAuth` usa
+// un JWT pensato per una sessione umana con scadenza breve, qui serve
+// invece un token fisso che uno scheduler possa riusare per sempre.
+//
+// `timingSafeEqual` invece di `===`: altrimenti il tempo di risposta
+// rivelerebbe quanti caratteri del segreto sono giusti, un carattere
+// alla volta.
+const crypto = require("crypto");
+
+function richiedeSegretoCron(req, res, next) {
+  const atteso = process.env.CRON_SECRET;
+  const ricevuto = req.headers["x-cron-secret"] || "";
+
+  if (!atteso) {
+    return res.status(500).json({ error: "CRON_SECRET non configurato" });
+  }
+
+  const bufAtteso = Buffer.from(atteso);
+  const bufRicevuto = Buffer.from(String(ricevuto));
+
+  if (bufAtteso.length !== bufRicevuto.length || !crypto.timingSafeEqual(bufAtteso, bufRicevuto)) {
+    return res.status(403).json({ error: "Segreto non valido" });
+  }
+
+  return next();
+}
+
+router.post("/rapporto-volumi", richiedeSegretoCron, async (req, res) => {
+  const scrivi = req.body?.scrivi !== false; // il job schedulato scrive di default
+
+  try {
+    const risultato = await eseguiRapportoVolumi(pool, { scrivi });
+
+    console.log(
+      `📚 Rapporto volumi: ${risultato.scritte} aggiornate su ${risultato.mappate} mappate ` +
+        `(${scrivi ? "scrittura" : "prova a vuoto"})`
+    );
+
+    return res.json(risultato);
+  } catch (err) {
+    console.error("❌ RAPPORTO VOLUMI ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
   }
 });

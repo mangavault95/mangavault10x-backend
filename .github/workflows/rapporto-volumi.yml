@@ -1,0 +1,38 @@
+name: Rapporto volumi Italia
+
+# Il controllo mensile di quanti volumi sono usciti in Italia per le
+# serie in corso (services/rapportoVolumi.js). Gira qui e non dentro
+# un cron in-process perché Render (piano gratuito) addormenta il
+# servizio dopo un quarto d'ora di inattività: un cron nello stesso
+# processo non si sveglierebbe mai da solo. Questa richiesta invece
+# arriva da fuori e lo sveglia, pagando solo l'attesa del primo giro.
+#
+# Il giorno 3 e non il giorno 1: dà tempo a chi pubblica le uscite
+# italiane di aggiornare le proprie pagine dopo il weekend/inizio mese.
+on:
+  schedule:
+    - cron: "0 6 3 * *"
+  workflow_dispatch: {}
+
+jobs:
+  rapporto-volumi:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chiama il backend
+        run: |
+          risposta=$(curl -sS -w "\n%{http_code}" -X POST \
+            --max-time 120 \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{"scrivi": true}' \
+            "https://mangavault10x-api.onrender.com/api/manga/rapporto-volumi")
+
+          corpo=$(echo "$risposta" | head -n -1)
+          codice=$(echo "$risposta" | tail -n 1)
+
+          echo "$corpo"
+
+          if [ "$codice" != "200" ]; then
+            echo "HTTP $codice"
+            exit 1
+          fi
