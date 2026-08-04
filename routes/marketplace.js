@@ -13,6 +13,7 @@ const express = require("express");
 const router = express.Router();
 const axios = require("axios");
 const NodeCache = require("node-cache");
+const { sembraSerieCompleta, nominaEdizione } = require("../services/annunci");
 
 const cache = new NodeCache({ stdTTL: 60 * 60 * 6 });
 
@@ -35,87 +36,31 @@ function mean(values) {
    FILTRI SUGLI ANNUNCI
    ================================================== */
 
+// Chi decide se un titolo è una serie completa sta in
+// services/annunci.js, verificabile da solo con
+// `node scripts/verifica-filtro-annunci.js`.
+//
 // Interessano solo i fumetti italiani: invece di convertire le altre
 // valute (tasso di cambio da tenere aggiornato, per un caso raro),
-// gli annunci non in EUR vengono scartati direttamente in
-// cercaAnnunciAttivi.
-const PAROLE_COMPLETEZZA =
-  /complet[ao]|integrale|cofanetto|box\s*set|raccolta|lotto|tutt[ao]\s+(i\s+volumi|la\s+(serie|collezione))|inter[ao]\s+(serie|collezione)/i;
+// gli annunci non in EUR vengono scartati in cercaAnnunciAttivi.
 
 // Merchandise che eBay restituisce comunque perché la ricerca è sul
-// nome della serie, non sulla categoria fumetti: portachiavi, poster,
-// action figure... Va escluso dalla query stessa (sintassi "-parola"
-// di eBay), non solo dopo aver scaricato gli annunci, o riempie le
-// prime pagine di risultati e lascia meno spazio a chi vende davvero
-// i volumi.
+// nome della serie: portachiavi, funko, felpe... Escluderlo dalla
+// query (sintassi "-parola" di eBay) non serve a filtrare — a quello
+// pensa services/annunci.js — ma a non sprecare i 200 annunci che
+// scarichiamo, lasciandone di più a chi vende davvero i volumi.
+//
+// La lista tiene solo parole che in un annuncio di manga non
+// compaiono MAI: niente "poster", "cover" o "custodia", che finirebbero
+// per buttare via cofanetti veri venduti "con poster omaggio" o "con
+// custodia".
 const PAROLE_MERCHANDISE = [
-  "portachiavi", "funko", "figure", "statuina", "statua", "peluche",
-  "poster", "adesivo", "adesivi", "spilla", "spille", "tazza",
-  "felpa", "maglietta", "cover", "custodia", "braccialetto",
-  "collana", "quaderno", "diario", "calendario", "carte", "dvd",
-  "bluray", "cosplay", "gadget", "nendoroid"
+  "portachiavi", "funko", "nendoroid", "statuina", "statua", "peluche",
+  "felpa", "maglietta", "tazza", "spilla", "braccialetto", "collana",
+  "cosplay", "dvd", "bluray", "gadget"
 ];
 
 const ESCLUSIONI_MERCHANDISE = PAROLE_MERCHANDISE.map((p) => `-${p}`).join(" ");
-
-/** Cerca un intervallo tipo "1-18" / "1/18" / "1 – 18" nel titolo. */
-function ampiezzaIntervallo(titolo) {
-  const m = titolo.match(/(\d{1,3})\s*[-/–]\s*(\d{1,3})/);
-
-  if (!m) return null;
-
-  const a = Number(m[1]);
-  const b = Number(m[2]);
-
-  return Number.isFinite(a) && Number.isFinite(b) && b > a ? b - a + 1 : null;
-}
-
-/** "10 volumi" / "in 10 vol": il numero totale scritto per esteso. */
-function menzionaTotaleVolumi(titolo, volumiTotali) {
-  if (!volumiTotali) return false;
-
-  return new RegExp(`\\b${volumiTotali}\\s*(volumi|vol\\.?)\\b`, "i").test(titolo);
-}
-
-/**
- * Un annuncio "sembra" la serie completa solo se c'è un segnale
- * POSITIVO in questo senso: una parola di completezza, un intervallo
- * di volumi ampio quanto la serie (tolleranza 2, i box set aggiungono
- * spesso un volume bonus o un omaggio, e copre anche le serie non
- * ancora finite: chi vende "1-36" di una Hunter x Hunter arrivata al
- * 36 sta vendendo tutto quello che esiste), o il totale scritto per
- * esteso ("10 volumi").
- *
- * Senza nessuno di questi tre segnali, il titolo va ESCLUSO — non
- * incluso "per sicurezza" come prima. Un numero isolato (es. "Titolo
- * 5") è quasi sempre IL volume 5, non la serie. Ma anche senza numeri
- * un titolo così è più spesso merchandise (portachiavi, poster...)
- * intercettato dalla ricerca sul nome della serie che non un cofanetto
- * senza descrizione: includerlo per default trascinava giù la
- * mediana proprio sui franchise con più gadget in giro (Hunter x
- * Hunter) o nomi ambigui (Happiness).
- */
-function sembraSerieCompleta(titoloAnnuncio, volumiTotali) {
-  const titolo = titoloAnnuncio || "";
-
-  if (PAROLE_COMPLETEZZA.test(titolo)) return true;
-  if (menzionaTotaleVolumi(titolo, volumiTotali)) return true;
-
-  const ampiezza = ampiezzaIntervallo(titolo);
-
-  if (ampiezza != null) {
-    return volumiTotali ? Math.abs(ampiezza - volumiTotali) <= 2 : ampiezza >= 3;
-  }
-
-  return false;
-}
-
-/** True se il titolo dell'annuncio nomina esplicitamente un'altra edizione. */
-function nominaEdizione(titoloAnnuncio, etichetta) {
-  if (!etichetta) return false;
-
-  return (titoloAnnuncio || "").toLowerCase().includes(etichetta.toLowerCase().trim());
-}
 
 async function getEbayAppToken() {
   const { EBAY_CLIENT_ID, EBAY_CLIENT_SECRET } = process.env;
@@ -238,6 +183,16 @@ async function cercaAnnunciAttivi(query, limite = 200) {
       const p = it.price;
 
       if (!p?.value) return null;
+
+      // Annuncio a varianti (il venditore mette tutti i volumi nella
+      // stessa inserzione, "scegli il volume"): eBay ne riporta il
+      // prezzo della variante PIÙ ECONOMICA, cioè un volume singolo,
+      // anche quando il titolo dice "serie completa 1/10". È un prezzo
+      // che non corrisponde a niente di acquistabile in blocco, e
+      // sulle serie molto vendute era grosso abbastanza da spostare
+      // la mediana da solo.
+      if (it.itemGroupType) return null;
+
       // Solo EUR: interessano i fumetti italiani, non il tasso di
       // cambio di un annuncio da un altro paese.
       if ((p.currency || "EUR") !== "EUR") return null;
