@@ -195,4 +195,7 @@ async function search(title, author) {
   };
 }
 
-module.exports = { search, isEnabled };
+// `normalize`, `stripVolume` e `volumeNumber` servono anche a
+// services/volumiItaliani.js, che conta i volumi usciti in Italia:
+// meglio esporli che tenerne due copie che col tempo divergono.
+module.exports = { search, isEnabled, normalize, stripVolume, volumeNumber };
