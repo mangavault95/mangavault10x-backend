@@ -227,16 +227,26 @@ const INTESTAZIONI = {
 };
 
 async function prendi(url, opzioni = {}, fetchImpl = fetch) {
-  const risposta = await fetchImpl(url, {
-    redirect: "follow",
-    ...opzioni,
-    headers: { ...INTESTAZIONI, ...(opzioni.headers || {}) },
-    signal: AbortSignal.timeout(20000)
-  });
+  // Un tentativo in più, una volta sola: AnimeClick ogni tanto risponde
+  // 520 o 502 per qualche secondo, e su un giro lungo quel singolo
+  // inciampo diventava "serie non trovata" — una bugia, scritta in
+  // tabella come se fosse un fatto.
+  for (let tentativo = 0; ; tentativo++) {
+    const risposta = await fetchImpl(url, {
+      redirect: "follow",
+      ...opzioni,
+      headers: { ...INTESTAZIONI, ...(opzioni.headers || {}) },
+      signal: AbortSignal.timeout(20000)
+    });
 
-  if (!risposta.ok) throw new Error(`AnimeClick HTTP ${risposta.status} su ${url}`);
+    if (risposta.ok) return risposta;
 
-  return risposta;
+    if (risposta.status < 500 || tentativo >= 1) {
+      throw new Error(`AnimeClick HTTP ${risposta.status} su ${url}`);
+    }
+
+    await new Promise((r) => setTimeout(r, 3000));
+  }
 }
 
 /** I testi dei singoli <a>: autori e generi sono liste di link, non frasi. */
@@ -283,7 +293,17 @@ function somiglianza(cercato, trovato) {
  * `anno: -1` ("qualunque anno") non è pignoleria: senza, la ricerca
  * risponde "Ci sono 0 titoli in database" perfino a "one piece".
  */
-async function cerca(titolo, { quanti = 3, fetchImpl = fetch } = {}) {
+// Il token CSRF e il cookie di sessione valgono per più ricerche:
+// tenerli da parte dimezza le richieste al sito, perché una ricerca
+// torna a costarne una invece di due. Dieci minuti è prudente — la
+// sessione dura molto di più, e se scade la POST fallisce e il giro
+// dopo se ne prende una nuova.
+let sessione = null;
+const DURATA_SESSIONE = 10 * 60 * 1000;
+
+async function apriSessione(fetchImpl) {
+  if (sessione && Date.now() - sessione.quando < DURATA_SESSIONE) return sessione;
+
   const modulo = await prendi(`${BASE}/ricerca/manga`, {}, fetchImpl);
 
   const cookie = (modulo.headers.get("set-cookie") || "")
@@ -297,13 +317,24 @@ async function cerca(titolo, { quanti = 3, fetchImpl = fetch } = {}) {
 
   if (!token) throw new Error("AnimeClick: token della ricerca non trovato");
 
+  sessione = { cookie, token: token[1], quando: Date.now() };
+
+  return sessione;
+}
+
+async function cercaGrezzo(campi, { fetchImpl = fetch } = {}) {
+  const { cookie, token } = await apriSessione(fetchImpl);
+
+  // I campi del modulo vanno mandati tutti, anche quelli che nessuno
+  // tocca, con il valore che avrebbero a schermo.
   const corpo = new URLSearchParams({
-    "search_manga[title]": titolo,
+    "search_manga[title]": "",
     "search_manga[titleOption]": "0", // 0 = contiene
     "search_manga[anno]": "-1",
     "search_manga[ordinamento]": "titolo",
     "search_manga[versoOrdinamento]": "1",
-    "search_manga[_token]": token[1]
+    ...campi,
+    "search_manga[_token]": token
   });
 
   const risposta = await prendi(
@@ -330,7 +361,10 @@ async function cerca(titolo, { quanti = 3, fetchImpl = fetch } = {}) {
   // Ogni risultato è un blocco .thumbnail: si taglia lì invece di
   // contare l'annidamento dei div, che con una regex non si conta.
   for (const blocco of String(frammento).split(/<div class="thumbnail/).slice(1)) {
-    const link = blocco.match(/href="\/manga\/(\d+)\/([a-z0-9-]*)"/i);
+    // Lo slug non è fatto solo di lettere e trattini — "kaiju-no.8" ha
+    // un punto — e l'espressione più stretta faceva sparire in silenzio
+    // proprio la serie madre, lasciando in lista i suoi spin-off.
+    const link = blocco.match(/href="\/manga\/(\d+)\/([^"]*)"/i);
     const didascalia = blocco.match(/<div class="caption[\s\S]*?<h5>([\s\S]*?)<\/h5>/i);
 
     if (!link || !didascalia) continue;
@@ -339,18 +373,72 @@ async function cerca(titolo, { quanti = 3, fetchImpl = fetch } = {}) {
 
     if (!nome) continue;
 
+    const copertina = blocco.match(/src="([^"]+)"/);
+    const anno = blocco.match(/<div class="pull-right">\s*(\d{4})\s*<\/div>/);
+
     trovate.push({
       id: Number(link[1]),
       titolo: nome,
-      url: `${BASE}/manga/${link[1]}/${link[2] || "-"}`,
-      punteggio: somiglianza(titolo, nome)
+      anno: anno ? Number(anno[1]) : null,
+      // Le miniature sono indirizzi relativi al sito, e il ponte delle
+      // copertine sa scaricare solo indirizzi interi.
+      copertina: copertina ? new URL(copertina[1], BASE).href : null,
+      url: `${BASE}/manga/${link[1]}/${link[2] || "-"}`
     });
   }
 
+  return trovate;
+}
+
+/**
+ * I titoli che somigliano a quello cercato, dal più probabile in giù.
+ *
+ * `modo` non è un dettaglio ma la differenza fra trovare la serie e
+ * trovare un suo spin-off. La ricerca "contiene" restituisce una pagina
+ * sola di risultati in ordine alfabetico, e su un titolo diffuso la
+ * serie madre non ci entra: cercando "Demon Slayer" tornano dodici
+ * derivati e non l'opera, cercando "Monster" tornano "Gogo Monster" e
+ * "Hatsukoi Monster" ma non Monster. Con "esatto" il problema non si
+ * pone, ed è per questo che chi identifica una serie prova prima così.
+ *
+ * Non decide niente: chi chiama sceglie, e su AnimeClick gli omonimi
+ * sono la norma.
+ */
+async function cerca(titolo, { quanti = 3, modo = "contiene", autore = null, fetchImpl = fetch } = {}) {
+  const trovate = await cercaGrezzo(
+    {
+      "search_manga[title]": titolo,
+      "search_manga[titleOption]": modo === "esatto" ? "3" : "0",
+      // Il filtro per autore è la scorciatoia più forte che ha questa
+      // ricerca: restringe a una manciata di opere e garantisce la firma
+      // senza aprire nemmeno una scheda.
+      ...(autore ? { "search_manga[staff]": autore } : {})
+    },
+    { fetchImpl }
+  );
+
   return trovate
+    .map((s) => ({ ...s, punteggio: somiglianza(titolo, s.titolo) }))
     .filter((s) => s.punteggio > 0)
     .sort((a, b) => b.punteggio - a.punteggio)
     .slice(0, quanti);
+}
+
+/**
+ * Il titolo tagliato al suo nocciolo, per l'ultimo tentativo.
+ *
+ * In collezione i titoli portano spesso una coda che AnimeClick scrive
+ * diversamente o non scrive affatto — "Death Note - Black Edition", "Il
+ * mostro - Frankestein e altre storie" — e a volte è la parte lunga a
+ * essere scritta in modo diverso ("Dededede Destruction" contro
+ * "Dededededestruction"). Tagliando al primo trattino, o alle prime tre
+ * parole, resta la parte su cui le due fonti sono d'accordo.
+ */
+function nocciolo(titolo) {
+  const primaParte = String(titolo).split(/\s+[-–:]\s+/)[0].trim();
+  const parole = primaParte.split(/\s+/);
+
+  return parole.slice(0, 3).join(" ");
 }
 
 /** Chi ha scritto e disegnato, letto dal <dl> della scheda. */
@@ -388,17 +476,64 @@ function stessoNome(uno, altro) {
 /**
  * Quale scheda di AnimeClick è la serie che ho in mano.
  *
- * La ricerca è letterale sul titolo italiano, che è esattamente come
- * la serie è registrata in collezione: quasi sempre il primo risultato
- * combacia parola per parola. Ma gli omonimi esistono e sono la trappola
- * vera — "I fiori del male" restituisce tre opere diverse, e quella di
- * Oshimi è la seconda — quindi quando c'è un autore da confrontare si
- * apre la scheda e si guarda la firma, in ordine di somiglianza, fino
- * alla prima che torna. Se nessuna firma corrisponde, meglio niente
- * consigli che i consigli del fumetto sbagliato.
+ * Tre tentativi, in quest'ordine, e l'ordine è tutto:
+ *
+ *   1. titolo ESATTO. In collezione i titoli sono già quelli italiani,
+ *      quindi di solito basta questo — e soprattutto è l'unico modo di
+ *      pescare la serie madre invece dei suoi derivati (vedi `cerca`).
+ *   2. titolo che CONTIENE, per le differenze di coda ("Dr.Slump" da
+ *      loro è "Dr. Slump e Arale").
+ *   3. il NOCCIOLO del titolo, quando nemmeno quello basta.
+ *
+ * Poi la firma. Gli omonimi sono la trappola vera — "I fiori del male"
+ * restituisce tre opere diverse, e quella di Oshimi è la seconda —
+ * quindi quando c'è un autore da confrontare si apre la scheda e si
+ * guarda chi l'ha scritta, in ordine di somiglianza, fino alla prima
+ * che torna. Se nessuna firma corrisponde, meglio niente consigli che i
+ * consigli del fumetto sbagliato.
  */
 async function trovaOpera({ titolo, autore = null, fetchImpl = fetch }) {
-  const candidate = await cerca(titolo, { quanti: 3, fetchImpl });
+  const ridotto = nocciolo(titolo);
+
+  if (autore) {
+    // Tutte le sue opere in una richiesta, e il confronto dei titoli lo
+    // facciamo noi. È il contrario di quello che verrebbe naturale —
+    // filtrare anche per titolo e lasciar cercare loro — ma il loro
+    // confronto è letterale, virgole e spazi compresi: "Bentornato
+    // Alice" non trova "Bentornato, Alice", e "Kaiju No. 8" non trova
+    // la propria serie madre. La nostra normalizzazione sì.
+    const sue = (await cercaGrezzo({ "search_manga[staff]": autore }, { fetchImpl }))
+      .map((c) => ({ ...c, punteggio: Math.max(somiglianza(titolo, c.titolo), somiglianza(ridotto, c.titolo)) }))
+      .filter((c) => c.punteggio > 0)
+      .sort((a, b) => b.punteggio - a.punteggio);
+
+    if (sue.length) {
+      // Fra i suoi titoli che si somigliano tutti — "Demon Slayer -
+      // Kimetsu no Yaiba", "Campus Kimetsu!", "Another Story" — vince il
+      // più vecchio: i derivati vengono sempre dopo l'opera che li ha
+      // generati. Il punteggio da solo non basterebbe, perché premia i
+      // titoli corti e lo spin-off spesso lo è.
+      const vicini = sue.filter((c) => c.punteggio >= sue[0].punteggio - 8);
+      const scelta = [...vicini].sort((a, b) => (a.anno ?? 9999) - (b.anno ?? 9999))[0];
+
+      return {
+        ...scelta,
+        firmaVerificata: true,
+        // Quando i candidati vicini erano più d'uno la scelta è stata
+        // una regola, non un fatto: chi scrive in tabella deve saperlo.
+        ambigua: vicini.length > 1,
+        alternative: vicini.filter((c) => c.id !== scelta.id).slice(0, 3)
+      };
+    }
+  }
+
+  // Senza autore, o quando il filtro per autore non ha trovato niente
+  // (la loro grafia del nome può essere diversa dalla nostra): si torna
+  // alla ricerca per solo titolo, e la firma si verifica scheda per
+  // scheda.
+  let candidate = await cerca(titolo, { quanti: 3, modo: "esatto", fetchImpl });
+
+  if (!candidate.length) candidate = await cerca(titolo, { quanti: 5, fetchImpl });
 
   if (!candidate.length) return null;
 
@@ -406,15 +541,49 @@ async function trovaOpera({ titolo, autore = null, fetchImpl = fetch }) {
   // omonimo da distinguere, e la scheda non vale una richiesta in più.
   const senzaOmonimi = candidate.length === 1 && candidate[0].punteggio === 100;
 
-  if (!autore || senzaOmonimi) return candidate[0];
+  if (!autore || senzaOmonimi) {
+    return { ...candidate[0], firmaVerificata: false, ambigua: candidate.length > 1 };
+  }
 
   for (const c of candidate) {
     const firme = await autoriDi(c.id, { fetchImpl }).catch(() => []);
 
-    if (firme.some((f) => stessoNome(f, autore))) return { ...c, autori: firme };
+    if (firme.some((f) => stessoNome(f, autore))) {
+      return { ...c, autori: firme, firmaVerificata: true };
+    }
   }
 
   return null;
+}
+
+/**
+ * Le opere di una persona, con scritto quali sono uscite in Italia.
+ *
+ * La ricerca ha un campo `staff` a testo libero e un filtro
+ * "Disponibilità" il cui valore `Varia` vuol dire "editi in Italia":
+ * insieme rispondono alla domanda che serve, che è "cosa di suo posso
+ * comprare" e non "cosa ha disegnato in vita sua". Di Inio Asano il
+ * catalogo intero conta quattordici opere, quelle arrivate qui dodici.
+ *
+ * Si chiedono però tutte e due le liste, non solo la filtrata, perché
+ * quel filtro qualche buco ce l'ha: la scheda di Kaiju No. 8 non risulta
+ * "disponibile" benché la serie sia in edicola da anni. Chi riceve la
+ * risposta può così tenersi le opere che possiede comunque, invece di
+ * vedersele sparire per una casella non compilata sul sito altrui.
+ */
+async function opereDiAutore(nome, { fetchImpl = fetch } = {}) {
+  if (!nome) return [];
+
+  const tutte = await cercaGrezzo({ "search_manga[staff]": nome }, { fetchImpl });
+
+  const italiane = await cercaGrezzo(
+    { "search_manga[staff]": nome, "search_manga[disponibilita]": "Varia" },
+    { fetchImpl }
+  );
+
+  const inItalia = new Set(italiane.map((o) => o.id));
+
+  return tutte.map((o) => ({ ...o, editoInItalia: inItalia.has(o.id) }));
 }
 
 /**
@@ -442,7 +611,10 @@ async function consigli(animeClickId, { quanti = 12, fetchImpl = fetch } = {}) {
   const trovati = [];
 
   for (const blocco of pannello.split("media media-opera").slice(1)) {
-    const link = blocco.match(/href="\/manga\/(\d+)\/([a-z0-9-]*)"/i);
+    // Lo slug non è fatto solo di lettere e trattini — "kaiju-no.8" ha
+    // un punto — e l'espressione più stretta faceva sparire in silenzio
+    // proprio la serie madre, lasciando in lista i suoi spin-off.
+    const link = blocco.match(/href="\/manga\/(\d+)\/([^"]*)"/i);
     const titolo = blocco.match(/media-heading[^>]*>([\s\S]*?)<\/h5>/i);
 
     if (!link || !titolo) continue;
@@ -475,5 +647,6 @@ module.exports = {
   cerca,
   autoriDi,
   trovaOpera,
-  consigli
+  consigli,
+  opereDiAutore
 };

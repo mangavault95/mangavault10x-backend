@@ -54,6 +54,7 @@ app.use("/api/reading-sessions", require("./routes/readingSessions"));
 app.use("/api/marketplace", require("./routes/marketplace"));
 app.use("/api/cover", require("./routes/cover"));
 app.use("/api/simili", require("./routes/simili"));
+app.use("/api/autore", require("./routes/autore"));
 
 app.get("/", (req, res) => {
   res.send("MangaVault API attiva 🚀");
