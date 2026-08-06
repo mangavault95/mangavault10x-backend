@@ -374,6 +374,68 @@ router.post("/update", requireAuth, async (req, res) => {
   }
 });
 
+// --------------------------------------------------
+// ELIMINA UNA SCHEDA
+//
+// Serve per le schede sbagliate (un doppione, una serie creata per
+// prova) e per quelle che non si hanno più. Non c'è un cestino: la
+// riga sparisce, quindi la conferma sta nell'interfaccia e qui si
+// risponde con l'elenco di quello che se n'è andato insieme.
+//
+// `acquisti` e `prezzi_mercato` hanno il vincolo con ON DELETE
+// CASCADE e si puliscono da soli. `reading_history` e
+// `reading_sessions` no: hanno un `manga_id` senza vincolo, e senza
+// queste due righe resterebbero lì a puntare a una scheda che non
+// esiste più.
+// --------------------------------------------------
+router.delete("/:id", requireAuth, async (req, res) => {
+  const cliente = await pool.connect();
+
+  try {
+    await cliente.query("BEGIN");
+
+    const { rows: scheda } = await cliente.query(
+      `SELECT "Titolo" FROM "Manga" WHERE "ID" = $1`,
+      [req.params.id]
+    );
+
+    if (scheda.length === 0) {
+      await cliente.query("ROLLBACK");
+      return res.status(404).json({ error: "Record non trovato" });
+    }
+
+    // Contati prima: dopo la DELETE non c'è più niente da contare, e
+    // dire cosa si è portata via è metà del valore della risposta.
+    const { rows: conteggi } = await cliente.query(
+      `SELECT
+         (SELECT COUNT(*) FROM acquisti          WHERE manga_id = $1)::int AS acquisti,
+         (SELECT COUNT(*) FROM reading_history   WHERE manga_id = $1)::int AS letture,
+         (SELECT COUNT(*) FROM reading_sessions  WHERE manga_id = $1)::int AS sessioni,
+         (SELECT COUNT(*) FROM prezzi_mercato    WHERE manga_id = $1)::int AS prezzi,
+         (SELECT COUNT(*) FROM "Manga"           WHERE "OperaId" = $1)::int AS sorelle`,
+      [req.params.id]
+    );
+
+    await cliente.query(`DELETE FROM reading_history  WHERE manga_id = $1`, [req.params.id]);
+    await cliente.query(`DELETE FROM reading_sessions WHERE manga_id = $1`, [req.params.id]);
+    await cliente.query(`DELETE FROM "Manga" WHERE "ID" = $1`, [req.params.id]);
+
+    await cliente.query("COMMIT");
+
+    return res.json({
+      success: true,
+      eliminata: String(scheda[0].Titolo).trim(),
+      insieme: conteggi[0]
+    });
+  } catch (err) {
+    await cliente.query("ROLLBACK");
+    console.error("❌ DELETE MANGA ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  } finally {
+    cliente.release();
+  }
+});
+
 router.post("/updateRating", requireAuth, async (req, res) => {
   const { id, rating } = req.body;
 
