@@ -9,6 +9,19 @@ router.post("/purchase/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
+    // Quanti volumi hai preso, e di quale edizione. Il desiderio non lo
+    // sa: "Berserk" sono 42 volumi nella serie rossa e 14 nella Deluxe,
+    // e chi lo compra sa quale ha in mano. Se non arriva niente vale
+    // quello che valeva prima — zero volumi, nessuna edizione — così le
+    // chiamate vecchie continuano a funzionare.
+    const intero = (valore, ripiego) => {
+      const n = Number(valore);
+
+      return Number.isFinite(n) && n >= 0 ? Math.trunc(n) : ripiego;
+    };
+
+    const edizione = typeof req.body?.edizione === "string" ? req.body.edizione.trim() : "";
+
     await client.query("BEGIN");
 
     // ✅ recupera wishlist item
@@ -32,15 +45,19 @@ router.post("/purchase/:id", async (req, res) => {
 
     const item = wishlistResult.rows[0];
 
-    // ✅ evita duplicati
+    // Due edizioni della stessa serie non sono un duplicato: sono due
+    // oggetti diversi sullo scaffale, con volumi e prezzi diversi. Prima
+    // il controllo guardava solo il titolo, e la seconda edizione di una
+    // serie spariva dalla wishlist senza entrare in collezione.
     const duplicateCheck = await client.query(
       `
       SELECT "ID"
       FROM "Manga"
       WHERE LOWER("Titolo") = LOWER($1)
+        AND LOWER(COALESCE("Edizione", '')) = LOWER($2)
       LIMIT 1
       `,
-      [item.titolo || ""]
+      [item.titolo || "", edizione]
     );
 
     if (duplicateCheck.rows.length > 0) {
@@ -85,9 +102,10 @@ router.post("/purchase/:id", async (req, res) => {
         "VolumiPosseduti",
         "Costo",
         "Editore",
-        "Valutazione"
+        "Valutazione",
+        "Edizione"
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
       RETURNING *
       `,
       [
@@ -97,10 +115,8 @@ router.post("/purchase/:id", async (req, res) => {
         item.coverurl || "",
         item.trama || "",
         item.generi || "",
-        item.volumitotali
-          ? Number(item.volumitotali)
-          : 0,
-        0,
+        intero(req.body?.volumiTotali, item.volumitotali ? Number(item.volumitotali) : 0),
+        intero(req.body?.volumiPosseduti, 0),
         0,
         "",
         // Non votata si scrive NULL, non 0: la tabella ha un vincolo
@@ -108,7 +124,8 @@ router.post("/purchase/:id", async (req, res) => {
         // ed è così che stanno le serie della collezione mai votate.
         // Con lo zero questa INSERT falliva sempre, cioè "Comprato" non ha
         // mai spostato niente per nessuna serie.
-        null
+        null,
+        edizione
       ]
     );
 
