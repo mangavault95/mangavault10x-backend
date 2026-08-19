@@ -103,7 +103,12 @@ router.post("/purchase/:id", async (req, res) => {
         0,
         0,
         "",
-        0
+        // Non votata si scrive NULL, non 0: la tabella ha un vincolo
+        // (valutazione_1_5) che accetta solo NULL oppure un voto da 1 a 5,
+        // ed è così che stanno le serie della collezione mai votate.
+        // Con lo zero questa INSERT falliva sempre, cioè "Comprato" non ha
+        // mai spostato niente per nessuna serie.
+        null
       ]
     );
 
