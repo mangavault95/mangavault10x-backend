@@ -5,11 +5,23 @@ const jwt = require("jsonwebtoken");
 // CONFIG — tutto da variabili d'ambiente.
 // Niente valori di default: se manca qualcosa il server
 // deve fermarsi subito, non ripiegare su credenziali deboli.
+//
+// Le credenziali qui dentro sono quelle del PROPRIETARIO, e sono
+// rimaste dov'erano apposta: cambiare la propria password resta una
+// cosa che si fa da Render, non una riga di database. Gli altri utenti
+// invece vivono interamente nella tabella `utenti` (vedi utenti.js).
 // --------------------------------------------------
 const JWT_SECRET = process.env.JWT_SECRET;
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
 const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH;
-const TOKEN_TTL = process.env.JWT_TTL || "8h";
+const ADMIN_NICKNAME = process.env.ADMIN_NICKNAME || "Nicer";
+
+// Trenta giorni, non otto ore. Con un solo utente la sessione serviva
+// solo a firmare una modifica; adesso dice anche CHI SEI — quali voti
+// sono i tuoi e quali letture vedi. Scadere dopo un pomeriggio
+// significherebbe ritrovarsi a guardare la libreria di un altro senza
+// aver fatto niente.
+const TOKEN_TTL = process.env.JWT_TTL || "30d";
 
 function assertConfig() {
   const missing = [];
@@ -29,6 +41,12 @@ function assertConfig() {
     throw new Error("JWT_SECRET troppo corto: servono almeno 32 caratteri.");
   }
 }
+
+const credenzialiProprietario = () => ({
+  username: ADMIN_USERNAME,
+  passwordHash: ADMIN_PASSWORD_HASH,
+  nickname: ADMIN_NICKNAME
+});
 
 // --------------------------------------------------
 // PASSWORD — scrypt, formato "salt:hash" in esadecimale.
@@ -55,26 +73,45 @@ function verifyPassword(password, stored) {
 }
 
 // --------------------------------------------------
-// LOGIN
+// TOKEN
+//
+// Dentro ci va l'identificativo dell'utente, non solo il nome: è quello
+// che lega un voto o una lettura a una persona, e il nome può cambiare.
 // --------------------------------------------------
-function login(username, password) {
+function firmaToken(utente) {
   assertConfig();
 
-  const userMatches = username === ADMIN_USERNAME;
-  const passwordMatches = verifyPassword(String(password || ""), ADMIN_PASSWORD_HASH);
+  return jwt.sign(
+    {
+      id: utente.id,
+      user: utente.username,
+      nickname: utente.nickname,
+      role: utente.ruolo,
+      proprietario: Boolean(utente.proprietario)
+    },
+    JWT_SECRET,
+    { expiresIn: TOKEN_TTL }
+  );
+}
 
-  // Valuto sempre entrambi i controlli, così il tempo di risposta
-  // non rivela se è sbagliato l'utente o la password.
-  if (!userMatches || !passwordMatches) return null;
+function leggiToken(req) {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
 
-  return jwt.sign({ user: ADMIN_USERNAME, role: "admin" }, JWT_SECRET, {
-    expiresIn: TOKEN_TTL
-  });
+  if (!token) return null;
+
+  try {
+    return jwt.verify(token, JWT_SECRET);
+  } catch {
+    return null;
+  }
 }
 
 // --------------------------------------------------
 // MIDDLEWARE
 // --------------------------------------------------
+
+/** Serve un accesso valido. */
 function requireAuth(req, res, next) {
   const header = req.headers.authorization || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
@@ -91,10 +128,42 @@ function requireAuth(req, res, next) {
   }
 }
 
+/**
+ * Serve essere il padrone di casa.
+ *
+ * Approvare chi si registra non è un potere da amministratore
+ * qualunque: chi è appena stato accettato non deve poter accettare
+ * altri a sua volta.
+ */
+function requireProprietario(req, res, next) {
+  return requireAuth(req, res, () => {
+    if (!req.user?.proprietario) {
+      return res.status(403).json({ error: "Riservato al proprietario" });
+    }
+
+    return next();
+  });
+}
+
+/**
+ * Chi sei, se me lo dici.
+ *
+ * Per le rotte che si possono leggere senza accesso ma che, se
+ * l'accesso c'è, devono rispondere sulla persona giusta. Non blocca
+ * nessuno: lascia `req.user` a `null` e chi la usa decide.
+ */
+function identificaUtente(req, res, next) {
+  req.user = leggiToken(req);
+  return next();
+}
+
 module.exports = {
   assertConfig,
+  credenzialiProprietario,
   hashPassword,
   verifyPassword,
-  login,
-  requireAuth
+  firmaToken,
+  requireAuth,
+  requireProprietario,
+  identificaUtente
 };

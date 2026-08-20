@@ -1,7 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
-const { login, requireAuth } = require("../services/auth");
+const { requireAuth } = require("../services/auth");
+const { utenteScrive } = require("../services/utenti");
 const { enrich } = require("../services/enrich");
 const { eseguiRapportoVolumi } = require("../services/rapportoVolumi");
 
@@ -223,24 +224,14 @@ router.post("/rapporto-volumi", richiedeSegretoCron, async (req, res) => {
 });
 
 // --------------------------------------------------
-// LOGIN
+// LOGIN — il vecchio indirizzo.
+//
+// Adesso l'accesso sta in routes/utenti.js insieme a registrazione e
+// approvazioni, che è dove uno va a cercarlo. Questo resta perché è
+// l'indirizzo che il sito pubblicato chiama da mesi: un browser con la
+// vecchia versione in cache non deve trovarsi la porta murata.
 // --------------------------------------------------
-router.post("/login", (req, res) => {
-  const { username, password } = req.body;
-
-  try {
-    const token = login(username, password);
-
-    if (!token) {
-      return res.status(401).json({ error: "Credenziali errate" });
-    }
-
-    return res.json({ token });
-  } catch (err) {
-    console.error("❌ LOGIN CONFIG ERROR:", err.message);
-    return res.status(500).json({ error: "Autenticazione non configurata" });
-  }
-});
+router.post("/login", (req, res) => require("./utenti").gestisciLogin(req, res));
 
 // --------------------------------------------------
 // UPDATE MANGA
@@ -256,7 +247,8 @@ const CAMPI_AGGIORNABILI = {
   costo: "Costo",
   volumiposseduti: "VolumiPosseduti",
   volumitotali: "VolumiTotali",
-  valutazione: "Valutazione",
+  // `valutazione` non è più un campo della scheda: il voto è di una
+  // persona, non della serie, e si scrive da /updateRating.
   statoSerie: "StatoSerie",
   prezzoCopertina: "PrezzoCopertina",
   isbn: "Isbn",
@@ -436,12 +428,62 @@ router.delete("/:id", requireAuth, async (req, res) => {
   }
 });
 
+// --------------------------------------------------
+// VOTO
+//
+// Non è più una colonna della serie ma una riga per (serie, persona):
+// la stessa opera ha due giudizi, e nessuno dei due è "il" voto.
+//
+// Chi vota lo dice il token, mai il corpo della richiesta: altrimenti
+// basterebbe cambiare un numero per votare al posto dell'altra persona.
+//
+// Mezze stelle ammesse: 0.5, 1, 1.5 … 5. `rating` nullo cancella il
+// voto — togliere un giudizio dato per sbaglio deve essere possibile,
+// e "non votato" non è lo zero.
+// --------------------------------------------------
 router.post("/updateRating", requireAuth, async (req, res) => {
   const { id, rating } = req.body;
 
+  const serie = Number(id);
+
+  if (!Number.isInteger(serie)) {
+    return res.status(400).json({ error: "Serie non valida" });
+  }
+
   try {
-    await pool.query(`UPDATE "Manga" SET "Valutazione" = $1 WHERE "ID" = $2`, [rating, id]);
-    return res.json({ success: true });
+    const utenteId = await utenteScrive(req);
+
+    if (!utenteId) {
+      return res.status(500).json({ error: "Utente non riconosciuto" });
+    }
+
+    if (rating === null || rating === undefined || rating === "" || Number(rating) === 0) {
+      await pool.query(`DELETE FROM voti WHERE manga_id = $1 AND utente_id = $2`, [
+        serie,
+        utenteId
+      ]);
+
+      return res.json({ success: true, voto: null });
+    }
+
+    const voto = Number(rating);
+
+    if (!(voto >= 0.5 && voto <= 5) || Math.round(voto * 2) !== voto * 2) {
+      return res.status(400).json({ error: "Voto non valido: da 0,5 a 5, a mezze stelle." });
+    }
+
+    const { rows } = await pool.query(
+      `
+      INSERT INTO voti (manga_id, utente_id, voto)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (manga_id, utente_id)
+      DO UPDATE SET voto = EXCLUDED.voto, aggiornato_il = NOW()
+      RETURNING voto
+      `,
+      [serie, utenteId, voto]
+    );
+
+    return res.json({ success: true, voto: Number(rows[0].voto) });
   } catch (err) {
     console.error("❌ UPDATE RATING ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
@@ -450,12 +492,58 @@ router.post("/updateRating", requireAuth, async (req, res) => {
 
 // --------------------------------------------------
 // LETTURA
+//
+// Ogni scheda si porta dietro i voti di tutti in un campo solo
+// (`Voti`), invece di una colonna per persona: le persone possono
+// diventare tre, le colonne no. Il browser ne pesca uno — il tuo — e
+// mostra gli altri accanto.
+//
+// La JOIN è una sottoquery e non un GROUP BY sull'intera tabella
+// apposta: `SELECT *` deve continuare a restituire le colonne di
+// "Manga" come sono, senza che aggiungere una colonna domani obblighi
+// a toccare anche il raggruppamento.
 // --------------------------------------------------
 router.get("/", async (req, res) => {
   try {
-    const { rows } = await pool.query(`SELECT * FROM "Manga" ORDER BY "ID" DESC`);
+    const { rows } = await pool.query(`
+      SELECT
+        m.*,
+        COALESCE(
+          (
+            SELECT json_agg(
+                     json_build_object(
+                       'utenteId', v.utente_id,
+                       'nickname', u.nickname,
+                       'proprietario', u.proprietario,
+                       'voto', v.voto::float
+                     )
+                     ORDER BY u.proprietario DESC, u.creato_il ASC
+                   )
+            FROM voti v
+            JOIN utenti u ON u.id = v.utente_id
+            WHERE v.manga_id = m."ID"
+          ),
+          '[]'::json
+        ) AS "Voti"
+      FROM "Manga" m
+      ORDER BY m."ID" DESC
+    `);
+
     return res.json(rows);
   } catch (err) {
+    // Prima della migrazione 009 le tabelle dei voti non esistono: la
+    // collezione deve poter arrivare lo stesso, o il sito è vuoto
+    // finché lo script non gira su Supabase.
+    if (err.code === "42P01") {
+      try {
+        const { rows } = await pool.query(`SELECT * FROM "Manga" ORDER BY "ID" DESC`);
+        return res.json(rows.map((r) => ({ ...r, Voti: [] })));
+      } catch (err2) {
+        console.error("❌ GET MANGA ERROR:", err2);
+        return res.status(500).json({ error: "Errore server" });
+      }
+    }
+
     console.error("❌ GET MANGA ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
   }

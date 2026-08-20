@@ -46,6 +46,7 @@ app.use(express.json());
 // --------------------------------------------------
 // ROUTES
 // --------------------------------------------------
+app.use("/api/utenti", require("./routes/utenti"));
 app.use("/api/manga", require("./routes/manga"));
 app.use("/api/wishlist", require("./routes/wishlist"));
 app.use("/api/wishlist-actions", require("./routes/wishlistActions"));
@@ -80,4 +81,14 @@ app.use((err, req, res, next) => {
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
   console.log(`Origini autorizzate: ${allowedOrigins.join(", ") || "(nessuna!)"}`);
+
+  // La riga del proprietario si riallinea alle variabili d'ambiente a
+  // ogni avvio: le sue credenziali restano su Render, il database ne
+  // tiene solo l'identificativo e il soprannome. Dopo l'ascolto e non
+  // prima, perché un database lento non deve ritardare il momento in
+  // cui il server risponde — e se la migrazione 009 non è ancora stata
+  // eseguita si limita a dirlo.
+  require("./services/utenti")
+    .preparaUtenti()
+    .catch((err) => console.error("❌ PREPARA UTENTI:", err.message));
 });

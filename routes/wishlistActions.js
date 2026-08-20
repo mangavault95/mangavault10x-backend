@@ -102,10 +102,9 @@ router.post("/purchase/:id", async (req, res) => {
         "VolumiPosseduti",
         "Costo",
         "Editore",
-        "Valutazione",
         "Edizione"
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
       RETURNING *
       `,
       [
@@ -119,12 +118,9 @@ router.post("/purchase/:id", async (req, res) => {
         intero(req.body?.volumiPosseduti, 0),
         0,
         "",
-        // Non votata si scrive NULL, non 0: la tabella ha un vincolo
-        // (valutazione_1_5) che accetta solo NULL oppure un voto da 1 a 5,
-        // ed è così che stanno le serie della collezione mai votate.
-        // Con lo zero questa INSERT falliva sempre, cioè "Comprato" non ha
-        // mai spostato niente per nessuna serie.
-        null,
+        // Niente voto qui: da quando i lettori sono due il voto non è più
+        // una colonna della serie ma una riga di `voti`, ed è di chi lo
+        // dà. Una serie appena comprata non è ancora piaciuta a nessuno.
         edizione
       ]
     );
