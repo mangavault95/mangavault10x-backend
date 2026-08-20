@@ -52,6 +52,8 @@ app.use("/api/wishlist", require("./routes/wishlist"));
 app.use("/api/wishlist-actions", require("./routes/wishlistActions"));
 app.use("/api/reading-history", require("./routes/readingHistory"));
 app.use("/api/reading-sessions", require("./routes/readingSessions"));
+app.use("/api/letture-droppate", require("./routes/droppate"));
+app.use("/api/note", require("./routes/note"));
 app.use("/api/marketplace", require("./routes/marketplace"));
 app.use("/api/cover", require("./routes/cover"));
 app.use("/api/simili", require("./routes/simili"));

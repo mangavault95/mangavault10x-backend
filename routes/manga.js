@@ -261,7 +261,9 @@ const CAMPI_AGGIORNABILI = {
   annoInizio: "AnnoInizio",
   titoloOriginale: "TitoloOriginale",
   preferito: "Preferito",
-  droppato: "Droppato",
+  // `droppato` è uscito di qui insieme a `valutazione`, e per lo stesso
+  // motivo: mollare una serie è di chi legge, non della serie. Si
+  // scrive da /api/letture-droppate.
   edizione: "Edizione",
   operaId: "OperaId"
 };
@@ -504,6 +506,21 @@ router.post("/updateRating", requireAuth, async (req, res) => {
 // diventare tre, le colonne no. Il browser ne pesca uno — il tuo — e
 // mostra gli altri accanto.
 //
+// Stessa cosa per `Droppate`, che dal 011 non è più la colonna
+// "Droppato": mollare una serie è una decisione di chi legge, e qui
+// arriva l'elenco di chi l'ha presa. Il browser guarda se ci sei tu.
+//
+// E per `Note` e `Lettori`, dal 012. Viaggiano attaccate alla scheda
+// invece che in una richiesta a parte perché è la stessa domanda:
+// dell'opera si vuole sapere tutto insieme, e la collezione è già
+// l'unica cosa che il browser scarica per disegnare qualunque pagina.
+// `Lettori` dice chi ne ha letto almeno un volume e quanti: serve al
+// filtro "lette da" in collezione e alla classifica in "in lettura".
+// Il conteggio viaggia insieme al nome apposta — con quello la
+// classifica di CHIUNQUE si disegna senza chiedere niente al server,
+// e passare da un lettore all'altro è istantaneo invece di essere
+// un'altra attesa di Render che si sveglia.
+//
 // La JOIN è una sottoquery e non un GROUP BY sull'intera tabella
 // apposta: `SELECT *` deve continuare a restituire le colonne di
 // "Manga" come sono, senza che aggiungere una colonna domani obblighi
@@ -530,20 +547,73 @@ router.get("/", async (req, res) => {
             WHERE v.manga_id = m."ID"
           ),
           '[]'::json
-        ) AS "Voti"
+        ) AS "Voti",
+        COALESCE(
+          (
+            SELECT json_agg(
+                     json_build_object(
+                       'utenteId', d.utente_id,
+                       'proprietario', u.proprietario
+                     )
+                     ORDER BY u.proprietario DESC, u.creato_il ASC
+                   )
+            FROM letture_droppate d
+            JOIN utenti u ON u.id = d.utente_id
+            WHERE d.manga_id = m."ID"
+          ),
+          '[]'::json
+        ) AS "Droppate",
+        COALESCE(
+          (
+            SELECT json_agg(
+                     json_build_object(
+                       'id', n.id,
+                       'utenteId', n.utente_id,
+                       'nickname', u.nickname,
+                       'colore', u.colore,
+                       'testo', n.testo,
+                       'creataIl', n.creata_il,
+                       'aggiornataIl', n.aggiornata_il
+                     )
+                     ORDER BY n.creata_il ASC
+                   )
+            FROM note_serie n
+            JOIN utenti u ON u.id = n.utente_id
+            WHERE n.manga_id = m."ID"
+          ),
+          '[]'::json
+        ) AS "Note",
+        COALESCE(
+          (
+            SELECT json_agg(
+                     json_build_object('utenteId', t.utente_id, 'volumi', t.quanti)
+                     ORDER BY t.quanti DESC
+                   )
+            FROM (
+              SELECT h.utente_id, COUNT(DISTINCT h.volume)::int AS quanti
+              FROM reading_history h
+              WHERE h.manga_id = m."ID"
+              GROUP BY h.utente_id
+            ) t
+          ),
+          '[]'::json
+        ) AS "Lettori"
       FROM "Manga" m
       ORDER BY m."ID" DESC
     `);
 
     return res.json(rows);
   } catch (err) {
-    // Prima della migrazione 009 le tabelle dei voti non esistono: la
-    // collezione deve poter arrivare lo stesso, o il sito è vuoto
-    // finché lo script non gira su Supabase.
-    if (err.code === "42P01") {
+    // Prima delle migrazioni 009, 011 e 012 le tabelle dei voti, delle
+    // droppate e delle note non esistono: la collezione deve poter
+    // arrivare lo stesso, o il sito è vuoto finché lo script non gira
+    // su Supabase. (42703 = la colonna `colore` non c'è ancora.)
+    if (err.code === "42P01" || err.code === "42703") {
       try {
         const { rows } = await pool.query(`SELECT * FROM "Manga" ORDER BY "ID" DESC`);
-        return res.json(rows.map((r) => ({ ...r, Voti: [] })));
+        return res.json(
+          rows.map((r) => ({ ...r, Voti: [], Droppate: [], Note: [], Lettori: [] }))
+        );
       } catch (err2) {
         console.error("❌ GET MANGA ERROR:", err2);
         return res.status(500).json({ error: "Errore server" });

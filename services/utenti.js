@@ -25,6 +25,77 @@ const {
  */
 
 /* ==================================================
+   IL COLORE DI CHI LEGGE
+   ================================================== */
+
+/**
+ * I colori con cui si riconosce chi ha scritto una nota.
+ *
+ * Sono NOMI, non valori: il sito disegna solo con i token del suo
+ * design system (`tailwind.config.js`), e un `#rrggbb` scritto qui
+ * sarebbe l'unico colore del sito deciso fuori di lì. La stessa lista
+ * sta nel frontend in `src/dati/lettori.js`, che sa come si traducono.
+ *
+ * L'ordine non conta — quello che conta è che siano abbastanza diversi
+ * fra loro da distinguersi in un pallino da otto pixel.
+ */
+const COLORI_LETTORE = ["ottone", "lilla", "menta", "corallo", "cielo", "rosa"];
+
+/**
+ * Un colore ancora libero, o — se sono finiti — uno a caso.
+ *
+ * "Randomico" come chiesto, ma non del tutto: pescare davvero a caso
+ * darebbe due lettori dello stesso colore già al terzo iscritto, che è
+ * esattamente la cosa che il colore serve a evitare. Si sorteggia fra
+ * quelli che nessuno sta usando, e solo quando finiscono si accetta un
+ * doppione.
+ */
+async function coloreLibero() {
+  const { rows } = await pool.query(
+    `SELECT DISTINCT colore FROM utenti WHERE colore IS NOT NULL`
+  );
+
+  const presi = new Set(rows.map((r) => r.colore));
+  const liberi = COLORI_LETTORE.filter((c) => !presi.has(c));
+  const scelta = liberi.length ? liberi : COLORI_LETTORE;
+
+  return scelta[Math.floor(Math.random() * scelta.length)];
+}
+
+/**
+ * Dà un colore a chi non ce l'ha.
+ *
+ * Gira a ogni avvio insieme a `preparaUtenti`: la migrazione ne
+ * assegna due, ma un utente approvato prima che questo codice
+ * esistesse resterebbe senza, e una nota senza colore non si distingue
+ * da quella dell'altro. Uno alla volta, così il sorteggio vede sempre
+ * i colori appena assegnati.
+ */
+async function assegnaColoriMancanti() {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id FROM utenti WHERE colore IS NULL ORDER BY creato_il ASC`
+    );
+
+    for (const riga of rows) {
+      await pool.query(`UPDATE utenti SET colore = $1 WHERE id = $2`, [
+        await coloreLibero(),
+        riga.id
+      ]);
+    }
+
+    if (rows.length) {
+      console.log(`🎨 Colore assegnato a ${rows.length} lettori.`);
+    }
+  } catch (err) {
+    // Prima del 012 la colonna non esiste: il sito deve partire lo
+    // stesso, le note semplicemente non hanno ancora un colore.
+    if (err.code === "42703" || err.code === "42P01") return;
+    throw err;
+  }
+}
+
+/* ==================================================
    IL PROPRIETARIO
    ================================================== */
 
@@ -67,6 +138,8 @@ async function preparaUtenti() {
     idProprietarioInCache = Number(rows[0].id);
 
     console.log(`👤 Proprietario: ${rows[0].nickname} (#${idProprietarioInCache})`);
+
+    await assegnaColoriMancanti();
 
     return idProprietarioInCache;
   } catch (err) {
@@ -268,11 +341,11 @@ async function registra({ username, nickname, password }) {
   try {
     const { rows } = await pool.query(
       `
-      INSERT INTO utenti (username, nickname, password_hash, ruolo, stato)
-      VALUES ($1, $2, $3, 'lettore', 'in_attesa')
+      INSERT INTO utenti (username, nickname, password_hash, ruolo, stato, colore)
+      VALUES ($1, $2, $3, 'lettore', 'in_attesa', $4)
       RETURNING id, username, nickname, ruolo, stato, proprietario, creato_il
       `,
-      [nome, soprannome, hashPassword(segreto)]
+      [nome, soprannome, hashPassword(segreto), await coloreLibero()]
     );
 
     return { utente: pubblico(rows[0]) };
@@ -368,7 +441,7 @@ async function decidi(id, approvato) {
 async function pubblici() {
   const { rows } = await pool.query(
     `
-    SELECT id, nickname, proprietario
+    SELECT id, nickname, proprietario, colore
     FROM utenti
     WHERE stato = 'attivo'
     ORDER BY proprietario DESC, creato_il ASC
@@ -378,7 +451,10 @@ async function pubblici() {
   return rows.map((r) => ({
     id: Number(r.id),
     nickname: r.nickname,
-    proprietario: Boolean(r.proprietario)
+    proprietario: Boolean(r.proprietario),
+    // Il colore è pubblico per definizione: è come si riconosce chi ha
+    // scritto una nota, e le note si leggono anche senza essere entrati.
+    colore: r.colore || null
   }));
 }
 
@@ -399,6 +475,7 @@ function pubblico(riga) {
 
 module.exports = {
   MOTIVI,
+  COLORI_LETTORE,
   preparaUtenti,
   idProprietario,
   utenteLetto,

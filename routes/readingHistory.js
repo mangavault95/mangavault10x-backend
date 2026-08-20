@@ -76,7 +76,6 @@ router.get("/per-serie", identificaUtente, async (req, res) => {
         m."VolumiTotali"                          AS volumitotali,
         m."StatoSerie"                            AS statoserie,
         m."Editore"                               AS editore,
-        m."Droppato"                               AS droppato,
 
         -- I volumi distinti in ordine: rileggere lo stesso volume
         -- due volte non deve farlo comparire doppio sullo scaffale.
@@ -89,7 +88,7 @@ router.get("/per-serie", identificaUtente, async (req, res) => {
       LEFT JOIN "Manga" m ON m."ID" = h.manga_id
       WHERE h.utente_id = $1
       GROUP BY h.manga_id, m."Titolo", m."Autore", m."CoverURL",
-               m."VolumiTotali", m."StatoSerie", m."Editore", m."Droppato"
+               m."VolumiTotali", m."StatoSerie", m."Editore"
       ORDER BY MAX(h.read_at) DESC
       `,
       [utenteId]
@@ -130,6 +129,38 @@ router.post("/", requireAuth, async (req, res) => {
     return res.status(201).json({ success: true, item: result.rows[0] });
   } catch (err) {
     console.error("READING HISTORY POST ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+// --------------------------------------------------
+// DELETE /api/reading-history/serie/:mangaId/volume/:numero
+//
+// Tornare indietro di un volume dal tavolo di lettura, senza doverlo
+// prima ritrovare in fondo alla cronologia. È lo stesso ripensamento
+// del DELETE qui sotto, ma detto come lo si pensa — "il 5 non l'ho
+// letto" — invece che con l'identificativo di una riga che chi legge
+// non ha mai visto.
+//
+// Cancella TUTTE le righe di quel volume, non una: se lo stesso
+// volume è stato segnato due volte, lasciarne in piedi una lo
+// rimetterebbe letto un istante dopo.
+// --------------------------------------------------
+router.delete("/serie/:mangaId/volume/:numero", requireAuth, async (req, res) => {
+  try {
+    const utenteId = await utenteScrive(req);
+
+    const { rowCount } = await pool.query(
+      `
+      DELETE FROM reading_history
+      WHERE manga_id = $1 AND volume = $2 AND utente_id = $3
+      `,
+      [Number(req.params.mangaId), Number(req.params.numero), utenteId]
+    );
+
+    return res.json({ success: true, tolte: rowCount });
+  } catch (err) {
+    console.error("READING HISTORY DELETE VOLUME ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
   }
 });
