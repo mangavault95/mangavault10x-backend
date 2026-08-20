@@ -8,7 +8,9 @@
     "start": "node index.js",
     "dev": "nodemon index.js",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "hash": "node scripts/hash-password.js"
+    "hash": "node scripts/hash-password.js",
+    "categorie": "node scripts/categorie.js",
+    "prova-tornei": "node scripts/prova-tornei.js"
   },
   "keywords": [],
   "author": "",

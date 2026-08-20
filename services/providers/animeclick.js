@@ -441,12 +441,36 @@ function nocciolo(titolo) {
   return parole.slice(0, 3).join(" ");
 }
 
+/**
+ * Il <dl> in cima alla scheda: la tabella "etichetta → valore" da cui
+ * si leggono autori, categoria, editore, anno.
+ *
+ * La classe si cerca per pezzo (`dl-horizontal`) e non per intero:
+ * quel <dl> si chiamava `class="dl-horizontal"` e oggi si chiama
+ * `class="ac-dl-horizontal"`. Cercarlo alla lettera lo faceva
+ * sparire in silenzio — la scheda continuava ad arrivare, la tabella
+ * risultava vuota, e "nessun autore" sembrava un fatto invece che un
+ * parser rotto.
+ *
+ * La chiusura si cerca DOPO l'apertura: il primo `</dl>` della pagina
+ * può stare prima, e allora la fetta sarebbe vuota comunque.
+ */
+function tabellaScheda(html) {
+  const inizio = String(html).search(/<dl[^>]*dl-horizontal[^>]*>/i);
+
+  if (inizio < 0) return "";
+
+  const fine = html.indexOf("</dl>", inizio);
+
+  return fine < 0 ? html.slice(inizio) : html.slice(inizio, fine);
+}
+
 /** Chi ha scritto e disegnato, letto dal <dl> della scheda. */
 async function autoriDi(animeClickId, { fetchImpl = fetch } = {}) {
   const risposta = await prendi(`${BASE}/manga/${animeClickId}/-/`, {}, fetchImpl);
   const html = await risposta.text();
 
-  const dl = html.slice(html.indexOf('<dl class="dl-horizontal">'), html.indexOf("</dl>"));
+  const dl = tabellaScheda(html);
   const nomi = [];
 
   for (const [, dt, dd] of dl.matchAll(/<dt>([\s\S]*?)<\/dt>\s*<dd>([\s\S]*?)<\/dd>/g)) {
@@ -640,6 +664,61 @@ async function consigli(animeClickId, { quanti = 12, fetchImpl = fetch } = {}) {
   return trovati.slice(0, quanti);
 }
 
+
+/**
+ * Il pubblico a cui la serie è stata scritta: shonen, seinen, shojo...
+ *
+ * Sulla scheda si chiama "Categoria" ed è una lista di link, non una
+ * parola sola: "Seinen", ma anche "Seinen" e "Pubblico Adulto"
+ * insieme. La seconda voce non è un pubblico diverso, è un
+ * avvertimento sui contenuti — quindi vale solo quando è l'unica cosa
+ * scritta.
+ *
+ * AniList questo dato non ce l'ha in nessuna forma: i suoi `genres`
+ * dicono di cosa parla l'opera, mai per chi è stata scritta. È il
+ * motivo per cui anche qui la fonte è quella italiana.
+ */
+const CATEGORIE = [
+  [/kodomo/i, "kodomo"],
+  [/sh(o|ō|ou)nen/i, "shonen"],
+  [/sh(o|ō|ou)(jo|ujo)/i, "shojo"],
+  [/seinen/i, "seinen"],
+  [/josei/i, "josei"]
+];
+
+function categoriaDa(voci) {
+  for (const voce of voci) {
+    const trovata = CATEGORIE.find(([forma]) => forma.test(voce));
+
+    if (trovata) return trovata[1];
+  }
+
+  // Nessun pubblico dichiarato, ma il sito avverte che è roba per
+  // grandi: è quanto di più preciso si possa dire di quella scheda.
+  if (voci.some((v) => /pubblico\s+adulto/i.test(v))) return "adulto";
+
+  return null;
+}
+
+async function categoriaDi(animeClickId, { fetchImpl = fetch } = {}) {
+  const risposta = await prendi(`${BASE}/manga/${animeClickId}/-/`, {}, fetchImpl);
+  const html = await risposta.text();
+
+  const dl = tabellaScheda(html);
+
+  for (const [, dt, dd] of dl.matchAll(/<dt>([\s\S]*?)<\/dt>\s*<dd>([\s\S]*?)<\/dd>/g)) {
+    if (!/^categoria/i.test(testoDi(dt))) continue;
+
+    // Le voci le separano i link: "Seinen" e "Pubblico Adulto" sono
+    // due <a> distinti, e sul testo intero sarebbero una frase sola.
+    const voci = linkDi(dd);
+
+    return categoriaDa(voci.length ? voci : [testoDi(dd)]);
+  }
+
+  return null;
+}
+
 module.exports = {
   volumiUsciti,
   urlEdizioni,
@@ -647,6 +726,7 @@ module.exports = {
   cerca,
   autoriDi,
   trovaOpera,
+  categoriaDi,
   consigli,
   opereDiAutore
 };

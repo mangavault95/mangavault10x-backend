@@ -241,6 +241,12 @@ const CAMPI_AGGIORNABILI = {
   autore: "Autore",
   disegnatore: "Disegnatore",
   genere: "Genere",
+  // Il pubblico dell'opera (shonen, seinen, shojo...). È una cosa
+  // diversa dal genere e sta in una colonna sua: "Drama" dice di cosa
+  // parla, "seinen" per chi è stato scritto. La riempie
+  // `scripts/categorie.js` leggendola da AnimeClick; qui si corregge a
+  // mano quando la scheda altrui sbaglia.
+  categoria: "Categoria",
   trama: "Trama",
   coverurl: "CoverURL",
   editore: "Editore",
