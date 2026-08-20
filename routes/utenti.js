@@ -116,7 +116,7 @@ router.get("/pubblici", async (req, res) => {
 /** Chi sono io, secondo il token che ho in mano. */
 router.get("/io", requireAuth, (req, res) => {
   return res.json({
-    id: req.user.id ?? null,
+    id: req.user.id == null ? null : Number(req.user.id),
     username: req.user.user,
     nickname: req.user.nickname ?? req.user.user,
     ruolo: req.user.role,

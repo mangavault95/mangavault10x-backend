@@ -83,7 +83,11 @@ function firmaToken(utente) {
 
   return jwt.sign(
     {
-      id: utente.id,
+      // Numero, non stringa: `accedi()` passa la riga grezza, e
+      // Postgres consegna i `bigint` come testo. Il browser confronta
+      // quell'identificativo con `===` (di chi è questo voto, di chi è
+      // questa nota) e `"1" === 1` è falso.
+      id: Number(utente.id),
       user: utente.username,
       nickname: utente.nickname,
       role: utente.ruolo,

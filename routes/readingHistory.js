@@ -134,6 +134,79 @@ router.post("/", requireAuth, async (req, res) => {
 });
 
 // --------------------------------------------------
+// POST /api/reading-history/serie/:mangaId/fino-a/:numero
+//
+// Una serie già letta prima di essere entrata nel sito: segnare
+// venticinque volumi uno per uno è venticinque click e venticinque
+// richieste, per registrare una cosa sola — "questa l'ho letta".
+//
+// Segna solo quelli che mancano: rilanciarlo non duplica niente, e chi
+// aveva già segnato i primi tre non se li ritrova doppi.
+//
+// Titolo, autore e copertina si prendono da "Manga" qui dentro invece
+// che dal browser: sono già in tabella, e una copia mandata da fuori è
+// una copia che può arrivare sbagliata.
+// --------------------------------------------------
+router.post("/serie/:mangaId/fino-a/:numero", requireAuth, async (req, res) => {
+  try {
+    const fino = Number(req.params.numero);
+
+    // Un tetto ci vuole: senza, un numero sbagliato nell'indirizzo
+    // scrive diecimila righe prima che qualcuno se ne accorga.
+    if (!Number.isInteger(fino) || fino < 1 || fino > 500) {
+      return res.status(400).json({ error: "Numero di volumi non valido" });
+    }
+
+    const utenteId = await utenteScrive(req);
+
+    const { rowCount } = await pool.query(
+      `
+      INSERT INTO reading_history
+        (manga_id, titolo, autore, coverurl, volume, read_at, utente_id)
+      SELECT m."ID", m."Titolo", COALESCE(m."Autore", ''), COALESCE(m."CoverURL", ''),
+             v, NOW(), $2
+        FROM "Manga" m
+        CROSS JOIN generate_series(1, $3) AS v
+       WHERE m."ID" = $1
+         AND NOT EXISTS (
+               SELECT 1 FROM reading_history h
+                WHERE h.manga_id = m."ID" AND h.utente_id = $2 AND h.volume = v
+             )
+      `,
+      [Number(req.params.mangaId), utenteId, fino]
+    );
+
+    return res.json({ success: true, segnati: rowCount });
+  } catch (err) {
+    console.error("READING HISTORY FINO-A ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+// --------------------------------------------------
+// DELETE /api/reading-history/serie/:mangaId
+//
+// Togliere un'intera serie da quelle lette. Volume per volume, su una
+// serie da trenta, sarebbe un lavoro — e il ripensamento è sulla serie,
+// non sui singoli numeri.
+// --------------------------------------------------
+router.delete("/serie/:mangaId", requireAuth, async (req, res) => {
+  try {
+    const utenteId = await utenteScrive(req);
+
+    const { rowCount } = await pool.query(
+      `DELETE FROM reading_history WHERE manga_id = $1 AND utente_id = $2`,
+      [Number(req.params.mangaId), utenteId]
+    );
+
+    return res.json({ success: true, tolte: rowCount });
+  } catch (err) {
+    console.error("READING HISTORY DELETE SERIE ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+// --------------------------------------------------
 // DELETE /api/reading-history/serie/:mangaId/volume/:numero
 //
 // Tornare indietro di un volume dal tavolo di lettura, senza doverlo
