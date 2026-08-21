@@ -298,13 +298,20 @@ function somiglianza(cercato, trovato) {
 // torna a costarne una invece di due. Dieci minuti è prudente — la
 // sessione dura molto di più, e se scade la POST fallisce e il giro
 // dopo se ne prende una nuova.
-let sessione = null;
+// Una sessione per tipo di ricerca: i due moduli stanno a due
+// indirizzi diversi (`/ricerca/manga` e `/ricerca/anime`) e ognuno
+// pubblica il suo token. Che poi il modulo degli anime si chiami
+// ancora `search_manga` è una stranezza loro, verificata: i nomi dei
+// campi sono identici, cambia solo dove si spedisce.
+const sessioni = new Map();
 const DURATA_SESSIONE = 10 * 60 * 1000;
 
-async function apriSessione(fetchImpl) {
+async function apriSessione(fetchImpl, tipo = "manga") {
+  const sessione = sessioni.get(tipo);
+
   if (sessione && Date.now() - sessione.quando < DURATA_SESSIONE) return sessione;
 
-  const modulo = await prendi(`${BASE}/ricerca/manga`, {}, fetchImpl);
+  const modulo = await prendi(`${BASE}/ricerca/${tipo}`, {}, fetchImpl);
 
   const cookie = (modulo.headers.get("set-cookie") || "")
     .split(",")
@@ -315,15 +322,17 @@ async function apriSessione(fetchImpl) {
   const html = await modulo.text();
   const token = html.match(/name="search_manga\[_token\]"[^>]*value="([^"]+)"/);
 
-  if (!token) throw new Error("AnimeClick: token della ricerca non trovato");
+  if (!token) throw new Error(`AnimeClick: token della ricerca ${tipo} non trovato`);
 
-  sessione = { cookie, token: token[1], quando: Date.now() };
+  const nuova = { cookie, token: token[1], quando: Date.now() };
 
-  return sessione;
+  sessioni.set(tipo, nuova);
+
+  return nuova;
 }
 
-async function cercaGrezzo(campi, { fetchImpl = fetch } = {}) {
-  const { cookie, token } = await apriSessione(fetchImpl);
+async function cercaGrezzo(campi, { fetchImpl = fetch, tipo = "manga" } = {}) {
+  const { cookie, token } = await apriSessione(fetchImpl, tipo);
 
   // I campi del modulo vanno mandati tutti, anche quelli che nessuno
   // tocca, con il valore che avrebbero a schermo.
@@ -338,7 +347,7 @@ async function cercaGrezzo(campi, { fetchImpl = fetch } = {}) {
   });
 
   const risposta = await prendi(
-    `${BASE}/ricerca/manga`,
+    `${BASE}/ricerca/${tipo}`,
     {
       method: "POST",
       headers: {
@@ -358,14 +367,28 @@ async function cercaGrezzo(campi, { fetchImpl = fetch } = {}) {
 
   const trovate = [];
 
-  // Ogni risultato è un blocco .thumbnail: si taglia lì invece di
+  // Ogni risultato è un blocco "thumbnail": si taglia lì invece di
   // contare l'annidamento dei div, che con una regex non si conta.
-  for (const blocco of String(frammento).split(/<div class="thumbnail/).slice(1)) {
+  //
+  // ⚠️ Si cerca il PEZZO della classe, non la classe intera, ed è la
+  // stessa lezione del <dl> della scheda: il 21/08/2026 le classi dei
+  // risultati sono passate da `thumbnail` e `caption` ad `ac-thumbnail`
+  // e `ac-caption`, e cercandole alla lettera la ricerca rispondeva
+  // "nessun risultato" a qualunque cosa — perfino a "Berserk" — mentre
+  // AnimeClick stava rispondendo "Ci sono 4 titoli in database".
+  // Un guasto silenzioso: nessun errore, solo il vuoto.
+  for (const grezzo of String(frammento).split(/<div class="[^"]*thumbnail[^"]*"/i).slice(1)) {
+    // Il tooltip che compare passando sopra la copertina è un pezzo di
+    // HTML dentro un attributo, con dentro un altro <h5> e un'altra
+    // immagine: va tolto prima di leggere, o si finisce per prendere i
+    // suoi al posto di quelli veri.
+    const blocco = grezzo.replace(/data-bs-content="[\s\S]*?"/i, " ");
+
     // Lo slug non è fatto solo di lettere e trattini — "kaiju-no.8" ha
     // un punto — e l'espressione più stretta faceva sparire in silenzio
     // proprio la serie madre, lasciando in lista i suoi spin-off.
-    const link = blocco.match(/href="\/manga\/(\d+)\/([^"]*)"/i);
-    const didascalia = blocco.match(/<div class="caption[\s\S]*?<h5>([\s\S]*?)<\/h5>/i);
+    const link = blocco.match(new RegExp(`href="/${tipo}/(\\d+)/([^"]*)"`, "i"));
+    const didascalia = blocco.match(/<div class="[^"]*caption[^"]*"[\s\S]*?<h5>([\s\S]*?)<\/h5>/i);
 
     if (!link || !didascalia) continue;
 
@@ -374,7 +397,14 @@ async function cercaGrezzo(campi, { fetchImpl = fetch } = {}) {
     if (!nome) continue;
 
     const copertina = blocco.match(/src="([^"]+)"/);
-    const anno = blocco.match(/<div class="pull-right">\s*(\d{4})\s*<\/div>/);
+
+    // L'anno stava in un `.pull-right` accanto al titolo; da quando i
+    // risultati hanno il tooltip, è finito lì dentro accanto
+    // all'icona del calendario. Si cercano tutti e due i posti, così
+    // il giorno che ne cambia uno l'altro regge.
+    const anno =
+      blocco.match(/<div class="pull-right">\s*(\d{4})\s*<\/div>/) ||
+      grezzo.match(/fa-calendar[^>]*>[\s\S]{0,80}?(\d{4})/i);
 
     trovate.push({
       id: Number(link[1]),
@@ -383,7 +413,7 @@ async function cercaGrezzo(campi, { fetchImpl = fetch } = {}) {
       // Le miniature sono indirizzi relativi al sito, e il ponte delle
       // copertine sa scaricare solo indirizzi interi.
       copertina: copertina ? new URL(copertina[1], BASE).href : null,
-      url: `${BASE}/manga/${link[1]}/${link[2] || "-"}`
+      url: `${BASE}/${tipo}/${link[1]}/${link[2] || "-"}`
     });
   }
 
@@ -404,7 +434,10 @@ async function cercaGrezzo(campi, { fetchImpl = fetch } = {}) {
  * Non decide niente: chi chiama sceglie, e su AnimeClick gli omonimi
  * sono la norma.
  */
-async function cerca(titolo, { quanti = 3, modo = "contiene", autore = null, fetchImpl = fetch } = {}) {
+async function cerca(
+  titolo,
+  { quanti = 3, modo = "contiene", autore = null, tipo = "manga", fetchImpl = fetch } = {}
+) {
   const trovate = await cercaGrezzo(
     {
       "search_manga[title]": titolo,
@@ -414,7 +447,7 @@ async function cerca(titolo, { quanti = 3, modo = "contiene", autore = null, fet
       // senza aprire nemmeno una scheda.
       ...(autore ? { "search_manga[staff]": autore } : {})
     },
-    { fetchImpl }
+    { fetchImpl, tipo }
   );
 
   return trovate
@@ -723,7 +756,16 @@ module.exports = {
   volumiUsciti,
   urlEdizioni,
   USER_AGENT,
+  BASE,
   cerca,
+  // Esportati per il provider degli anime (`animeclickAnime.js`): è lo
+  // stesso sito con le stesse regole di cortesia, e riscrivergli
+  // accanto un secondo modo di leggere l'HTML significherebbe doverli
+  // correggere tutti e due il giorno che AnimeClick cambia.
+  prendi,
+  testoDi,
+  tabellaScheda,
+  somiglianza,
   autoriDi,
   trovaOpera,
   categoriaDi,
