@@ -297,6 +297,89 @@ async function episodi(animeClickId, { fetchImpl = fetch } = {}) {
 }
 
 // --------------------------------------------------
+// 3-bis. LE RELAZIONI — chi è la stagione di chi
+// --------------------------------------------------
+
+/**
+ * Le altre opere legate a questa, lette da `/anime/<id>/-/relazioni`.
+ *
+ * È la risposta al disordine che si vede in videoteca: AnimeClick non
+ * è coerente con sé stessa. Frieren tiene due stagioni in una scheda
+ * sola e numera 1→38; Isekai Farming apre una scheda per stagione
+ * (42643 e 67685) e riparte da 1. Senza questa pagina non c'è modo di
+ * sapere che quelle due schede sono la stessa serie, e in videoteca
+ * finiscono come due copertine diverse.
+ *
+ * La pagina è una linguetta caricata a parte: risponde con un pezzo di
+ * HTML invece che con la scheda intera. Dentro, le opere sono divise
+ * per tipo — Animazione, Fumetti, Novel — e ognuna porta scritto CHE
+ * COSA è: «Opera precedente», «Opera successiva», «Spin-off». Qui
+ * interessa solo l'animazione: il legame col manga in collezione passa
+ * da un'altra strada (`anime.manga_id`).
+ */
+async function relazioni(animeClickId, { fetchImpl = fetch } = {}) {
+  const risposta = await prendi(
+    `${BASE}/anime/${animeClickId}/-/relazioni`,
+    { headers: { "X-Requested-With": "XMLHttpRequest" } },
+    fetchImpl
+  );
+
+  const html = await risposta.text();
+  const opere = [];
+
+  // `media-opera-animazione` marca i riquadri degli anime: fumetti e
+  // novel hanno la loro classe, e non vanno raccolti per sbaglio.
+  for (const pezzo of html.split(/(?=<div class="d-flex media-opera media-opera-)/).slice(1)) {
+    if (!/media-opera-animazione/.test(pezzo)) continue;
+
+    const id = pezzo.match(/href="\/anime\/(\d+)\//i);
+    const titolo = pezzo.match(/<span itemprop="name">([\s\S]*?)<\/span>/i);
+    const legame = pezzo.match(/opera-tipo-relazione"[^>]*>([\s\S]*?)<\/span>/i);
+    const anno = pezzo.match(/Anno:\s*(\d{4})/i);
+
+    if (!id) continue;
+
+    opere.push({
+      id: Number(id[1]),
+      titolo: titolo ? testoDi(titolo[1]) : null,
+      // «Opera precedente», «Opera successiva», «Spin-off», «Storia
+      // parallela»: si conserva la parola di AnimeClick invece di
+      // ridurla a un codice nostro. È già italiano leggibile, e
+      // l'elenco delle forme possibili non lo decidiamo noi.
+      legame: legame ? testoDi(legame[1]) : null,
+      anno: anno ? Number(anno[1]) : null
+    });
+  }
+
+  return opere;
+}
+
+/**
+ * Le relazioni che fanno di due schede la stessa serie.
+ *
+ * Le parole non sono simmetriche, ed è la prima trappola: la scheda
+ * della seconda stagione dice «Opera precedente», quella della prima
+ * dice «Sequel». Vanno riconosciute tutte e due, o il legame si vede
+ * da un lato solo.
+ *
+ * Sequel e prequel sì, pellicole comprese: il film che continua la
+ * serie è la stessa serie, e sta nello stesso pannello. Spin-off,
+ * storie parallele e riassunti no — sono opere diverse, e infilarle
+ * nello stesso gruppo vorrebbe dire una copertina che promette una
+ * cosa e una scheda che ne contiene un'altra.
+ *
+ * ⚠️ Non copre tutto, perché AnimeClick non compila sempre il campo:
+ * «Chainsaw Man: Assassins Arc» è elencato senza nessuna parola di
+ * relazione, pur essendo la seconda stagione. Per quei casi resta la
+ * mano, dalla pagina Gestione della videoteca.
+ */
+function eStessaSerie(legame) {
+  return /^(opera\s+(precedente|successiva)|sequel|prequel)$/i.test(
+    String(legame || "").trim()
+  );
+}
+
+// --------------------------------------------------
 // 4. IL CALENDARIO — quando esce, in Italia
 // --------------------------------------------------
 
@@ -445,6 +528,8 @@ module.exports = {
   cercaAnime,
   scheda,
   episodi,
+  relazioni,
+  eStessaSerie,
   calendario,
   serieDellEpisodio,
   urlScheda,

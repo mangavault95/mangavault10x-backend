@@ -21,6 +21,23 @@ const videoteca = require("../services/videoteca");
 // La differenza con i manga: qui non si possiede niente. Un anime non
 // sta su uno scaffale, quindi non c'è nulla in comune — progresso,
 // voti, note e l'aver mollato sono di ciascuno.
+//
+// ---------------------------------------------------------------
+// DUE COSE CHE LA 014 HA CAMBIATO
+//
+// 1. CATALOGO E VIDEOTECA SONO DUE COSE DIVERSE.
+//    `anime` è il catalogo: cosa sappiamo di una serie, in comune,
+//    perché i titoli delle puntate sono gli stessi per tutti. La
+//    videoteca sono le righe di `visioni`: quali serie sono TUE.
+//    Da qui la regola di ogni lettura qui sotto — si passa sempre da
+//    un JOIN su `visioni`, e nessuno vede la videoteca di un altro se
+//    non chiedendola per nome (`?utente=3`).
+//
+// 2. LE STAGIONI STANNO INSIEME.
+//    AnimeClick tiene Frieren in una scheda sola (38 puntate su due
+//    stagioni) ma Isekai Farming in due (42643 e 67685). Il GRUPPO
+//    (`anime_gruppi`) rimette insieme quello che è la stessa serie:
+//    una copertina in griglia, tutte le stagioni dentro la scheda.
 // --------------------------------------------------
 
 // Le tre cose che il sito chiede sempre insieme alla scheda, per non
@@ -47,10 +64,19 @@ function numeroValido(grezzo) {
 // ==================================================
 
 /**
- * GET /api/anime — la videoteca intera.
+ * GET /api/anime — la videoteca di chi guarda.
  *
  * Una richiesta sola: l'anagrafica dalla vista, il progresso di chi
- * guarda, e il voto medio che la vista calcola già.
+ * guarda, il voto medio che la vista calcola già, e il gruppo a cui la
+ * scheda appartiene.
+ *
+ * Il JOIN su `visioni` è la videoteca: escono solo le serie che sono
+ * di questa persona. Prima uscivano tutte, e con due lettori voleva
+ * dire vedere in griglia la roba dell'altro senza poterla togliere.
+ *
+ * L'ordine tiene vicine le stagioni della stessa serie: la griglia le
+ * accorpa in una copertina sola, e riceverle sparse la costringerebbe
+ * a rimescolare tutto per ritrovarle.
  */
 router.get("/", async (req, res) => {
   try {
@@ -62,12 +88,16 @@ router.get("/", async (req, res) => {
         a.id, a.titolo, a.tipo, a.stato, a.stato_italia,
         a.anno_inizio, a.cover_url, a.generi, a.distributori,
         a.episodi_totali, a.manga_id,
+        a.gruppo_id, a.ordine, a.etichetta,
+        g.titolo AS gruppo_titolo, g.cover_url AS gruppo_cover,
         v.episodi_disponibili, v.voto_medio, v.note,
         v.prossima_uscita, v.prossimo_episodio,
         ${DATI_DEL_LETTORE}
       FROM anime a
       JOIN v_videoteca v ON v.id = a.id
-      ORDER BY lower(a.titolo)
+      JOIN visioni vis ON vis.anime_id = a.id AND vis.utente_id = $1
+      LEFT JOIN anime_gruppi g ON g.id = a.gruppo_id
+      ORDER BY lower(COALESCE(g.titolo, a.titolo)), a.ordine NULLS FIRST, a.anno_inizio
       `,
       [utenteId]
     );
@@ -102,12 +132,26 @@ router.get("/cerca", requireAuth, async (req, res) => {
 
     // Quelle già in videoteca si segnalano: agganciarle una seconda
     // volta non romperebbe niente, ma chi guarda deve saperlo prima.
+    //
+    // «Già in catalogo» non basta più a dire «già tua»: dalla 014 una
+    // scheda può esistere perché la guarda l'altro lettore, e allora
+    // il bottone «Aggiungi» deve restare acceso.
+    const utenteId = await utenteScrive(req);
+
     const { rows: gia } = await pool.query(
-      `SELECT animeclick_id, id FROM anime WHERE animeclick_id = ANY($1::int[])`,
-      [candidati.map((c) => c.id)]
+      `
+      SELECT a.animeclick_id, a.id,
+             EXISTS (SELECT 1 FROM visioni v
+                      WHERE v.anime_id = a.id AND v.utente_id = $2) AS mia
+        FROM anime a
+       WHERE a.animeclick_id = ANY($1::int[])
+      `,
+      [candidati.map((c) => c.id), utenteId]
     );
 
-    const mappa = new Map(gia.map((g) => [Number(g.animeclick_id), Number(g.id)]));
+    const mappa = new Map(
+      gia.filter((g) => g.mia).map((g) => [Number(g.animeclick_id), Number(g.id)])
+    );
 
     return res.json(
       candidati.map((c) => ({
@@ -149,6 +193,7 @@ router.get("/calendario", async (req, res) => {
           WHERE ev.anime_id = a.id AND ev.utente_id = $1) AS ultimo_visto
       FROM anime_episodi e
       JOIN anime a ON a.id = e.anime_id
+      JOIN visioni vis ON vis.anime_id = a.id AND vis.utente_id = $1
       WHERE e.uscita_italia IS NOT NULL
         AND e.uscita_italia >= NOW() - interval '12 hours'
         AND e.uscita_italia <= NOW() + ($2 || ' days')::interval
@@ -164,7 +209,22 @@ router.get("/calendario", async (req, res) => {
   }
 });
 
-/** GET /api/anime/:id — la scheda, con le puntate e cosa se n'è detto. */
+/**
+ * GET /api/anime/:id — la serie intera: tutte le sue stagioni.
+ *
+ * L'indirizzo continua a portare l'id di una scheda, ma quello che
+ * torna è il GRUPPO a cui appartiene — perché è quello che una persona
+ * chiama «la serie». Aprire la seconda stagione di Isekai Farming e
+ * aprire la prima porta allo stesso posto: un pannello con dentro
+ * tutte e due.
+ *
+ * Le puntate, i voti e le note restano attaccati alla stagione che li
+ * ha davvero: i numeri di AnimeClick ripartono da 1 a ogni scheda, e
+ * appiattirli qui vorrebbe dire due «episodio 3» indistinguibili.
+ *
+ * Una serie senza gruppo non è un caso a parte: è un gruppo di una
+ * stagione sola, e chi disegna la pagina non deve saperlo.
+ */
 router.get("/:id", async (req, res) => {
   try {
     const utenteId = await utenteLetto(req);
@@ -174,9 +234,11 @@ router.get("/:id", async (req, res) => {
       `
       SELECT a.*, v.episodi_disponibili, v.voto_medio,
              v.prossima_uscita, v.prossimo_episodio,
+             g.titolo AS gruppo_titolo, g.cover_url AS gruppo_cover,
              ${DATI_DEL_LETTORE}
       FROM anime a
       JOIN v_videoteca v ON v.id = a.id
+      LEFT JOIN anime_gruppi g ON g.id = a.gruppo_id
       WHERE a.id = $2
       `,
       [utenteId, id]
@@ -186,48 +248,100 @@ router.get("/:id", async (req, res) => {
       return res.status(404).json({ error: "Anime non trovato" });
     }
 
-    // Gli episodi con la spunta di chi guarda già attaccata: la scheda
-    // deve poter disegnare le caselle senza una seconda richiesta.
+    const aperta = rows[0];
+
+    // Le stagioni del gruppo. Senza gruppo, la sola scheda aperta.
+    const { rows: stagioni } = aperta.gruppo_id
+      ? await pool.query(
+          `
+          SELECT a.*, v.episodi_disponibili, v.voto_medio,
+                 v.prossima_uscita, v.prossimo_episodio,
+                 (SELECT COUNT(*) FROM visioni vi
+                   WHERE vi.anime_id = a.id AND vi.utente_id = $1) > 0 AS in_videoteca,
+                 ${DATI_DEL_LETTORE}
+          FROM anime a
+          JOIN v_videoteca v ON v.id = a.id
+          WHERE a.gruppo_id = $2
+          ORDER BY a.ordine NULLS LAST, a.anno_inizio NULLS LAST, a.animeclick_id
+          `,
+          [utenteId, aperta.gruppo_id]
+        )
+      : { rows: [{ ...aperta, in_videoteca: true }] };
+
+    const idStagioni = stagioni.map((s) => Number(s.id));
+
+    // Un giro solo per le puntate di tutte le stagioni: la scheda deve
+    // poter disegnare le caselle senza una richiesta per stagione.
     const { rows: episodi } = await pool.query(
       `
       SELECT
-        e.numero, e.titolo, e.durata, e.uscita_italia, e.piattaforma,
+        e.anime_id, e.numero, e.titolo, e.durata, e.uscita_italia, e.piattaforma,
         (ev.visto_il IS NOT NULL) AS visto,
         ev.visto_il
       FROM anime_episodi e
       LEFT JOIN episodi_visti ev
         ON ev.anime_id = e.anime_id AND ev.numero = e.numero AND ev.utente_id = $1
-      WHERE e.anime_id = $2
-      ORDER BY e.numero
+      WHERE e.anime_id = ANY($2::bigint[])
+      ORDER BY e.anime_id, e.numero
       `,
-      [utenteId, id]
+      [utenteId, idStagioni]
     );
 
     // I voti si vedono in due, come in collezione.
     const { rows: voti } = await pool.query(
       `
-      SELECT u.id AS utente_id, u.nickname, u.colore, vo.voto
+      SELECT vo.anime_id, u.id AS utente_id, u.nickname, u.colore, vo.voto
       FROM voti_anime vo
       JOIN utenti u ON u.id = vo.utente_id
-      WHERE vo.anime_id = $1
+      WHERE vo.anime_id = ANY($1::bigint[])
       ORDER BY u.creato_il
       `,
-      [id]
+      [idStagioni]
     );
 
     const { rows: note } = await pool.query(
       `
-      SELECT n.id, n.numero_episodio, n.testo, n.spoiler, n.creata_il,
+      SELECT n.id, n.anime_id, n.numero_episodio, n.testo, n.spoiler, n.creata_il,
              u.id AS utente_id, u.nickname, u.colore
       FROM note_anime n
       JOIN utenti u ON u.id = n.utente_id
-      WHERE n.anime_id = $1
+      WHERE n.anime_id = ANY($1::bigint[])
       ORDER BY n.creata_il DESC
       `,
-      [id]
+      [idStagioni]
     );
 
-    return res.json({ ...rows[0], episodi, voti, note });
+    const per = (righe, animeId) => righe.filter((r) => Number(r.anime_id) === Number(animeId));
+
+    return res.json({
+      ...aperta,
+      // Compatibilità con chi guarda una scheda sola: le puntate, i
+      // voti e le note della stagione aperta restano dove stavano.
+      episodi: per(episodi, aperta.id),
+      voti: per(voti, aperta.id),
+      note: per(note, aperta.id),
+
+      gruppo: aperta.gruppo_id
+        ? {
+            id: Number(aperta.gruppo_id),
+            titolo: aperta.gruppo_titolo,
+            cover_url: aperta.gruppo_cover
+          }
+        : null,
+
+      stagioni: stagioni.map((s) => ({
+        ...s,
+        // `anime.stagioni` è la frase di AnimeClick — «Autunno (2023)
+        // [...] Inverno (2026)» — e qui dentro `stagioni` è già l'elenco
+        // delle stagioni vere. Due cose diverse con lo stesso nome sono
+        // un errore che aspetta di succedere: la frase si chiama
+        // `periodo`, e il nome vecchio resta solo per chi lo usa già.
+        periodo: s.stagioni,
+        episodi: per(episodi, s.id),
+        voti: per(voti, s.id),
+        note: per(note, s.id)
+      }))
+    });
   } catch (err) {
     console.error("ANIME SCHEDA ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
@@ -243,6 +357,12 @@ router.get("/:id", async (req, res) => {
  *
  * Si passa l'`animeclick_id` scelto fra i candidati, non un titolo:
  * la scelta l'ha già fatta una persona guardando la lista.
+ *
+ * Poi succedono due cose che prima non succedevano. La serie entra
+ * nella videoteca DI CHI HA PREMUTO (`visioni`), non in un elenco
+ * comune. E si va a vedere su AnimeClick se è la stagione di qualcosa
+ * che c'è già: se lo è, le due schede finiscono nello stesso gruppo e
+ * in griglia restano una copertina sola.
  */
 router.post("/", requireAuth, async (req, res) => {
   try {
@@ -252,9 +372,23 @@ router.post("/", requireAuth, async (req, res) => {
       return res.status(400).json({ error: "animeclick_id è obbligatorio" });
     }
 
+    const utenteId = await utenteScrive(req);
     const { anime, episodi } = await videoteca.agganciaSerie(pool, animeclickId);
 
-    return res.status(201).json({ success: true, anime, episodi });
+    await videoteca.mettiInVideoteca(pool, anime.id, utenteId);
+
+    // Il raggruppamento non deve poter far fallire l'aggancio: la
+    // serie è già dentro, e una pagina di relazioni che non risponde
+    // vale una copertina in più, non un errore.
+    let gruppoId = null;
+
+    try {
+      gruppoId = await videoteca.agganciaStagioni(pool, anime.id);
+    } catch (e) {
+      console.error("ANIME GRUPPO ERROR:", e.message);
+    }
+
+    return res.status(201).json({ success: true, anime, episodi, gruppo_id: gruppoId });
   } catch (err) {
     console.error("ANIME AGGANCIO ERROR:", err);
 
@@ -308,6 +442,146 @@ router.put("/:id/manga", requireAuth, async (req, res) => {
     return res.json({ success: true });
   } catch (err) {
     console.error("ANIME MANGA ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+/**
+ * DELETE /api/anime/:id — togli questa serie dalla mia videoteca.
+ *
+ * Mancava, ed era il buco più fastidioso: una serie agganciata per
+ * sbaglio — o semplicemente non più interessante — restava lì per
+ * sempre, e l'unico modo di levarla era il database.
+ *
+ * Toglie la serie a CHI CHIEDE, non a tutti: spariscono la tua riga in
+ * `visioni`, le tue spunte, il tuo voto e le tue note. La scheda resta
+ * a chi la guarda ancora, e se ne va da sola quando non la guarda più
+ * nessuno.
+ */
+router.delete("/:id", requireAuth, async (req, res) => {
+  try {
+    const utenteId = await utenteScrive(req);
+    const esito = await videoteca.rimuoviDallaVideoteca(pool, Number(req.params.id), utenteId);
+
+    if (!esito) return res.status(404).json({ error: "Anime non trovato" });
+
+    return res.json({ success: true, ...esito });
+  } catch (err) {
+    console.error("ANIME DELETE ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+// ==================================================
+// I GRUPPI — quando AnimeClick non basta
+// ==================================================
+
+/**
+ * PUT /api/anime/gruppi/:gruppoId — il nome della serie.
+ *
+ * Il titolo del gruppo nasce da quello della prima stagione col numero
+ * tolto in coda, che è un'ipotesi ragionevole e ogni tanto sbagliata
+ * («Steins;Gate 0» non è «Steins;Gate»). Questa è la correzione.
+ *
+ * Sta prima di `/:id/gruppo` perché Express assegna le rotte in ordine
+ * di dichiarazione, e "gruppi" non è un numero.
+ */
+router.put("/gruppi/:gruppoId", requireAuth, async (req, res) => {
+  try {
+    const titolo = String(req.body?.titolo || "").trim();
+
+    if (titolo.length < 2) {
+      return res.status(400).json({ error: "Il nome della serie è troppo corto." });
+    }
+
+    const { rowCount } = await pool.query(
+      `UPDATE anime_gruppi SET titolo = $1 WHERE id = $2`,
+      [titolo, Number(req.params.gruppoId)]
+    );
+
+    if (rowCount === 0) return res.status(404).json({ error: "Gruppo non trovato" });
+
+    return res.json({ success: true, titolo });
+  } catch (err) {
+    console.error("GRUPPO RINOMINA ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+/**
+ * PUT /api/anime/:id/gruppo — a mano: unisci, stacca, rinomina la stagione.
+ *
+ * Serve perché l'automatismo non arriva dappertutto: «Chainsaw Man:
+ * Assassins Arc» è la seconda stagione ma su AnimeClick è elencata
+ * senza nessuna parola di relazione, e nessuna lettura di quella
+ * pagina potrà mai dedurlo.
+ *
+ *   { con: 7 }               mettila insieme alla serie 7
+ *   { stacca: true }         tirala fuori dal gruppo
+ *   { etichetta, ordine }    come si chiama e dove sta fra le stagioni
+ */
+router.put("/:id/gruppo", requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    if (req.body?.stacca) {
+      await videoteca.stacca(pool, id);
+      return res.json({ success: true, gruppo_id: null });
+    }
+
+    const con = numeroValido(req.body?.con);
+
+    if (con) {
+      if (con === id) {
+        return res.status(400).json({ error: "Una serie non si unisce a sé stessa." });
+      }
+
+      const gruppoId = await videoteca.accorpaAMano(pool, id, con);
+
+      return res.json({ success: true, gruppo_id: gruppoId });
+    }
+
+    // Né unione né distacco: si stanno correggendo il nome della
+    // stagione o il suo posto in fila.
+    const etichetta =
+      req.body?.etichetta === undefined
+        ? undefined
+        : String(req.body.etichetta || "").trim() || null;
+
+    const ordine = req.body?.ordine === undefined ? undefined : numeroValido(req.body.ordine);
+
+    if (etichetta === undefined && ordine === undefined) {
+      return res.status(400).json({ error: "Non c'è niente da cambiare." });
+    }
+
+    // Le colonne da toccare si montano qui invece di infilare dei
+    // COALESCE nella query: «etichetta vuota» vuol dire *cancellala*,
+    // e un COALESCE non sa distinguerlo da «non l'hai mandata».
+    const pezzi = [];
+    const valori = [];
+
+    if (etichetta !== undefined) {
+      valori.push(etichetta);
+      pezzi.push(`etichetta = $${valori.length}`);
+    }
+
+    if (ordine !== undefined) {
+      valori.push(ordine);
+      pezzi.push(`ordine = $${valori.length}`);
+    }
+
+    valori.push(id);
+
+    const { rowCount } = await pool.query(
+      `UPDATE anime SET ${pezzi.join(", ")}, aggiornato_il = NOW() WHERE id = $${valori.length}`,
+      valori
+    );
+
+    if (rowCount === 0) return res.status(404).json({ error: "Anime non trovato" });
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("ANIME GRUPPO ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
   }
 });
@@ -400,11 +674,22 @@ router.post("/:id/episodi/:numero", requireAuth, async (req, res) => {
       );
     }
 
+    // La prima spunta accende da sola la visione, perché a nessuno
+    // viene in mente di dichiarare «sto guardando» prima di aver
+    // guardato. Dalla 014 la riga esiste già — è la tessera della
+    // videoteca — quindi non basta più un DO NOTHING: una serie
+    // «da vedere» su cui si spunta una puntata è una serie che si sta
+    // guardando. Gli altri stati si lasciano stare: chi l'ha messa in
+    // pausa o mollata sa quello che ha fatto.
     await pool.query(
       `
       INSERT INTO visioni (anime_id, utente_id, stato, iniziata_il)
       VALUES ($1, $2, 'in_visione', NOW())
-      ON CONFLICT (anime_id, utente_id) DO NOTHING
+      ON CONFLICT (anime_id, utente_id) DO UPDATE SET
+        stato         = 'in_visione',
+        iniziata_il   = COALESCE(visioni.iniziata_il, NOW()),
+        aggiornata_il = NOW()
+      WHERE visioni.stato = 'da_vedere'
       `,
       [animeId, utenteId]
     );
