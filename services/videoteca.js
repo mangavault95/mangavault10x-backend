@@ -17,6 +17,7 @@
 //   rimuoviDallaVideoteca togliersi di torno quello che non si guarda
 
 const ac = require("./providers/animeclickAnime");
+const anilist = require("./providers/anilistAnime");
 
 // --------------------------------------------------
 // Scrittura di una serie
@@ -164,7 +165,65 @@ async function agganciaSerie(pool, animeclickId, { conEpisodi = true } = {}) {
     episodi = await salvaEpisodi(pool, riga.id, puntate);
   }
 
-  return { anime: riga, episodi };
+  // Dove finisce una stagione e comincia l'altra. Va dopo gli episodi
+  // perché il conto delle puntate scritte è la prova che l'abbinamento
+  // con AniList è quello giusto (vedi `anilistAnime.torna`).
+  let tagli = riga.tagli || [];
+
+  if (conEpisodi) {
+    tagli = await calcolaTagli(pool, riga.id);
+  }
+
+  return { anime: { ...riga, tagli }, episodi, tagli };
+}
+
+/**
+ * Cerca su AniList dove finiscono le stagioni di questa scheda.
+ *
+ * Non solleva mai: una serie senza tagli è una serie con un elenco
+ * unico di puntate, cioè esattamente com'era prima. Fallire qui non
+ * deve poter far fallire un aggancio o una rilettura.
+ *
+ * Non tocca i tagli già scritti se AniList non risponde o non torna
+ * col conto: potrebbero essere stati messi a mano dalla Gestione, e
+ * cancellarli sarebbe buttare via l'unico lavoro che una persona ha
+ * dovuto fare a mano.
+ */
+async function calcolaTagli(pool, animeId) {
+  try {
+    const { rows } = await pool.query(
+      `
+      SELECT a.id, a.titolo, a.titolo_originale, a.titolo_inglese, a.tagli,
+             (SELECT COUNT(*)::int FROM anime_episodi e
+               WHERE e.anime_id = a.id AND e.numero > 0) AS disponibili
+        FROM anime a WHERE a.id = $1
+      `,
+      [animeId]
+    );
+
+    if (rows.length === 0) return [];
+
+    const scheda = rows[0];
+
+    // Una scheda con poche puntate non ha stagioni dentro: si evita
+    // una richiesta ad AniList per ogni serie normale del mondo.
+    if (scheda.disponibili < 2) return scheda.tagli || [];
+
+    const esito = await anilist.tagliDiScheda(scheda, scheda.disponibili);
+
+    if (!esito) return scheda.tagli || [];
+
+    await pool.query(
+      `UPDATE anime SET tagli = $1, anilist_id = COALESCE($2, anilist_id), aggiornato_il = NOW() WHERE id = $3`,
+      [esito.tagli, esito.anilistId, animeId]
+    );
+
+    return esito.tagli;
+  } catch (e) {
+    console.error("ANIME TAGLI ERROR:", e.message);
+
+    return [];
+  }
 }
 
 /**
@@ -666,6 +725,7 @@ module.exports = {
   salvaEpisodi,
   // I gruppi e la videoteca di ciascuno (014)
   agganciaStagioni,
+  calcolaTagli,
   accorpaAMano,
   stacca,
   titoloDiGruppo,

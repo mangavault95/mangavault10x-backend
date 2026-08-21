@@ -88,7 +88,7 @@ router.get("/", async (req, res) => {
         a.id, a.titolo, a.tipo, a.stato, a.stato_italia,
         a.anno_inizio, a.cover_url, a.generi, a.distributori,
         a.episodi_totali, a.manga_id,
-        a.gruppo_id, a.ordine, a.etichetta,
+        a.gruppo_id, a.ordine, a.etichetta, a.tagli,
         g.titolo AS gruppo_titolo, g.cover_url AS gruppo_cover,
         v.episodi_disponibili, v.voto_medio, v.note,
         v.prossima_uscita, v.prossimo_episodio,
@@ -583,6 +583,81 @@ router.put("/:id/gruppo", requireAuth, async (req, res) => {
   } catch (err) {
     console.error("ANIME GRUPPO ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+/**
+ * PUT /api/anime/:id/stagioni — dove finisce una stagione e comincia l'altra.
+ *
+ * L'altra metà del problema dei gruppi, e quella che il gruppo non
+ * poteva risolvere: Frieren è UNA scheda con dentro 38 puntate che
+ * sono due stagioni (28 + 10), numerate di seguito. AnimeClick non
+ * segna il confine da nessuna parte — verificato riga per riga sulla
+ * sua tabella degli episodi — e lo si va a prendere da AniList, che
+ * tiene un media per stagione.
+ *
+ * Questa rotta è la correzione a mano: `{ tagli: [29] }` vuol dire
+ * «la seconda stagione comincia dalla puntata 29». L'automatismo
+ * accetta solo abbinamenti che tornano col conto delle puntate, quindi
+ * quando non trova niente non sbaglia: lascia l'elenco unico, e resta
+ * questa.
+ */
+router.put("/:id/stagioni", requireAuth, async (req, res) => {
+  try {
+    const grezzi = Array.isArray(req.body?.tagli) ? req.body.tagli : null;
+
+    if (!grezzi) {
+      return res.status(400).json({ error: "Serve `tagli`, anche vuoto." });
+    }
+
+    const { rows } = await pool.query(
+      `
+      SELECT (SELECT COUNT(*)::int FROM anime_episodi e
+               WHERE e.anime_id = a.id AND e.numero > 0) AS disponibili
+        FROM anime a WHERE a.id = $1
+      `,
+      [Number(req.params.id)]
+    );
+
+    if (rows.length === 0) return res.status(404).json({ error: "Anime non trovato" });
+
+    const disponibili = rows[0].disponibili;
+
+    // Un taglio è il NUMERO della prima puntata di una stagione nuova:
+    // deve esistere, non può essere la prima (una stagione che comincia
+    // dalla puntata 1 è la prima, non una nuova), e non può ripetersi.
+    const tagli = [...new Set(grezzi.map(numeroValido).filter(Boolean))]
+      .filter((n) => n > 1 && n <= disponibili)
+      .sort((a, b) => a - b);
+
+    await pool.query(`UPDATE anime SET tagli = $1, aggiornato_il = NOW() WHERE id = $2`, [
+      tagli,
+      Number(req.params.id)
+    ]);
+
+    return res.json({ success: true, tagli });
+  } catch (err) {
+    console.error("ANIME STAGIONI ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+/**
+ * POST /api/anime/:id/stagioni/cerca — richiedi i tagli ad AniList.
+ *
+ * Il giro si fa già da solo agganciando e rileggendo una serie: questo
+ * serve per le schede che c'erano prima che esistessero i tagli, e per
+ * quelle che ci hanno provato quando AniList era a corto di fiato (90
+ * richieste al minuto, e una serie ne consuma tre o quattro).
+ */
+router.post("/:id/stagioni/cerca", requireAuth, async (req, res) => {
+  try {
+    const tagli = await videoteca.calcolaTagli(pool, Number(req.params.id));
+
+    return res.json({ success: true, tagli });
+  } catch (err) {
+    console.error("ANIME TAGLI ERROR:", err);
+    return res.status(502).json({ error: "AniList non risponde" });
   }
 });
 
