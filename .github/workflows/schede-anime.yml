@@ -1,0 +1,48 @@
+name: Schede anime
+
+# La rilettura delle schede che possono ancora cambiare: quelle in
+# corso, in pausa o non ancora uscite. Le concluse non si rileggono
+# mai — quello che dicono oggi lo diranno anche fra un anno — ed è
+# questo che tiene il lavoro a poche richieste.
+#
+# Serve perché una serie in corso guadagna episodi (con i loro titoli
+# italiani), cambia stato quando finisce, e cambia "Stato in Italia"
+# quando arrivano i sottotitoli o il doppiaggio.
+#
+# Una volta a settimana, la domenica presto: un anime esce a settimana,
+# quindi controllare più spesso vorrebbe dire leggere le stesse pagine
+# per niente. Il calendario, che è la cosa che cambia ogni giorno, ha
+# il suo giro quotidiano a parte.
+#
+# Dieci serie per volta, non venti: ogni scheda costa due pagine più
+# una pausa di cortesia, e una richiesta che dura troppo rischia di
+# trovare chiuso dall'altra parte. Le serie che restano indietro le
+# prende il giro della domenica dopo — l'ordine mette per prime quelle
+# lette più tempo fa.
+on:
+  schedule:
+    - cron: "0 5 * * 0"
+  workflow_dispatch: {}
+
+jobs:
+  schede:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chiama il backend
+        run: |
+          risposta=$(curl -sS -w "\n%{http_code}" -X POST \
+            --max-time 300 \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{"giorni": 7, "quante": 10}' \
+            "https://mangavault10x-api.onrender.com/api/anime/serie/aggiorna")
+
+          corpo=$(echo "$risposta" | head -n -1)
+          codice=$(echo "$risposta" | tail -n 1)
+
+          echo "$corpo"
+
+          if [ "$codice" != "200" ]; then
+            echo "HTTP $codice"
+            exit 1
+          fi

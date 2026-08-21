@@ -337,8 +337,13 @@ function istanteItaliano(anno, mese, giorno, ore, minuti) {
  * titolo italiano della puntata.
  *
  * `quando` è quello che il sito chiama `paging`: senza, la pagina
- * mostra da oggi a fine periodo; "next-week" e "next-month" spostano
- * avanti la finestra.
+ * mostra da oggi a fine mese; "next-month" e "today" spostano la
+ * finestra.
+ *
+ * ⚠️ `next-week` risponde **500** sul loro server (verificato il
+ * 21/08/2026, sia da browser sia da qui): è rotto dalla loro parte,
+ * non c'è niente da riprovare. Per guardare più avanti si usa
+ * "next-month".
  *
  * Le card non linkano la scheda della serie ma solo l'episodio: per
  * sapere a quale serie appartiene una riga bisogna aprire la pagina

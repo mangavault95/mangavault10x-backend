@@ -1,0 +1,44 @@
+name: Calendario anime
+
+# Il giro quotidiano che tiene aggiornate le uscite della Videoteca:
+# legge il calendario italiano di AnimeClick (giorno, ora, piattaforma,
+# titolo della puntata) e scrive le date sugli episodi delle serie che
+# abbiamo in tabella.
+#
+# Gira qui e non in un cron dentro il processo per la stessa ragione
+# del rapporto volumi: Render (piano gratuito) addormenta il servizio
+# dopo un quarto d'ora di inattività, e un cron nello stesso processo
+# non si sveglierebbe mai da solo. Questa richiesta arriva da fuori e
+# lo sveglia, pagando solo l'attesa del primo giro.
+#
+# Alle 6 UTC, cioè le 8 italiane d'estate e le 7 d'inverno: le uscite
+# del giorno sono già pubblicate, e chi apre il sito a colazione le
+# trova. Il calendario copre comunque fino a sei settimane avanti,
+# quindi un giro saltato non fa perdere niente.
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  calendario:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chiama il backend
+        run: |
+          risposta=$(curl -sS -w "\n%{http_code}" -X POST \
+            --max-time 180 \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{"scrivi": true}' \
+            "https://mangavault10x-api.onrender.com/api/anime/calendario/aggiorna")
+
+          corpo=$(echo "$risposta" | head -n -1)
+          codice=$(echo "$risposta" | tail -n 1)
+
+          echo "$corpo"
+
+          if [ "$codice" != "200" ]; then
+            echo "HTTP $codice"
+            exit 1
+          fi
