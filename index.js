@@ -60,6 +60,9 @@ app.use("/api/simili", require("./routes/simili"));
 app.use("/api/tornei", require("./routes/tornei"));
 app.use("/api/autore", require("./routes/autore"));
 app.use("/api/anime", require("./routes/anime"));
+// La piazza della videoteca: quello che hanno fatto tutti, i messaggi
+// scritti a mano, e le pagine personali che si cercano per soprannome.
+app.use("/api/cineforum", require("./routes/cineforum"));
 
 app.get("/", (req, res) => {
   res.send("MangaVault API attiva 🚀");

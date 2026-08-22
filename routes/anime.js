@@ -51,7 +51,13 @@ const DATI_DEL_LETTORE = `
   (SELECT v.stato      FROM visioni v
     WHERE v.anime_id = a.id AND v.utente_id = $1)                AS stato_visione,
   (SELECT vo.voto      FROM voti_anime vo
-    WHERE vo.anime_id = a.id AND vo.utente_id = $1)              AS voto
+    WHERE vo.anime_id = a.id AND vo.utente_id = $1)              AS voto,
+  -- Il ripiano in vetrina della pagina personale. EXISTS e non un
+  -- SELECT che torna TRUE: senza la riga quello darebbe NULL, e un
+  -- NULL si comporta come FALSE dappertutto tranne che in un
+  -- confronto stretto, dove smette di colpo.
+  EXISTS (SELECT 1     FROM anime_preferiti pr
+    WHERE pr.anime_id = a.id AND pr.utente_id = $1)              AS preferito
 `;
 
 function numeroValido(grezzo) {
@@ -1086,6 +1092,61 @@ router.delete("/:id/voto", requireAuth, async (req, res) => {
     return res.json({ success: true });
   } catch (err) {
     console.error("ANIME VOTO DELETE ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+/**
+ * POST /api/anime/:id/preferito — il ripiano in vetrina.
+ *
+ * Non è «le ho dato cinque stelle»: quella è la classifica e si
+ * ricava dai voti. I preferiti sono le poche serie che uno sceglie di
+ * mettere in fondo alla propria pagina, ed è una scelta a parte —
+ * capita di amare qualcosa che non si voterebbe cinque, e di votare
+ * cinque qualcosa che non racconta chi sei.
+ *
+ * Mettere e togliere sono lo stesso indirizzo per la stessa ragione
+ * del cuore nel Cineforum: il bottone è uno solo.
+ */
+router.post("/:id/preferito", requireAuth, async (req, res) => {
+  try {
+    const animeId = Number(req.params.id);
+
+    if (!Number.isInteger(animeId)) {
+      return res.status(400).json({ error: "Identificativo non valido" });
+    }
+
+    const utenteId = await utenteScrive(req);
+
+    const { rowCount } = await pool.query(
+      `DELETE FROM anime_preferiti WHERE anime_id = $1 AND utente_id = $2`,
+      [animeId, utenteId]
+    );
+
+    if (rowCount === 0) {
+      // In fondo alla vetrina: `ordine` è il posto deciso a mano, e
+      // chi non l'ha mai riordinata deve comunque ritrovare l'ultima
+      // aggiunta per ultima e non in cima.
+      await pool.query(
+        `
+        INSERT INTO anime_preferiti (anime_id, utente_id, ordine)
+        VALUES ($1, $2,
+          COALESCE((SELECT MAX(ordine) + 1 FROM anime_preferiti WHERE utente_id = $2), 0))
+        ON CONFLICT DO NOTHING
+        `,
+        [animeId, utenteId]
+      );
+    }
+
+    return res.json({ preferito: rowCount === 0 });
+  } catch (err) {
+    if (err.code === "23503") return res.status(404).json({ error: "Serie non trovata" });
+
+    if (err.code === "42P01") {
+      return res.status(503).json({ error: "Migrazione 016 non ancora eseguita" });
+    }
+
+    console.error("ANIME PREFERITO ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
   }
 });
