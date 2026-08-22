@@ -41,6 +41,17 @@ app.use(
   })
 );
 
+// Le immagini di profilo arrivano come data URI dentro il JSON, e
+// sono l'unica cosa in tutto il sito che supera i cento kilobyte di
+// corpo che `express.json()` accetta di suo.
+//
+// Il lettore con il tetto largo va montato PRIMA di quello normale e
+// solo su quei due indirizzi: body-parser marca la richiesta appena
+// l'ha letta, e il secondo lettore la lascia stare. Al contrario —
+// tetto largo per tutti — si aprirebbe una porta da quattro megabyte
+// su ogni rotta del sito per comodo di due.
+app.use(["/api/utenti/io/faccia", "/api/utenti/io/striscione"], express.json({ limit: "4mb" }));
+
 app.use(express.json());
 
 // --------------------------------------------------

@@ -159,7 +159,7 @@ async function pagina(pool, { prima = null, quanti = QUANTI, utenteId = null } =
         FROM cineforum_messaggi
     )
     SELECT t.tipo, t.utente_id, ${GIORNO_SCRITTO("t.giorno")} AS giorno, t.quando, t.id,
-           u.nickname, u.colore, u.proprietario
+           u.nickname, u.colore, u.proprietario, u.faccia_il
       FROM tutto t
       JOIN utenti u ON u.id = t.utente_id
      WHERE ($1::timestamptz IS NULL OR t.quando < $1)
@@ -321,7 +321,7 @@ async function reazioni(pool, chiavi, chiGuarda) {
     pool.query(
       `
       SELECT r.id, r.chiave, r.testo, r.creata_il, r.modificata_il,
-             u.id AS utente_id, u.nickname, u.colore
+             u.id AS utente_id, u.nickname, u.colore, u.faccia_il
         FROM cineforum_risposte r
         JOIN utenti u ON u.id = r.utente_id
        WHERE r.chiave = ANY($1::text[])
@@ -356,7 +356,11 @@ async function reazioni(pool, chiavi, chiGuarda) {
       utente: {
         id: Number(riga.utente_id),
         nickname: riga.nickname,
-        colore: riga.colore
+        colore: riga.colore,
+        // Anche qui il momento e non i byte: una risposta senza
+        // questo mostrerebbe l'iniziale accanto a un post dove la
+        // stessa persona ha la sua foto.
+        faccia: riga.faccia_il ? new Date(riga.faccia_il).getTime() : null
       }
     });
   }
@@ -422,7 +426,12 @@ async function feed(pool, { prima = null, quanti = QUANTI, utenteId = null, chiG
         id: Number(r.utente_id),
         nickname: r.nickname,
         colore: r.colore,
-        proprietario: Boolean(r.proprietario)
+        proprietario: Boolean(r.proprietario),
+        // Il momento in cui ha messo la faccia, non la faccia: va
+        // appeso al suo indirizzo (`?v=…`), e i byte qui dentro
+        // sarebbero la stessa immagine ripetuta quindici volte per
+        // pagina.
+        faccia: r.faccia_il ? new Date(r.faccia_il).getTime() : null
       },
       cuori: cuori.get(chiave)?.chi ?? [],
       cuorMio: cuori.get(chiave)?.mio ?? false,

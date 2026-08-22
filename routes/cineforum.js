@@ -2,7 +2,8 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 const { requireAuth, identificaUtente } = require("../services/auth");
-const { utenteScrive, idProprietario } = require("../services/utenti");
+const utenti = require("../services/utenti");
+const { utenteScrive, idProprietario } = utenti;
 const cineforum = require("../services/cineforum");
 
 /**
@@ -31,6 +32,18 @@ router.use(identificaUtente);
    CHI È
    ================================================== */
 
+// Le colonne che descrivono una persona a chi la guarda. Sono le
+// stesse in quattro query diverse, e quattro elenchi da tenere
+// d'accordo sono tre occasioni di dimenticarne uno.
+const ASPETTO = `
+  u.id, u.nickname, u.colore, u.proprietario, u.creato_il, u.faccia_il,
+  COALESCE(
+    (SELECT array_agg(s.id ORDER BY s.ordine, s.id)
+       FROM utenti_striscione s WHERE s.utente_id = u.id),
+    '{}'
+  ) AS striscione
+`;
+
 /**
  * Una persona dal suo soprannome.
  *
@@ -42,9 +55,9 @@ router.use(identificaUtente);
 async function perNickname(nickname) {
   const { rows } = await pool.query(
     `
-    SELECT id, nickname, colore, proprietario, creato_il
-      FROM utenti
-     WHERE lower(nickname) = lower($1) AND stato = 'attivo'
+    SELECT ${ASPETTO}
+      FROM utenti u
+     WHERE lower(u.nickname) = lower($1) AND u.stato = 'attivo'
      LIMIT 1
     `,
     [String(nickname || "").trim()]
@@ -53,14 +66,17 @@ async function perNickname(nickname) {
   return rows[0] || null;
 }
 
+/**
+ * Come si consegna una persona.
+ *
+ * Delle immagini escono gli indirizzi, non i byte: `faccia` è il
+ * momento in cui è stata messa (va appeso all'indirizzo, o il browser
+ * tiene per un anno quella di prima) e `striscione` è l'elenco degli
+ * identificativi. La forma la costruisce `utenti.aspetto`, così è la
+ * stessa qui, in `/pubblici` e dentro ogni post del feed.
+ */
 function comePersona(riga) {
-  return {
-    id: Number(riga.id),
-    nickname: riga.nickname,
-    colore: riga.colore || null,
-    proprietario: Boolean(riga.proprietario),
-    daQuando: riga.creato_il ?? null
-  };
+  return { ...utenti.aspetto(riga), daQuando: riga.creato_il ?? null };
 }
 
 /* ==================================================
@@ -391,7 +407,13 @@ router.get("/profilo/:nickname", async (req, res) => {
       statistiche: await cineforum.statistiche(pool, riga.id)
     });
   } catch (err) {
-    if (err.code === "42P01") return res.status(503).json({ error: "Migrazione 016 non eseguita" });
+    // 42P01 = tabella che non c'e, 42703 = colonna che non c'e.
+    // Sono i due modi in cui questa rotta si rompe fra il codice nuovo
+    // e la migrazione eseguita a mano: dirlo e' utile, un 500 rosso no.
+    if (err.code === "42P01" || err.code === "42703") {
+      return res.status(503).json({ error: "Il server non ha ancora l'ultima migrazione: riprova fra poco." });
+    }
+
 
     console.error("CINEFORUM PROFILO ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
@@ -447,6 +469,13 @@ router.get("/commenti/:nickname", async (req, res) => {
       }))
     });
   } catch (err) {
+    // 42P01 = tabella che non c'e, 42703 = colonna che non c'e.
+    // Sono i due modi in cui questa rotta si rompe fra il codice nuovo
+    // e la migrazione eseguita a mano: dirlo e' utile, un 500 rosso no.
+    if (err.code === "42P01" || err.code === "42703") {
+      return res.status(503).json({ error: "Il server non ha ancora l'ultima migrazione: riprova fra poco." });
+    }
+
     console.error("CINEFORUM COMMENTI ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
   }
@@ -474,6 +503,13 @@ router.get("/confronto/:a/:b", async (req, res) => {
 
     return res.json({ ...esito, personaA: comePersona(a), personaB: comePersona(b) });
   } catch (err) {
+    // 42P01 = tabella che non c'e, 42703 = colonna che non c'e.
+    // Sono i due modi in cui questa rotta si rompe fra il codice nuovo
+    // e la migrazione eseguita a mano: dirlo e' utile, un 500 rosso no.
+    if (err.code === "42P01" || err.code === "42703") {
+      return res.status(503).json({ error: "Il server non ha ancora l'ultima migrazione: riprova fra poco." });
+    }
+
     console.error("CINEFORUM CONFRONTO ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
   }
@@ -490,7 +526,7 @@ router.get("/chi", async (req, res) => {
   try {
     const { rows } = await pool.query(
       `
-      SELECT u.id, u.nickname, u.colore, u.proprietario, u.creato_il,
+      SELECT ${ASPETTO},
              (SELECT COUNT(DISTINCT COALESCE('g' || a.gruppo_id, 'a' || a.id))
                 FROM visioni vis JOIN anime a ON a.id = vis.anime_id
                WHERE vis.utente_id = u.id)                                AS serie,
@@ -509,7 +545,7 @@ router.get("/chi", async (req, res) => {
       }))
     );
   } catch (err) {
-    if (err.code === "42P01") return res.json([]);
+    if (err.code === "42P01" || err.code === "42703") return res.json([]);
 
     console.error("CINEFORUM CHI ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
@@ -531,7 +567,7 @@ router.get("/io", async (req, res) => {
     if (!id) return res.status(404).json({ error: "Nessun proprietario configurato" });
 
     const { rows } = await pool.query(
-      `SELECT id, nickname, colore, proprietario, creato_il FROM utenti WHERE id = $1`,
+      `SELECT ${ASPETTO} FROM utenti u WHERE u.id = $1`,
       [id]
     );
 
@@ -539,6 +575,13 @@ router.get("/io", async (req, res) => {
 
     return res.json(comePersona(rows[0]));
   } catch (err) {
+    // 42P01 = tabella che non c'e, 42703 = colonna che non c'e.
+    // Sono i due modi in cui questa rotta si rompe fra il codice nuovo
+    // e la migrazione eseguita a mano: dirlo e' utile, un 500 rosso no.
+    if (err.code === "42P01" || err.code === "42703") {
+      return res.status(503).json({ error: "Il server non ha ancora l'ultima migrazione: riprova fra poco." });
+    }
+
     console.error("CINEFORUM IO ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
   }

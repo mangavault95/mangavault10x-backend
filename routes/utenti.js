@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { requireAuth, requireProprietario } = require("../services/auth");
 const utenti = require("../services/utenti");
+const immagini = require("../services/immagini");
 
 /**
  * Le persone.
@@ -106,9 +107,169 @@ router.get("/pubblici", async (req, res) => {
   try {
     return res.json(await utenti.pubblici());
   } catch (err) {
-    if (err.code === "42P01") return res.json([]);
+    // 42P01 = tabella che non c'è, 42703 = colonna che non c'è.
+    // Sono i due modi in cui questa rotta può rompersi nella mezz'ora
+    // fra il codice nuovo su Vercel e la migrazione eseguita a mano:
+    // un elenco vuoto è un'attesa, un 500 sembra un guasto.
+    if (err.code === "42P01" || err.code === "42703") return res.json([]);
 
     console.error("❌ UTENTI PUBBLICI ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+/* ==================================================
+   LA FACCIA E LO STRISCIONE
+   ==================================================
+
+   Le immagini di profilo hanno un indirizzo loro invece di viaggiare
+   dentro il JSON, ed è la scelta che tiene leggero il Cineforum: là
+   la stessa faccia compare quindici volte per pagina, e in base64
+   sarebbero quindici copie degli stessi trenta kilobyte. Così il
+   browser la scarica una volta e se la tiene per un anno.
+
+   LEGGERE è di tutti — una faccia si vede anche senza essere entrati,
+   come il soprannome. SCRIVERE è solo la propria: non esiste
+   `/utenti/:id/faccia` in scrittura, esiste `/utenti/io/faccia`, così
+   non c'è nemmeno la strada per cambiare la faccia di un altro. */
+
+/** GET /api/utenti/:id/faccia — l'immagine tonda di qualcuno. */
+router.get("/:id/faccia", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    if (!Number.isInteger(id)) return res.status(400).end();
+
+    const trovata = await utenti.faccia(id);
+
+    if (!trovata) return res.status(404).end();
+
+    res.set(immagini.intestazioni(trovata.dati, trovata.tipo, trovata.quando));
+
+    return res.end(trovata.dati);
+  } catch (err) {
+    if (err.code === "42703" || err.code === "42P01") return res.status(404).end();
+
+    console.error("❌ FACCIA ERROR:", err);
+    return res.status(500).end();
+  }
+});
+
+/** PUT /api/utenti/io/faccia — la propria, e solo la propria. */
+router.put("/io/faccia", requireAuth, async (req, res) => {
+  try {
+    const { dati, tipo, errore } = immagini.decodifica(req.body?.immagine, {
+      massimo: utenti.PESO_FACCIA
+    });
+
+    if (errore) return res.status(400).json({ error: errore });
+
+    const id = await utenti.utenteScrive(req);
+
+    await utenti.mettiFaccia(id, dati, tipo);
+
+    // Il momento torna indietro perché è quello che il browser deve
+    // appendere all'indirizzo: senza, continuerebbe a mostrare quella
+    // di prima, che ha in cache per un anno.
+    return res.json({ faccia: Date.now() });
+  } catch (err) {
+    if (err.code === "42703") {
+      return res.status(503).json({ error: "Migrazione 017 non ancora eseguita" });
+    }
+
+    console.error("❌ FACCIA PUT ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+/** DELETE /api/utenti/io/faccia — si torna all'iniziale colorata. */
+router.delete("/io/faccia", requireAuth, async (req, res) => {
+  try {
+    await utenti.togliFaccia(await utenti.utenteScrive(req));
+
+    return res.json({ faccia: null });
+  } catch (err) {
+    console.error("❌ FACCIA DELETE ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+/** GET /api/utenti/striscione/:id — una delle immagini della fascia. */
+router.get("/striscione/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    if (!Number.isInteger(id)) return res.status(400).end();
+
+    const trovata = await utenti.immagineStriscione(id);
+
+    if (!trovata) return res.status(404).end();
+
+    res.set(immagini.intestazioni(trovata.dati, trovata.tipo, trovata.quando));
+
+    return res.end(trovata.dati);
+  } catch (err) {
+    if (err.code === "42P01") return res.status(404).end();
+
+    console.error("❌ STRISCIONE ERROR:", err);
+    return res.status(500).end();
+  }
+});
+
+/**
+ * PUT /api/utenti/io/striscione — la fascia, riscritta per intero.
+ *
+ * Il corpo è `{ immagini: [...] }`, dove ogni voce è o un numero —
+ * un'immagine già lì, da tenere — o un data URI nuovo. Un solo
+ * indirizzo per aggiungere, togliere e riordinare: sono la stessa
+ * cosa vista da tre lati, e tre rotte separate avrebbero significato
+ * tre modi di far andare l'ordine fuori sincrono.
+ */
+router.put("/io/striscione", requireAuth, async (req, res) => {
+  try {
+    const elenco = req.body?.immagini;
+
+    if (!Array.isArray(elenco)) {
+      return res.status(400).json({ error: "Serve un elenco di immagini" });
+    }
+
+    if (elenco.length > utenti.QUANTE_IMMAGINI) {
+      return res.status(400).json({
+        error: `Nello striscione stanno al massimo ${utenti.QUANTE_IMMAGINI} immagini`
+      });
+    }
+
+    const pezzi = [];
+
+    for (const voce of elenco) {
+      if (typeof voce === "number" && Number.isInteger(voce)) {
+        pezzi.push(voce);
+        continue;
+      }
+
+      const { dati, tipo, errore } = immagini.decodifica(voce, {
+        massimo: utenti.PESO_IMMAGINE
+      });
+
+      if (errore) return res.status(400).json({ error: errore });
+
+      pezzi.push({ dati, tipo });
+    }
+
+    const id = await utenti.utenteScrive(req);
+
+    // Le immagini «da tenere» si accettano solo se sono davvero sue:
+    // senza questo, un numero qualunque nell'elenco si porterebbe in
+    // casa l'immagine di un altro. `mettiStriscione` lo garantisce
+    // sull'aggiornamento (WHERE utente_id), ma è meglio dirlo qui e
+    // rispondere invece di ignorare in silenzio.
+    return res.json({ striscione: await utenti.mettiStriscione(id, pezzi) });
+  } catch (err) {
+    if (err.code === "42P01") {
+      return res.status(503).json({ error: "Migrazione 017 non ancora eseguita" });
+    }
+
+    console.error("❌ STRISCIONE PUT ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
   }
 });

@@ -24,7 +24,10 @@ const caricaVero = Module._load;
 
 const finto = {
   query: async (sql) => {
-    if (/FROM utenti/i.test(sql)) {
+    // `FROM utenti` e non `utenti`: senza lo spazio finale questo
+    // ramo rispondeva anche alle letture di `utenti_striscione`,
+    // consegnando una riga di persone al posto di un'immagine.
+    if (/FROM utenti\s/i.test(sql)) {
       return {
         rows: [
           { id: 1, nickname: "Nicer", colore: "ottone", proprietario: true, creato_il: new Date() }
@@ -48,7 +51,15 @@ Module._load = function (richiesta, genitore, ...resto) {
 const express = require("express");
 
 const app = express();
+
+// Gli stessi due lettori di corpo di `index.js`, nello stesso ordine:
+// quello largo davanti e solo sugli indirizzi delle immagini. Se
+// l'ordine si invertisse, una foto risponderebbe 413 invece di
+// salvarsi, e questa prova è l'unica che se ne accorgerebbe.
+app.use(["/api/utenti/io/faccia", "/api/utenti/io/striscione"], express.json({ limit: "4mb" }));
 app.use(express.json());
+
+app.use("/api/utenti", require("../routes/utenti"));
 app.use("/api/cineforum", require("../routes/cineforum"));
 app.use("/api/anime", require("../routes/anime"));
 
@@ -69,7 +80,22 @@ const PROVE = [
   ["POST", "/api/cineforum/cuore", { chiave: "giornata:1:2026-08-22" }, 401, "cuore senza token"],
   ["POST", "/api/cineforum/risposte", { chiave: "messaggio:1", testo: "x" }, 401, "rispondere senza token"],
   ["DELETE", "/api/cineforum/messaggi/9", null, 401, "cancellare senza token"],
-  ["POST", "/api/anime/12/preferito", {}, 401, "preferiti senza token"]
+  ["POST", "/api/anime/12/preferito", {}, 401, "preferiti senza token"],
+
+  ["GET", "/api/utenti/1/faccia", null, 404, "la faccia di chi non ne ha"],
+  ["GET", "/api/utenti/striscione/9", null, 404, "un'immagine che non c'è"],
+  ["PUT", "/api/utenti/io/faccia", { immagine: "ciao" }, 401, "faccia senza token"],
+
+  // 401 e NON 413: se il lettore di corpo largo non fosse davanti a
+  // quello normale, una foto vera non arriverebbe mai al controllo del
+  // token — morirebbe prima, per il tetto dei cento kilobyte.
+  [
+    "PUT",
+    "/api/utenti/io/faccia",
+    { immagine: `data:image/png;base64,${"A".repeat(400000)}` },
+    401,
+    "mezzo megabyte passa il lettore del corpo"
+  ]
 ];
 
 const server = app.listen(0, async () => {

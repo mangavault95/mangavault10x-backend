@@ -441,21 +441,173 @@ async function decidi(id, approvato) {
 async function pubblici() {
   const { rows } = await pool.query(
     `
-    SELECT id, nickname, proprietario, colore
+    SELECT id, nickname, proprietario, colore, faccia_il,
+           COALESCE(
+             (SELECT array_agg(s.id ORDER BY s.ordine, s.id)
+                FROM utenti_striscione s WHERE s.utente_id = utenti.id),
+             '{}'
+           ) AS striscione
     FROM utenti
     WHERE stato = 'attivo'
     ORDER BY proprietario DESC, creato_il ASC
     `
   );
 
-  return rows.map((r) => ({
+  return rows.map(aspetto);
+}
+
+/**
+ * Com'è fatta una persona, per chi la guarda.
+ *
+ * Delle immagini NON escono i byte ma il modo di andarli a prendere:
+ * `faccia` è il momento in cui è stata messa — serve appeso
+ * all'indirizzo (`?v=…`), o il browser terrebbe per un anno quella di
+ * prima — e `striscione` è l'elenco degli identificativi.
+ *
+ * Mandare i byte qui dentro sarebbe comodo e sbagliato: questa forma
+ * finisce dentro ogni post del Cineforum, dove la stessa faccia
+ * compare quindici volte per pagina.
+ */
+function aspetto(r) {
+  return {
     id: Number(r.id),
     nickname: r.nickname,
     proprietario: Boolean(r.proprietario),
     // Il colore è pubblico per definizione: è come si riconosce chi ha
     // scritto una nota, e le note si leggono anche senza essere entrati.
-    colore: r.colore || null
-  }));
+    // Resta anche adesso che c'è la faccia: è il ripiego di chi non ne
+    // ha messa una, e il bordo di chi ce l'ha.
+    colore: r.colore || null,
+    faccia: r.faccia_il ? new Date(r.faccia_il).getTime() : null,
+    striscione: (r.striscione || []).map(Number)
+  };
+}
+
+/* ==================================================
+   LA FACCIA E LO STRISCIONE
+   ================================================== */
+
+// Quanto può pesare quello che arriva. Sono tetti larghi apposta: il
+// browser ridimensiona già prima di mandare (512 pixel per la faccia,
+// 1600 per lo striscione), e questi servono solo a fermare chi
+// scavalca il browser — non a discutere con chi ha una foto pesante.
+const PESO_FACCIA = 400 * 1024;
+const PESO_IMMAGINE = 900 * 1024;
+
+// Quante immagini stanno in uno striscione. Sei è una regola di
+// prodotto, non di integrità: sta nel codice e non nel database
+// proprio per poterla cambiare senza una migrazione.
+const QUANTE_IMMAGINI = 6;
+
+/** I byte di una faccia, o niente. */
+async function faccia(utenteId) {
+  const { rows } = await pool.query(
+    `SELECT faccia, faccia_tipo, faccia_il FROM utenti WHERE id = $1`,
+    [Number(utenteId)]
+  );
+
+  const r = rows[0];
+
+  if (!r?.faccia) return null;
+
+  return { dati: r.faccia, tipo: r.faccia_tipo, quando: r.faccia_il };
+}
+
+async function mettiFaccia(utenteId, dati, tipo) {
+  await pool.query(
+    `UPDATE utenti SET faccia = $1, faccia_tipo = $2, faccia_il = NOW() WHERE id = $3`,
+    [dati, tipo, Number(utenteId)]
+  );
+
+  return true;
+}
+
+async function togliFaccia(utenteId) {
+  await pool.query(
+    `UPDATE utenti SET faccia = NULL, faccia_tipo = NULL, faccia_il = NULL WHERE id = $1`,
+    [Number(utenteId)]
+  );
+
+  return true;
+}
+
+/** I byte di un'immagine di striscione, cercata per identificativo. */
+async function immagineStriscione(id) {
+  const { rows } = await pool.query(
+    `SELECT immagine, tipo, messa_il FROM utenti_striscione WHERE id = $1`,
+    [Number(id)]
+  );
+
+  const r = rows[0];
+
+  // Anche i byte, non solo la riga: una riga senza immagine non
+  // dovrebbe esistere (la colonna è NOT NULL), ma chi serve dei byte
+  // non deve fidarsi — al piano di sopra `intestazioni` ne legge la
+  // lunghezza, e su `undefined` cadrebbe con un 500 al posto di un 404.
+  if (!r?.immagine) return null;
+
+  return { dati: r.immagine, tipo: r.tipo, quando: r.messa_il };
+}
+
+/**
+ * Riscrive lo striscione per intero.
+ *
+ * `pezzi` è l'elenco nell'ordine voluto, e ogni voce è o un numero —
+ * un'immagine già lì dentro, da tenere — o dei byte nuovi. Riscrivere
+ * tutto invece di avere «aggiungi», «togli» e «sposta» separati
+ * significa che riordinare e sostituire sono lo stesso gesto, e che
+ * l'ordine non può andare fuori sincrono con quello che si vede.
+ *
+ * Tutto dentro una transazione: uno striscione mezzo cancellato
+ * perché la connessione è caduta a metà sarebbe peggio di uno vecchio.
+ */
+async function mettiStriscione(utenteId, pezzi) {
+  const id = Number(utenteId);
+  const cliente = await pool.connect();
+
+  try {
+    await cliente.query("BEGIN");
+
+    const daTenere = pezzi.filter((p) => typeof p === "number").map(Number);
+
+    await cliente.query(
+      `DELETE FROM utenti_striscione
+        WHERE utente_id = $1 AND NOT (id = ANY($2::bigint[]))`,
+      [id, daTenere]
+    );
+
+    for (let posto = 0; posto < pezzi.length; posto += 1) {
+      const pezzo = pezzi[posto];
+
+      if (typeof pezzo === "number") {
+        // Tenuta, ma magari spostata: conta solo il posto nuovo.
+        await cliente.query(
+          `UPDATE utenti_striscione SET ordine = $1 WHERE id = $2 AND utente_id = $3`,
+          [posto, pezzo, id]
+        );
+      } else {
+        await cliente.query(
+          `INSERT INTO utenti_striscione (utente_id, ordine, immagine, tipo)
+           VALUES ($1, $2, $3, $4)`,
+          [id, posto, pezzo.dati, pezzo.tipo]
+        );
+      }
+    }
+
+    const { rows } = await cliente.query(
+      `SELECT id FROM utenti_striscione WHERE utente_id = $1 ORDER BY ordine, id`,
+      [id]
+    );
+
+    await cliente.query("COMMIT");
+
+    return rows.map((r) => Number(r.id));
+  } catch (err) {
+    await cliente.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    cliente.release();
+  }
 }
 
 /** La riga come può vederla un browser: senza l'hash della password. */
@@ -476,6 +628,9 @@ function pubblico(riga) {
 module.exports = {
   MOTIVI,
   COLORI_LETTORE,
+  PESO_FACCIA,
+  PESO_IMMAGINE,
+  QUANTE_IMMAGINI,
   preparaUtenti,
   idProprietario,
   utenteLetto,
@@ -485,5 +640,11 @@ module.exports = {
   elenco,
   richieste,
   decidi,
-  pubblici
+  pubblici,
+  aspetto,
+  faccia,
+  mettiFaccia,
+  togliFaccia,
+  immagineStriscione,
+  mettiStriscione
 };
