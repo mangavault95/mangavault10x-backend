@@ -1,8 +1,9 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
-const { requireAuth, identificaUtente } = require("../services/auth");
-const { utenteLetto, utenteScrive } = require("../services/utenti");
+const { identificaUtente } = require("../services/auth");
+const { lettoreBiblioteca, richiediBiblioteca } = require("../services/biblioteca");
+const { utenteScrive } = require("../services/utenti");
 
 // --------------------------------------------------
 // LE LETTURE SONO DI QUALCUNO
@@ -17,8 +18,14 @@ const { utenteLetto, utenteScrive } = require("../services/utenti");
 //   in SCRITTURA chi scrive lo dice SOLO il token. Segnare un volume
 //               come letto è un fatto personale: nessuno deve poterlo
 //               fare a nome di un altro cambiando un numero
-//               nell'indirizzo. Per questo qui è comparso `requireAuth`,
-//               che prima non c'era.
+//               nell'indirizzo. Per questo qui è comparso il
+//               controllo dell'accesso, che prima non c'era.
+//
+// E da quando la biblioteca è di casa (018) c'è un terzo gradino, che
+// vale per tutt'e due i versi: chi in biblioteca non ha niente di suo
+// LEGGE la cronologia del proprietario (`lettoreBiblioteca`) e non
+// scrive niente (`richiediBiblioteca`). Le sue letture le tiene nella
+// videoteca, che è dove si è iscritto per stare.
 // --------------------------------------------------
 
 // --------------------------------------------------
@@ -32,7 +39,7 @@ router.get("/", identificaUtente, async (req, res) => {
   const limite = Math.min(Math.max(Number(req.query.limit) || 60, 1), 500);
 
   try {
-    const utenteId = await utenteLetto(req);
+    const utenteId = await lettoreBiblioteca(req);
 
     const result = await pool.query(
       `
@@ -64,7 +71,7 @@ router.get("/", identificaUtente, async (req, res) => {
 // --------------------------------------------------
 router.get("/per-serie", identificaUtente, async (req, res) => {
   try {
-    const utenteId = await utenteLetto(req);
+    const utenteId = await lettoreBiblioteca(req);
 
     const result = await pool.query(
       `
@@ -104,7 +111,7 @@ router.get("/per-serie", identificaUtente, async (req, res) => {
 // --------------------------------------------------
 // POST /api/reading-history
 // --------------------------------------------------
-router.post("/", requireAuth, async (req, res) => {
+router.post("/", richiediBiblioteca, async (req, res) => {
   try {
     const { manga_id, titolo, autore, coverurl, volume } = req.body;
 
@@ -147,7 +154,7 @@ router.post("/", requireAuth, async (req, res) => {
 // che dal browser: sono già in tabella, e una copia mandata da fuori è
 // una copia che può arrivare sbagliata.
 // --------------------------------------------------
-router.post("/serie/:mangaId/fino-a/:numero", requireAuth, async (req, res) => {
+router.post("/serie/:mangaId/fino-a/:numero", richiediBiblioteca, async (req, res) => {
   try {
     const fino = Number(req.params.numero);
 
@@ -190,7 +197,7 @@ router.post("/serie/:mangaId/fino-a/:numero", requireAuth, async (req, res) => {
 // serie da trenta, sarebbe un lavoro — e il ripensamento è sulla serie,
 // non sui singoli numeri.
 // --------------------------------------------------
-router.delete("/serie/:mangaId", requireAuth, async (req, res) => {
+router.delete("/serie/:mangaId", richiediBiblioteca, async (req, res) => {
   try {
     const utenteId = await utenteScrive(req);
 
@@ -219,7 +226,7 @@ router.delete("/serie/:mangaId", requireAuth, async (req, res) => {
 // volume è stato segnato due volte, lasciarne in piedi una lo
 // rimetterebbe letto un istante dopo.
 // --------------------------------------------------
-router.delete("/serie/:mangaId/volume/:numero", requireAuth, async (req, res) => {
+router.delete("/serie/:mangaId/volume/:numero", richiediBiblioteca, async (req, res) => {
   try {
     const utenteId = await utenteScrive(req);
 
@@ -248,7 +255,7 @@ router.delete("/serie/:mangaId/volume/:numero", requireAuth, async (req, res) =>
 // un dettaglio di sicurezza, è quello che impedisce di correggere per
 // sbaglio la cronologia dell'altra persona.
 // --------------------------------------------------
-router.delete("/:id", requireAuth, async (req, res) => {
+router.delete("/:id", richiediBiblioteca, async (req, res) => {
   try {
     const utenteId = await utenteScrive(req);
 

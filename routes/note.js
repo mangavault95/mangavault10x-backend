@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
-const { requireAuth } = require("../services/auth");
+const { richiediBiblioteca } = require("../services/biblioteca");
 const { utenteScrive } = require("../services/utenti");
 
 // --------------------------------------------------
@@ -38,7 +38,7 @@ function testoValido(grezzo) {
 }
 
 // POST /api/note — una nota nuova su una serie
-router.post("/", requireAuth, async (req, res) => {
+router.post("/", richiediBiblioteca, async (req, res) => {
   try {
     const { manga_id, testo: grezzo } = req.body;
 
@@ -87,7 +87,7 @@ router.post("/", requireAuth, async (req, res) => {
 });
 
 // PUT /api/note/:id — correggere quello che si è scritto
-router.put("/:id", requireAuth, async (req, res) => {
+router.put("/:id", richiediBiblioteca, async (req, res) => {
   try {
     const { testo, errore } = testoValido(req.body?.testo);
     if (errore) return res.status(400).json({ error: errore });
@@ -117,7 +117,7 @@ router.put("/:id", requireAuth, async (req, res) => {
 });
 
 // DELETE /api/note/:id
-router.delete("/:id", requireAuth, async (req, res) => {
+router.delete("/:id", richiediBiblioteca, async (req, res) => {
   try {
     const utenteId = await utenteScrive(req);
 

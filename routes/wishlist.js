@@ -1,9 +1,24 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
+const { richiediBiblioteca } = require("../services/biblioteca");
+
+// --------------------------------------------------
+// I DESIDERI SONO DELLA CASA
+//
+// La wishlist è la lista della spesa della collezione di carta: quello
+// che ci finisce sopra si compra, e quello che si compra entra in
+// biblioteca. Quindi vale la regola della biblioteca — la scrivono i
+// due di casa, la leggono tutti.
+//
+// Fino alla 018 queste rotte erano le uniche del sito senza nessun
+// controllo: chiunque, anche senza essere entrato, poteva aggiungere e
+// cancellare desideri. Era un residuo di quando il sito aveva un
+// utente solo e la wishlist non sembrava roba da proteggere.
+// --------------------------------------------------
 
 // POST /api/wishlist
-router.post("/", async (req, res) => {
+router.post("/", richiediBiblioteca, async (req, res) => {
   try {
     const { titolo, autori, coverurl, trama, generi, volumitotali, dovecomprare } = req.body;
     if (!titolo) return res.status(400).json({ error: "titolo richiesto" });
@@ -25,7 +40,7 @@ router.post("/", async (req, res) => {
 
 // PUT /api/wishlist/:id — aggiorna senza ricreare il record,
 // così id e created_at restano quelli originali.
-router.put("/:id", async (req, res) => {
+router.put("/:id", richiediBiblioteca, async (req, res) => {
   try {
     const { titolo, autori, coverurl, trama, generi, volumitotali, dovecomprare } =
       req.body;
@@ -68,7 +83,7 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", richiediBiblioteca, async (req, res) => {
   try {
     await pool.query(
       "DELETE FROM wishlist_custom WHERE id=$1",

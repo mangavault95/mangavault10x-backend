@@ -1,14 +1,17 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
-const { requireAuth, identificaUtente } = require("../services/auth");
-const { utenteLetto, utenteScrive } = require("../services/utenti");
+const { identificaUtente } = require("../services/auth");
+const { lettoreBiblioteca, richiediBiblioteca } = require("../services/biblioteca");
+const { utenteScrive } = require("../services/utenti");
 
 // --------------------------------------------------
 // I SEGNALIBRI SONO DI QUALCUNO
 //
 // Stessa regola della cronologia (vedi readingHistory.js): in lettura
-// si può chiedere di chi, in scrittura lo decide il token e basta.
+// si può chiedere di chi, in scrittura lo decide il token e basta — e
+// chi la biblioteca ce l'ha solo da guardare vede il segnalibro del
+// proprietario senza poterne mettere uno suo.
 //
 // Qui però cambia anche una cosa che si vede: due persone possono
 // leggere la STESSA serie a due punti diversi. Il segnalibro non è più
@@ -19,7 +22,7 @@ const { utenteLetto, utenteScrive } = require("../services/utenti");
 // GET /api/reading-sessions
 router.get("/", identificaUtente, async (req, res) => {
   try {
-    const utenteId = await utenteLetto(req);
+    const utenteId = await lettoreBiblioteca(req);
 
     const result = await pool.query(
       `
@@ -40,7 +43,7 @@ router.get("/", identificaUtente, async (req, res) => {
 
 // POST /api/reading-sessions
 // crea o aggiorna una sessione attiva
-router.post("/", requireAuth, async (req, res) => {
+router.post("/", richiediBiblioteca, async (req, res) => {
   try {
     const {
       manga_id,
@@ -98,7 +101,7 @@ router.post("/", requireAuth, async (req, res) => {
 });
 
 // PUT /api/reading-sessions/:mangaId
-router.put("/:mangaId", requireAuth, async (req, res) => {
+router.put("/:mangaId", richiediBiblioteca, async (req, res) => {
   try {
     const { mangaId } = req.params;
     const { volume } = req.body;
@@ -131,7 +134,7 @@ router.put("/:mangaId", requireAuth, async (req, res) => {
 });
 
 // DELETE /api/reading-sessions/:mangaId
-router.delete("/:mangaId", requireAuth, async (req, res) => {
+router.delete("/:mangaId", richiediBiblioteca, async (req, res) => {
   try {
     const utenteId = await utenteScrive(req);
 

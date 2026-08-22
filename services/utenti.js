@@ -96,6 +96,126 @@ async function assegnaColoriMancanti() {
 }
 
 /* ==================================================
+   CHI È DI CASA IN BIBLIOTECA
+   ================================================== */
+
+/**
+ * Le registrazioni valgono per la VIDEOTECA. La biblioteca no.
+ *
+ * Chi si registra dal sito vuole il Cineforum: le serie viste, i
+ * commenti, il calendario. La biblioteca è un'altra cosa — è la
+ * collezione di carta di casa — e chi ci ha dentro qualcosa di suo
+ * (voti, letture, note, droppate) lo decide il proprietario a mano,
+ * dalla Gestione. Chi non è di casa la biblioteca la VEDE, e quello
+ * che vede è quella del proprietario: la stessa cosa che vede
+ * chiunque passi senza entrare.
+ *
+ * Vive in una colonna (`utenti.biblioteca`, migrazione 018) e non in
+ * `ruolo` perché non è un gradino di una scala: la videoteca ce
+ * l'hanno tutti, la biblioteca è un posto in cui si è ammessi o no.
+ */
+
+// Quanto ci si fida di quello che si è già chiesto. La risposta
+// cambia solo quando il proprietario apre o chiude una porta, cioè
+// quasi mai — e quella volta la cache viene buttata a mano
+// (`dimenticaPermessi`). Il minuto serve alle altre istanze, se un
+// giorno ce ne fosse più di una.
+const RICORDO_PERMESSI = 60 * 1000;
+
+const permessiRicordati = new Map();
+
+function dimenticaPermessi(utenteId = null) {
+  if (utenteId == null) permessiRicordati.clear();
+  else permessiRicordati.delete(Number(utenteId));
+}
+
+/**
+ * Questa persona ha una biblioteca sua?
+ *
+ * NON sta nel token, ed è deliberato: il token dura trenta giorni, e
+ * un permesso scritto lì dentro resterebbe quello di un mese fa. Il
+ * giorno in cui il proprietario apre la porta a qualcuno, quella
+ * persona deve poter scrivere subito — non al prossimo accesso.
+ *
+ * Prima della 018 la colonna non c'è: risponde SÌ, che è esattamente
+ * come si comportava il sito ieri. Una regola nuova comincia a valere
+ * quando la migrazione è passata, non prima — al contrario un push
+ * arrivato per primo chiuderebbe fuori Nanaki da casa sua.
+ */
+async function haBiblioteca(utenteId) {
+  const id = Number(utenteId);
+
+  if (!Number.isInteger(id) || id <= 0) return false;
+
+  const ricordo = permessiRicordati.get(id);
+
+  if (ricordo && Date.now() - ricordo.quando < RICORDO_PERMESSI) {
+    return ricordo.valore;
+  }
+
+  let valore;
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT biblioteca, proprietario FROM utenti WHERE id = $1 AND stato = 'attivo'`,
+      [id]
+    );
+
+    valore = Boolean(rows[0]?.biblioteca || rows[0]?.proprietario);
+  } catch (err) {
+    if (err.code !== "42703" && err.code !== "42P01") throw err;
+
+    valore = true;
+  }
+
+  permessiRicordati.set(id, { valore, quando: Date.now() });
+
+  return valore;
+}
+
+/**
+ * Apre o chiude la biblioteca a qualcuno.
+ *
+ * Il proprietario non si può togliere da solo: è l'unico che possa
+ * rimettere dentro gli altri, e una casa da cui il padrone si chiude
+ * fuori non si riapre più da nessuna parte.
+ */
+async function impostaBiblioteca(id, dentro) {
+  const { rows } = await pool.query(
+    `
+    UPDATE utenti
+    SET biblioteca = $2
+    WHERE id = $1 AND NOT proprietario AND stato = 'attivo'
+    RETURNING id, username, nickname, ruolo, stato, proprietario, biblioteca, colore,
+              creato_il, deciso_il, visto_il
+    `,
+    [Number(id), Boolean(dentro)]
+  );
+
+  dimenticaPermessi(id);
+
+  return rows.length ? pubblico(rows[0]) : null;
+}
+
+/**
+ * Il proprietario ce l'ha sempre, anche se la migrazione è stata
+ * eseguita a metà o la sua riga è stata rifatta a mano.
+ *
+ * Gira insieme a `preparaUtenti`, e come `assegnaColoriMancanti` tace
+ * se la colonna non c'è ancora: il sito deve partire lo stesso.
+ */
+async function assicuraBibliotecaProprietario() {
+  try {
+    await pool.query(
+      `UPDATE utenti SET biblioteca = TRUE WHERE proprietario AND NOT biblioteca`
+    );
+  } catch (err) {
+    if (err.code === "42703" || err.code === "42P01") return;
+    throw err;
+  }
+}
+
+/* ==================================================
    IL PROPRIETARIO
    ================================================== */
 
@@ -140,6 +260,7 @@ async function preparaUtenti() {
     console.log(`👤 Proprietario: ${rows[0].nickname} (#${idProprietarioInCache})`);
 
     await assegnaColoriMancanti();
+    await assicuraBibliotecaProprietario();
 
     return idProprietarioInCache;
   } catch (err) {
@@ -264,7 +385,17 @@ async function accedi(username, password) {
 
   await pool.query(`UPDATE utenti SET visto_il = NOW() WHERE id = $1`, [utente.id]);
 
-  return { token: firmaToken(utente), utente: pubblico(utente) };
+  // `biblioteca` si chiede a parte e non nella SELECT qui sopra: quella
+  // query è l'unica cosa che sta fra una persona e il proprio sito, e
+  // una colonna che non c'è ancora la farebbe fallire per intero.
+  // `haBiblioteca` invece sa cadere in piedi.
+  return {
+    token: firmaToken(utente),
+    utente: {
+      ...pubblico(utente),
+      biblioteca: await haBiblioteca(utente.id)
+    }
+  };
 }
 
 /**
@@ -295,7 +426,10 @@ function accessoDiRipiego(nome, password) {
 
   console.warn("⚠️  Accesso col metodo vecchio: la tabella utenti non esiste ancora.");
 
-  return { token: firmaToken(utente), utente: pubblico({ ...utente, id: 0 }) };
+  return {
+    token: firmaToken(utente),
+    utente: pubblico({ ...utente, id: 0, biblioteca: true })
+  };
 }
 
 /* ==================================================
@@ -376,7 +510,8 @@ async function registra({ username, nickname, password }) {
 async function elenco() {
   const { rows } = await pool.query(
     `
-    SELECT id, username, nickname, ruolo, stato, proprietario, creato_il, deciso_il, visto_il
+    SELECT id, username, nickname, ruolo, stato, proprietario, biblioteca, colore,
+           creato_il, deciso_il, visto_il
     FROM utenti
     ORDER BY proprietario DESC, creato_il ASC
     `
@@ -411,9 +546,16 @@ async function richieste() {
 /**
  * Accetta o rifiuta.
  *
- * Accettare dà "pieni poteri" — ruolo `admin`, cioè può modificare la
- * collezione come il proprietario. Quello che resta solo del
- * proprietario è decidere di chi altro fidarsi.
+ * Accettare dà la VIDEOTECA: la propria pagina, le spunte, i voti agli
+ * anime, il Cineforum. Non dà la biblioteca — quella resta a chi ce
+ * l'ha, e si apre a mano dalla Gestione (`impostaBiblioteca`). Chi è
+ * appena stato accettato di qua può guardare, e quello che guarda è la
+ * biblioteca del proprietario.
+ *
+ * `biblioteca` non si tocca apposta: se il proprietario avesse aperto
+ * la porta a qualcuno e quello venisse poi rifiutato e riaccettato, il
+ * permesso resterebbe quello deciso a mano, che è l'unico posto in cui
+ * è stato deciso davvero.
  */
 async function decidi(id, approvato) {
   const { rows } = await pool.query(
@@ -423,10 +565,13 @@ async function decidi(id, approvato) {
         ruolo = $3,
         deciso_il = NOW()
     WHERE id = $1 AND NOT proprietario
-    RETURNING id, username, nickname, ruolo, stato, proprietario, creato_il, deciso_il
+    RETURNING id, username, nickname, ruolo, stato, proprietario, biblioteca,
+              creato_il, deciso_il
     `,
     [id, approvato ? "attivo" : "rifiutato", approvato ? "admin" : "lettore"]
   );
+
+  dimenticaPermessi(id);
 
   return rows.length ? pubblico(rows[0]) : null;
 }
@@ -439,9 +584,8 @@ async function decidi(id, approvato) {
  * nome utente, niente date.
  */
 async function pubblici() {
-  const { rows } = await pool.query(
-    `
-    SELECT id, nickname, proprietario, colore, faccia_il,
+  const elenco = (campoBiblioteca) => `
+    SELECT id, nickname, proprietario, colore, faccia_il, ${campoBiblioteca},
            COALESCE(
              (SELECT array_agg(s.id ORDER BY s.ordine, s.id)
                 FROM utenti_striscione s WHERE s.utente_id = utenti.id),
@@ -450,10 +594,24 @@ async function pubblici() {
     FROM utenti
     WHERE stato = 'attivo'
     ORDER BY proprietario DESC, creato_il ASC
-    `
-  );
+  `;
 
-  return rows.map(aspetto);
+  try {
+    const { rows } = await pool.query(elenco("biblioteca"));
+
+    return rows.map(aspetto);
+  } catch (err) {
+    if (err.code !== "42703") throw err;
+
+    // Prima della 018 la biblioteca era di tutti quelli che erano
+    // entrati: finché la colonna non c'è si risponde com'era, non a
+    // metà. È la stessa scelta di `haBiblioteca`, e vale per la stessa
+    // ragione — questo elenco lo chiede ogni visita, e romperlo
+    // significa un sito senza nomi accanto ai voti.
+    const { rows } = await pool.query(elenco("TRUE AS biblioteca"));
+
+    return rows.map(aspetto);
+  }
 }
 
 /**
@@ -473,6 +631,11 @@ function aspetto(r) {
     id: Number(r.id),
     nickname: r.nickname,
     proprietario: Boolean(r.proprietario),
+    // Chi ha una biblioteca sua, e chi di qua sta solo guardando. È
+    // pubblico come il colore, e per un motivo pratico: il browser lo
+    // usa per sapere di chi sono i voti da accendere e per non offrire
+    // un bottone che il server rifiuterebbe.
+    biblioteca: Boolean(r.biblioteca || r.proprietario),
     // Il colore è pubblico per definizione: è come si riconosce chi ha
     // scritto una nota, e le note si leggono anche senza essere entrati.
     // Resta anche adesso che c'è la faccia: è il ripiego di chi non ne
@@ -619,6 +782,11 @@ function pubblico(riga) {
     ruolo: riga.ruolo,
     stato: riga.stato,
     proprietario: Boolean(riga.proprietario),
+    // Il proprietario ce l'ha per definizione: la sua riga può essere
+    // stata appena riscritta dalle variabili d'ambiente, e non è una
+    // cosa che debba dipendere da un UPDATE riuscito.
+    biblioteca: Boolean(riga.biblioteca || riga.proprietario),
+    colore: riga.colore ?? null,
     creatoIl: riga.creato_il ?? null,
     decisoIl: riga.deciso_il ?? null,
     vistoIl: riga.visto_il ?? null
@@ -635,6 +803,9 @@ module.exports = {
   idProprietario,
   utenteLetto,
   utenteScrive,
+  haBiblioteca,
+  impostaBiblioteca,
+  dimenticaPermessi,
   accedi,
   registra,
   elenco,

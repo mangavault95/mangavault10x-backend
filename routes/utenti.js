@@ -274,14 +274,24 @@ router.put("/io/striscione", requireAuth, async (req, res) => {
   }
 });
 
-/** Chi sono io, secondo il token che ho in mano. */
-router.get("/io", requireAuth, (req, res) => {
+/**
+ * Chi sono io, secondo il token che ho in mano.
+ *
+ * Tutto viene dal token tranne `biblioteca`, che si chiede al
+ * database: il token dura trenta giorni e direbbe il permesso di un
+ * mese fa. È l'unica cosa qui dentro che possa cambiare senza che si
+ * rifaccia l'accesso.
+ */
+router.get("/io", requireAuth, async (req, res) => {
+  const id = req.user.id == null ? null : Number(req.user.id);
+
   return res.json({
-    id: req.user.id == null ? null : Number(req.user.id),
+    id,
     username: req.user.user,
     nickname: req.user.nickname ?? req.user.user,
     ruolo: req.user.role,
-    proprietario: Boolean(req.user.proprietario)
+    proprietario: Boolean(req.user.proprietario),
+    biblioteca: Boolean(req.user.proprietario) || (await utenti.haBiblioteca(id))
   });
 });
 
@@ -311,6 +321,45 @@ router.get("/richieste", requireProprietario, async (req, res) => {
 
 router.post("/:id/approva", requireProprietario, (req, res) => decide(req, res, true));
 router.post("/:id/rifiuta", requireProprietario, (req, res) => decide(req, res, false));
+
+/**
+ * Apre o chiude la biblioteca a qualcuno.
+ *
+ * È l'unico modo di entrarci: non c'è una registrazione che la dia e
+ * non c'è un ruolo che la implichi. Chi si iscrive dal sito prende la
+ * videoteca; la biblioteca la dà il proprietario, uno per uno, da
+ * questa rotta — che è quello che si vede in Gestione come un
+ * interruttore accanto a un nome.
+ *
+ * Restituisce la riga aggiornata invece di un `success`: la Gestione
+ * ridisegna la persona senza richiedere l'elenco intero.
+ */
+router.post("/:id/biblioteca", requireProprietario, async (req, res) => {
+  const id = Number(req.params.id);
+
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ error: "Identificativo non valido" });
+  }
+
+  try {
+    const utente = await utenti.impostaBiblioteca(id, Boolean(req.body?.dentro));
+
+    // Nessuna riga: o non esiste, o è il proprietario (che non si può
+    // chiudere fuori da casa sua), o non è ancora stato accettato.
+    if (!utente) {
+      return res.status(404).json({ error: "Persona non trovata" });
+    }
+
+    return res.json({ utente });
+  } catch (err) {
+    if (err.code === "42703") {
+      return res.status(503).json({ error: "Migrazione 018 non ancora eseguita" });
+    }
+
+    console.error("❌ UTENTI BIBLIOTECA ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
 
 async function decide(req, res, approvato) {
   const id = Number(req.params.id);

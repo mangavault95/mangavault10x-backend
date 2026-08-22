@@ -1,9 +1,12 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
+const { richiediBiblioteca } = require("../services/biblioteca");
  
 // POST /api/wishlist-actions/purchase/:id
-router.post("/purchase/:id", async (req, res) => {
+// Spostare un desiderio in collezione è a tutti gli effetti scrivere
+// in biblioteca: vale la regola di casa.
+router.post("/purchase/:id", richiediBiblioteca, async (req, res) => {
   const client = await pool.connect();
 
   try {

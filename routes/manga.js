@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
-const { requireAuth } = require("../services/auth");
+const { richiediBiblioteca } = require("../services/biblioteca");
 const { utenteScrive } = require("../services/utenti");
 const { enrich } = require("../services/enrich");
 const { eseguiRapportoVolumi } = require("../services/rapportoVolumi");
@@ -39,7 +39,7 @@ router.post("/enrich", async (req, res) => {
 // delle API e non far scadere la richiesta HTTP.
 // Rilanciarlo finché "rimanenti" non arriva a zero.
 // --------------------------------------------------
-router.post("/enrich-bulk", requireAuth, async (req, res) => {
+router.post("/enrich-bulk", richiediBiblioteca, async (req, res) => {
   const limit = Math.min(Number(req.body?.limit) || 20, 50);
   const soloTrame = Boolean(req.body?.soloTrame);
   const soloCover = Boolean(req.body?.soloCover);
@@ -300,7 +300,7 @@ async function aggiornaManga(id, body) {
 // accettati sono identici, così una scheda creata a mano e una
 // modificata dopo passano dallo stesso filtro di sicurezza.
 // --------------------------------------------------
-router.post("/", requireAuth, async (req, res) => {
+router.post("/", richiediBiblioteca, async (req, res) => {
   try {
     const { titolo } = req.body;
 
@@ -340,7 +340,7 @@ router.post("/", requireAuth, async (req, res) => {
   }
 });
 
-router.put("/:id", requireAuth, async (req, res) => {
+router.put("/:id", richiediBiblioteca, async (req, res) => {
   try {
     const esito = await aggiornaManga(req.params.id, req.body);
 
@@ -355,7 +355,7 @@ router.put("/:id", requireAuth, async (req, res) => {
   }
 });
 
-router.post("/update", requireAuth, async (req, res) => {
+router.post("/update", richiediBiblioteca, async (req, res) => {
   try {
     const { id, ...campi } = req.body;
 
@@ -388,7 +388,7 @@ router.post("/update", requireAuth, async (req, res) => {
 // queste due righe resterebbero lì a puntare a una scheda che non
 // esiste più.
 // --------------------------------------------------
-router.delete("/:id", requireAuth, async (req, res) => {
+router.delete("/:id", richiediBiblioteca, async (req, res) => {
   const cliente = await pool.connect();
 
   try {
@@ -449,7 +449,7 @@ router.delete("/:id", requireAuth, async (req, res) => {
 // voto — togliere un giudizio dato per sbaglio deve essere possibile,
 // e "non votato" non è lo zero.
 // --------------------------------------------------
-router.post("/updateRating", requireAuth, async (req, res) => {
+router.post("/updateRating", richiediBiblioteca, async (req, res) => {
   const { id, rating } = req.body;
 
   const serie = Number(id);
@@ -521,14 +521,26 @@ router.post("/updateRating", requireAuth, async (req, res) => {
 // e passare da un lettore all'altro è istantaneo invece di essere
 // un'altra attesa di Render che si sveglia.
 //
+// `AND u.biblioteca` su tutt'e quattro: dalla 018 la biblioteca è di
+// casa, e chi si è registrato per la videoteca di qua non ha niente di
+// suo. Le righe che aveva lasciato prima non si cancellano — restano
+// dov'erano e tornerebbero il giorno in cui il proprietario gli
+// aprisse la porta — ma smettono di comparire, perché un voto accanto
+// a una scheda dice "questa serie l'abbiamo giudicata in tre", e non è
+// vero.
+//
 // La JOIN è una sottoquery e non un GROUP BY sull'intera tabella
 // apposta: `SELECT *` deve continuare a restituire le colonne di
 // "Manga" come sono, senza che aggiungere una colonna domani obblighi
 // a toccare anche il raggruppamento.
 // --------------------------------------------------
-router.get("/", async (req, res) => {
-  try {
-    const { rows } = await pool.query(`
+// Chi conta come "di casa". È un pezzo di SQL e non un valore perché
+// prima della 018 la colonna non esiste: in quel caso vale TRUE, cioè
+// la biblioteca com'era ieri, invece di una collezione senza più un
+// voto (che è quello che succederebbe cadendo nel ripiego qui sotto).
+const DI_CASA = 'u.biblioteca';
+
+const schedeComplete = (diCasa) => `
       SELECT
         m.*,
         COALESCE(
@@ -544,7 +556,7 @@ router.get("/", async (req, res) => {
                    )
             FROM voti v
             JOIN utenti u ON u.id = v.utente_id
-            WHERE v.manga_id = m."ID"
+            WHERE v.manga_id = m."ID" AND ${diCasa}
           ),
           '[]'::json
         ) AS "Voti",
@@ -559,7 +571,7 @@ router.get("/", async (req, res) => {
                    )
             FROM letture_droppate d
             JOIN utenti u ON u.id = d.utente_id
-            WHERE d.manga_id = m."ID"
+            WHERE d.manga_id = m."ID" AND ${diCasa}
           ),
           '[]'::json
         ) AS "Droppate",
@@ -579,7 +591,7 @@ router.get("/", async (req, res) => {
                    )
             FROM note_serie n
             JOIN utenti u ON u.id = n.utente_id
-            WHERE n.manga_id = m."ID"
+            WHERE n.manga_id = m."ID" AND ${diCasa}
           ),
           '[]'::json
         ) AS "Note",
@@ -592,7 +604,8 @@ router.get("/", async (req, res) => {
             FROM (
               SELECT h.utente_id, COUNT(DISTINCT h.volume)::int AS quanti
               FROM reading_history h
-              WHERE h.manga_id = m."ID"
+              JOIN utenti u ON u.id = h.utente_id
+              WHERE h.manga_id = m."ID" AND ${diCasa}
               GROUP BY h.utente_id
             ) t
           ),
@@ -600,10 +613,29 @@ router.get("/", async (req, res) => {
         ) AS "Lettori"
       FROM "Manga" m
       ORDER BY m."ID" DESC
-    `);
+`;
+
+router.get("/", async (req, res) => {
+  try {
+    const { rows } = await pool.query(schedeComplete(DI_CASA));
 
     return res.json(rows);
   } catch (err) {
+    // La 018 non è ancora passata: si rifà la stessa domanda senza il
+    // filtro, cioè come il sito rispondeva ieri. Prima di questo
+    // tentativo si finiva dritti nel ripiego qui sotto, che è una
+    // collezione senza un voto e senza una nota — un guasto molto più
+    // grosso di quello che si stava aggirando.
+    if (err.code === "42703") {
+      try {
+        const { rows } = await pool.query(schedeComplete("TRUE"));
+
+        return res.json(rows);
+      } catch {
+        /* niente da fare: si prova il ripiego vero, qui sotto */
+      }
+    }
+
     // Prima delle migrazioni 009, 011 e 012 le tabelle dei voti, delle
     // droppate e delle note non esistono: la collezione deve poter
     // arrivare lo stesso, o il sito è vuoto finché lo script non gira

@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
-const { requireAuth } = require("../services/auth");
+const { richiediBiblioteca } = require("../services/biblioteca");
 const { utenteScrive } = require("../services/utenti");
 
 // --------------------------------------------------
@@ -24,7 +24,7 @@ const { utenteScrive } = require("../services/utenti");
 // --------------------------------------------------
 
 // POST /api/letture-droppate/:mangaId — l'ho mollata
-router.post("/:mangaId", requireAuth, async (req, res) => {
+router.post("/:mangaId", richiediBiblioteca, async (req, res) => {
   try {
     const utenteId = await utenteScrive(req);
 
@@ -47,7 +47,7 @@ router.post("/:mangaId", requireAuth, async (req, res) => {
 });
 
 // DELETE /api/letture-droppate/:mangaId — l'ho ripresa in mano
-router.delete("/:mangaId", requireAuth, async (req, res) => {
+router.delete("/:mangaId", richiediBiblioteca, async (req, res) => {
   try {
     const utenteId = await utenteScrive(req);
 

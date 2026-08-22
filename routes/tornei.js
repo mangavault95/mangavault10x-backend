@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { requireAuth } = require("../services/auth");
+const { richiediBiblioteca } = require("../services/biblioteca");
 const { utenteScrive } = require("../services/utenti");
 const tornei = require("../services/tornei");
 
@@ -61,7 +61,7 @@ router.get("/:id", async (req, res) => {
  * arriva da fuori non deve poter attribuire a un'altra persona una
  * cosa che non ha fatto.
  */
-router.post("/", requireAuth, async (req, res) => {
+router.post("/", richiediBiblioteca, async (req, res) => {
   const { errore, partita } = tornei.valida(req.body);
 
   if (errore) return res.status(400).json({ error: errore });
@@ -86,7 +86,7 @@ router.post("/", requireAuth, async (req, res) => {
   }
 });
 
-router.delete("/:id", requireAuth, async (req, res) => {
+router.delete("/:id", richiediBiblioteca, async (req, res) => {
   const id = Number(req.params.id);
 
   if (!Number.isInteger(id)) return res.status(400).json({ error: "Partita non valida" });
