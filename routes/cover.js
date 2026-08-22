@@ -47,6 +47,36 @@ const DOMINI_AMMESSI = [
 
 const TIPI_AMMESSI = ["image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"];
 
+/**
+ * Che immagine è, guardandola invece che chiedendolo.
+ *
+ * I primi byte di un file dicono il formato e non si possono
+ * sbagliare; l'intestazione `Content-Type` la scrive il server della
+ * fonte, che a volte non la manda affatto.
+ *
+ * AVIF non c'è: sta dentro un contenitore ISO-BMFF, la firma è più
+ * lunga da leggere e nessuna delle fonti ammesse lo serve. Se un
+ * giorno arrivasse, arriverebbe col suo `Content-Type` giusto e
+ * passerebbe dalla via normale.
+ */
+function tipoDaiByte(b) {
+  if (b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
+
+  if (b.length > 8 && b.toString("hex", 0, 8) === "89504e470d0a1a0a") return "image/png";
+
+  if (
+    b.length > 12 &&
+    b.toString("ascii", 0, 4) === "RIFF" &&
+    b.toString("ascii", 8, 12) === "WEBP"
+  ) {
+    return "image/webp";
+  }
+
+  if (b.length > 6 && b.toString("ascii", 0, 6).match(/^GIF8[79]a$/)) return "image/gif";
+
+  return null;
+}
+
 const DIMENSIONE_MASSIMA = 6 * 1024 * 1024; // 6 MB
 
 function indirizzoValido(grezzo) {
@@ -100,15 +130,33 @@ router.get("/", async (req, res) => {
       return res.status(502).json({ error: `La fonte ha risposto ${risposta.status}` });
     }
 
-    const tipo = (risposta.headers.get("content-type") || "").split(";")[0].trim();
+    const dichiarato = (risposta.headers.get("content-type") || "").split(";")[0].trim();
+    const dati = Buffer.from(await risposta.arrayBuffer());
 
     // Un proxy che rimanda qualunque cosa diventa un modo per servire
     // file arbitrari dal tuo dominio: qui escono solo immagini.
-    if (!TIPI_AMMESSI.includes(tipo)) {
-      return res.status(415).json({ error: `Tipo non ammesso: ${tipo || "sconosciuto"}` });
-    }
+    //
+    // A DECIDERLO SONO I PRIMI BYTE, non l'intestazione. Quella la
+    // scrive la fonte, quindi non è una prova — ed è anche
+    // inaffidabile in un modo che si è visto: AnimeClick tiene certe
+    // copertine con l'estensione `.jpg_large`, che il loro server non
+    // riconosce, e le serve SENZA `Content-Type`. Il file c'era e
+    // rispondeva 200, ma di qua diventava un 415 e in videoteca un
+    // rettangolo col titolo dentro — sembrava una copertina che non
+    // esiste, ed era una copertina rifiutata all'ultimo metro (è la
+    // storia di Cowboy Bebop).
+    //
+    // È la stessa regola delle immagini di profilo (`services/immagini`),
+    // e sui byte è più severa di prima, non meno: una fonte che
+    // dichiarasse `image/jpeg` su un file che jpeg non è, adesso non
+    // passa.
+    const tipo = TIPI_AMMESSI.includes(dichiarato) ? dichiarato : tipoDaiByte(dati);
 
-    const dati = Buffer.from(await risposta.arrayBuffer());
+    if (!tipo) {
+      return res
+        .status(415)
+        .json({ error: `Tipo non ammesso: ${dichiarato || "non dichiarato"}` });
+    }
 
     if (dati.length > DIMENSIONE_MASSIMA) {
       return res.status(413).json({ error: "Immagine troppo grande" });
