@@ -27,7 +27,8 @@ const {
   prendi,
   testoDi,
   tabellaScheda,
-  cerca
+  cercaGrezzo,
+  senzaAccenti
 } = require("./animeclick");
 
 // --------------------------------------------------
@@ -157,7 +158,57 @@ function piattaformeDa(html) {
 // --------------------------------------------------
 
 /**
- * I titoli che somigliano a quello cercato, dal più probabile in giù.
+ * Quanto un risultato risponde a quello che si è scritto.
+ *
+ * Ha un punteggio suo invece di riusare quello dei manga per una
+ * ragione verificata dal vivo: quello dei manga vale zero appena il
+ * titolo non contiene alla lettera ciò che si è cercato, e chi chiama
+ * scarta gli zero. Ma la ricerca di AnimeClick guarda TUTTI i titoli di
+ * una scheda — italiano, originale, inglese — mentre in lista ne
+ * pubblica uno solo. Il 22/08/2026: «shingeki no kyojin» riporta 12
+ * schede fra cui «L'attacco dei giganti», e il filtro dei manga ne
+ * lasciava passare 2; «sousou no frieren» riporta Frieren, e ne
+ * lasciava passare zero. La ricerca sembrava rotta e invece stava
+ * funzionando: era il punteggio a cestinare le risposte giuste.
+ *
+ * Quindi qui non si scarta niente. Si mette in ordine, e chi non
+ * somiglia a niente resta in fondo — perché se AnimeClick l'ha
+ * restituito, un motivo che noi non vediamo ce l'ha.
+ *
+ * La lunghezza pesa poco ma pesa: fra «Chainsaw Man» e «Chainsaw Man -
+ * Il Film: La storia di Reze», chi ha scritto "chainsaw man" cercava il
+ * primo.
+ */
+function punteggioAnime(cercato, trovato) {
+  const a = senzaAccenti(cercato);
+  const b = senzaAccenti(trovato);
+
+  if (!a || !b) return 0;
+
+  const penalita = Math.min(20, Math.max(0, b.length - a.length) * 0.2);
+
+  if (a === b) return 100;
+  if (b.startsWith(a)) return 85 - penalita;
+  if (b.includes(a)) return 70 - penalita;
+
+  // Le parole tutte presenti ma in un altro ordine, o con qualcosa in
+  // mezzo: «attacco giganti» contro «L'attacco dei giganti». È il modo
+  // in cui si scrive quando si cerca in fretta, ed è esattamente quello
+  // che una ricerca che si aggiorna mentre scrivi riceve di continuo.
+  const parole = a.split(" ").filter(Boolean);
+  const presenti = parole.filter((p) => b.includes(p)).length;
+
+  if (presenti === parole.length) return 55 - penalita;
+  if (presenti > 0) return 15 + (25 * presenti) / parole.length;
+
+  // Nessuna parola in comune con il titolo che si vede, eppure
+  // AnimeClick l'ha trovata: l'ha riconosciuta da un titolo che in
+  // lista non compare. Vale poco, ma non vale zero.
+  return 5;
+}
+
+/**
+ * I titoli che rispondono a quello cercato, dal più probabile in giù.
  *
  * ⚠️ Non sceglie: chi chiama deve far confermare. La ricerca di
  * AnimeClick ordina per titolo e non per pertinenza, e "one piece"
@@ -165,11 +216,80 @@ function piattaformeDa(html) {
  * Dragon Ball Z" — agganciare il primo della lista riempirebbe la
  * videoteca di schede sbagliate.
  *
- * Funziona anche cercando in italiano: "L'attacco dei giganti" trova
- * la scheda giusta.
+ * Funziona in italiano, in originale e in inglese: la ricerca del sito
+ * guarda tutti e tre, e questo è il motivo per cui il punteggio qui
+ * ordina invece di scartare.
  */
 async function cercaAnime(titolo, { quanti = 5, modo = "contiene", fetchImpl = fetch } = {}) {
-  return cerca(titolo, { quanti, modo, tipo: "anime", fetchImpl });
+  const trovate = await cercaGrezzo(
+    {
+      "search_manga[title]": titolo,
+      "search_manga[titleOption]": modo === "esatto" ? "3" : "0"
+    },
+    { fetchImpl, tipo: "anime" }
+  );
+
+  return trovate
+    .map((s) => ({ ...s, punteggio: punteggioAnime(titolo, s.titolo) }))
+    .sort((a, b) => b.punteggio - a.punteggio)
+    .slice(0, quanti);
+}
+
+// --------------------------------------------------
+// 1-bis. LA RADICE DI UN TITOLO — cosa fa di due schede la stessa serie
+// --------------------------------------------------
+
+/**
+ * Il titolo ridotto al nome della serie, senza il pezzo che distingue
+ * una stagione dall'altra.
+ *
+ *   «Mushoku Tensei: Jobless Reincarnation III»          → mushoku tensei
+ *   «Chainsaw Man - Il Film: La storia di Reze»          → chainsaw man
+ *   «Demon Slayer: Kimetsu no Yaiba - Il Castello…»      → demon slayer
+ *
+ * Serve a due cose che sembrano diverse e sono la stessa: mettere in
+ * una riga sola i risultati della ricerca che sono la stessa serie, e
+ * riconoscere una stagione quando AnimeClick si dimentica di scrivere
+ * che lo è (succede spesso — vedi `eStessaSerie`).
+ *
+ * Si taglia al primo separatore forte e si toglie il numero in coda.
+ * Se resta un moncone si tiene il titolo intero: «Steins;Gate 0» non è
+ * «Steins;Gate», ma una radice lunga due lettere non è niente.
+ */
+function radiceTitolo(titolo) {
+  const primaParte = String(titolo || "").split(/\s*[:–—]\s+|\s+[-–—]\s+/)[0];
+
+  const senzaNumero = primaParte
+    .replace(/[\s:.–-]+(?:stagione\s*|season\s*|parte\s*|part\s*)?(?:\d+|i{1,3}|iv|vi{0,3}|ix|xi{0,3})$/i, "")
+    .trim();
+
+  const radice = senzaAccenti(senzaNumero.length >= 3 ? senzaNumero : primaParte);
+
+  return radice.length >= 3 ? radice : senzaAccenti(titolo);
+}
+
+/**
+ * Due titoli parlano della stessa serie?
+ *
+ * Vero quando la radice di uno è l'inizio dell'altra: «Demon Slayer»
+ * contro «Demon Slayer: Kimetsu no Yaiba - Il Quartiere dei Piaceri».
+ * Si confrontano tutti i titoli che una scheda ha — italiano, originale
+ * e inglese — perché AnimeClick mescola le lingue fra una stagione e
+ * l'altra: la prima di Demon Slayer si chiama così, le sue parti si
+ * chiamano «Kimetsu no Yaiba: …».
+ *
+ * ⚠️ È un indizio, non una prova, e da solo non basta ad accorpare:
+ * chi lo usa lo incrocia con quello che AnimeClick dice del legame e
+ * con il tipo dell'opera. Vedi `services/franchise.js`.
+ */
+function stessaRadice(titoli, altro) {
+  const b = radiceTitolo(altro);
+
+  return titoli.filter(Boolean).some((t) => {
+    const a = radiceTitolo(t);
+
+    return a.startsWith(b) || b.startsWith(a);
+  });
 }
 
 // --------------------------------------------------
@@ -336,8 +456,26 @@ async function relazioni(animeClickId, { fetchImpl = fetch } = {}) {
     const titolo = pezzo.match(/<span itemprop="name">([\s\S]*?)<\/span>/i);
     const legame = pezzo.match(/opera-tipo-relazione"[^>]*>([\s\S]*?)<\/span>/i);
     const anno = pezzo.match(/Anno:\s*(\d{4})/i);
+    const copertina = pezzo.match(/<img[^>]*src="([^"]+)"/i);
 
     if (!id) continue;
+
+    // Il riquadro dice anche CHE COSA è l'opera — «Serie TV», «Film»,
+    // «Serie OAV», «Special», «Web, Corto» — in uno <span> senza classe
+    // dentro la descrizione. È la notizia che rende possibile decidere
+    // da soli: senza, per sapere se un'opera legata è una stagione o un
+    // riassunto bisognerebbe aprirne la scheda, cioè una richiesta per
+    // ognuna delle dodici opere che AnimeClick elenca sotto Demon
+    // Slayer. Si prende l'ultimo <span> senza classe che non parla di
+    // anno: gli altri sono la relazione (che ha la sua classe) e l'anno.
+    const descrizione = pezzo.match(/<div class="description">([\s\S]*?)<\/div>/i);
+
+    const tipoTesto = descrizione
+      ? [...descrizione[1].matchAll(/<span(?![^>]*class)[^>]*>([\s\S]*?)<\/span>/gi)]
+          .map((m) => testoDi(m[1]))
+          .filter((t) => t && !/^anno\s*:/i.test(t))
+          .pop() || null
+      : null;
 
     opere.push({
       id: Number(id[1]),
@@ -347,7 +485,15 @@ async function relazioni(animeClickId, { fetchImpl = fetch } = {}) {
       // ridurla a un codice nostro. È già italiano leggibile, e
       // l'elenco delle forme possibili non lo decidiamo noi.
       legame: legame ? testoDi(legame[1]) : null,
-      anno: anno ? Number(anno[1]) : null
+      anno: anno ? Number(anno[1]) : null,
+      tipo_testo: tipoTesto,
+      tipo: tipoTesto ? tipoDa(tipoTesto) : null,
+      // Un corto non è mai una stagione, e AnimeClick lo scrive solo
+      // qui: «Web, Corto» sono i mini-episodi comici che ogni serie di
+      // successo si porta dietro (Frieren ne ha una serie intera). Il
+      // tipo normalizzato li chiamerebbe `ona`, cioè una serie vera.
+      corto: /corto/i.test(tipoTesto || ""),
+      copertina: copertina ? new URL(copertina[1], BASE).href : null
     });
   }
 
@@ -375,6 +521,30 @@ async function relazioni(animeClickId, { fetchImpl = fetch } = {}) {
  */
 function eStessaSerie(legame) {
   return /^(opera\s+(precedente|successiva)|sequel|prequel)$/i.test(
+    String(legame || "").trim()
+  );
+}
+
+/**
+ * Le relazioni che dicono il contrario: è un'altra opera.
+ *
+ * Non è l'opposto della funzione qui sopra, ed è per questo che sono
+ * due. Fra le due c'è il caso che conta di più: il legame VUOTO.
+ * AnimeClick lo lascia in bianco molto più spesso di quanto si
+ * creda — verificato il 22/08/2026: la terza stagione di Mushoku
+ * Tensei, la seconda di Chainsaw Man e le stagioni 2, 3 e 4 di Demon
+ * Slayer sono tutte elencate senza una parola di relazione. Dire
+ * «vuoto = altra opera» vorrebbe dire non accorpare quasi niente.
+ *
+ * Queste parole invece sono una notizia vera, e negativa: «Opera
+ * derivata» è Attack on Titan: Junior High (i personaggi alle medie),
+ * «Remake» sono i film che rimontano la serie. Stanno nel franchise ma
+ * non nella serie, e infilarle nella stessa scheda vorrebbe dire una
+ * copertina che promette otto stagioni e un elenco che ne contiene
+ * quattro più quattro riassunti.
+ */
+function eAltraOpera(legame) {
+  return /^(opera\s+(derivata|originale)|spin[\s-]*off|storia\s+parallela|remake|riassunto|adattamento|altro)$/i.test(
     String(legame || "").trim()
   );
 }
@@ -530,6 +700,10 @@ module.exports = {
   episodi,
   relazioni,
   eStessaSerie,
+  eAltraOpera,
+  radiceTitolo,
+  stessaRadice,
+  punteggioAnime,
   calendario,
   serieDellEpisodio,
   urlScheda,

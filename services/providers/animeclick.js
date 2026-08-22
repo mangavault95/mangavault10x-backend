@@ -766,6 +766,14 @@ module.exports = {
   testoDi,
   tabellaScheda,
   somiglianza,
+  // La ricerca senza il punteggio dei manga, e il modo di ridurre un
+  // titolo alle sue lettere. Il provider degli anime li usa per pesare
+  // i risultati a modo suo: il punteggio dei manga scarta tutto quello
+  // che non contiene alla lettera ciò che si è scritto, e su AnimeClick
+  // vuol dire buttare via la risposta giusta — «shingeki no kyojin»
+  // trova «L'attacco dei giganti», che di «shingeki» non ha una sillaba.
+  cercaGrezzo,
+  senzaAccenti,
   autoriDi,
   trovaOpera,
   categoriaDi,

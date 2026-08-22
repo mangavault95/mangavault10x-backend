@@ -6,6 +6,7 @@ const { requireAuth } = require("../services/auth");
 const { utenteLetto, utenteScrive } = require("../services/utenti");
 const ac = require("../services/providers/animeclickAnime");
 const videoteca = require("../services/videoteca");
+const franchise = require("../services/franchise");
 
 // --------------------------------------------------
 // LA VIDEOTECA
@@ -86,6 +87,11 @@ router.get("/", async (req, res) => {
       `
       SELECT
         a.id, a.titolo, a.tipo, a.stato, a.stato_italia,
+        -- Gli altri due titoli servono alla ricerca dentro la
+        -- videoteca: si cerca «shingeki» tanto quanto «attacco dei
+        -- giganti», e senza questi la casella rispondeva solo a uno
+        -- dei due.
+        a.titolo_originale, a.titolo_inglese,
         a.anno_inizio, a.cover_url, a.generi, a.distributori,
         a.episodi_totali, a.manga_id,
         a.gruppo_id, a.ordine, a.etichetta, a.tagli,
@@ -110,12 +116,47 @@ router.get("/", async (req, res) => {
 });
 
 /**
+ * Le ricerche fatte da poco.
+ *
+ * La ricerca della videoteca si aggiorna mentre si scrive: «mushoku»
+ * sono sei richieste ad AnimeClick se non si ricorda niente, e la
+ * settima è quando si cancella una lettera. Trenta secondi bastano —
+ * il tempo di scrivere un titolo e ripensarci — e non tengono in casa
+ * un catalogo altrui.
+ */
+const ricerche = new Map();
+const DURATA_RICERCA = 30 * 1000;
+const QUANTE_RICERCHE = 80;
+
+async function cercaConMemoria(titolo) {
+  const chiave = titolo.toLowerCase();
+  const ricordata = ricerche.get(chiave);
+
+  if (ricordata && Date.now() - ricordata.quando < DURATA_RICERCA) return ricordata.esito;
+
+  const esito = await ac.cercaAnime(titolo, { quanti: 12 });
+
+  ricerche.delete(chiave);
+  ricerche.set(chiave, { esito, quando: Date.now() });
+
+  while (ricerche.size > QUANTE_RICERCHE) ricerche.delete(ricerche.keys().next().value);
+
+  return esito;
+}
+
+/**
  * GET /api/anime/cerca?titolo=… — i candidati su AnimeClick.
  *
  * Restituisce una lista, mai una scelta: la ricerca di AnimeClick
  * ordina per titolo e non per pertinenza, e "one piece" propone come
  * primo risultato "Dream 9: Toriko & One Piece & Dragon Ball Z".
  * Chi aggancia deve vedere e confermare.
+ *
+ * Ogni risultato porta la `radice` del suo titolo — «Mushoku Tensei»
+ * per tutte e tre le sue stagioni — che è quello che permette al
+ * pannello di mostrare una riga sola invece di tre. Si calcola qui
+ * perché è la stessa regola con cui, un clic dopo, si riconosce una
+ * stagione: due modi di dedurla vorrebbero dire due modi di sbagliare.
  *
  * Sta prima di `/:id` perché "cerca" non è un numero e Express
  * assegna le rotte in ordine di dichiarazione.
@@ -128,7 +169,7 @@ router.get("/cerca", requireAuth, async (req, res) => {
       return res.status(400).json({ error: "Scrivi almeno due lettere." });
     }
 
-    const candidati = await ac.cercaAnime(titolo, { quanti: 8 });
+    const candidati = await cercaConMemoria(titolo);
 
     // Quelle già in videoteca si segnalano: agganciarle una seconda
     // volta non romperebbe niente, ma chi guarda deve saperlo prima.
@@ -161,11 +202,70 @@ router.get("/cerca", requireAuth, async (req, res) => {
         copertina: c.copertina,
         url: c.url,
         punteggio: c.punteggio,
+        radice: ac.radiceTitolo(c.titolo),
         giaInVideoteca: mappa.get(c.id) ?? null
       }))
     );
   } catch (err) {
     console.error("ANIME CERCA ERROR:", err);
+    return res.status(502).json({ error: "AnimeClick non risponde" });
+  }
+});
+
+/**
+ * GET /api/anime/franchise/:animeclickId — tutta la serie, prima di prenderla.
+ *
+ * È il cuore della risposta a «voglio cercare il titolo una volta
+ * sola»: si sceglie una scheda nella ricerca e questa rotta dice di
+ * quante parti è fatta la serie a cui appartiene — stagioni, film,
+ * OAV — ognuna con scritto se conviene prenderla e perché.
+ *
+ * Non aggiunge niente. La proposta si vede prima, perché la pagina
+ * delle relazioni di AnimeClick è un sacco che contiene anche i
+ * riassunti e i corti comici, e una scheda che si riempie di roba che
+ * nessuno ha chiesto è peggio di una che ne chiede conferma.
+ *
+ * Ogni parte porta anche cosa ne sappiamo già: `giaInCatalogo` è la
+ * scheda che esiste (magari perché la guarda l'altro lettore),
+ * `giaTua` è quella che è già nella TUA videoteca — e quelle non si
+ * ripropongono da spuntare.
+ */
+router.get("/franchise/:animeclickId", requireAuth, async (req, res) => {
+  try {
+    const animeclickId = numeroValido(req.params.animeclickId);
+
+    if (!animeclickId) return res.status(400).json({ error: "Serve un id di AnimeClick." });
+
+    const utenteId = await utenteScrive(req);
+    const { capo, parti } = await franchise.esplora(animeclickId);
+
+    const { rows: note } = await pool.query(
+      `
+      SELECT a.animeclick_id, a.id,
+             EXISTS (SELECT 1 FROM visioni v
+                      WHERE v.anime_id = a.id AND v.utente_id = $2) AS mia
+        FROM anime a
+       WHERE a.animeclick_id = ANY($1::int[])
+      `,
+      [parti.map((p) => p.animeclick_id), utenteId]
+    );
+
+    const conosciute = new Map(note.map((n) => [Number(n.animeclick_id), n]));
+
+    return res.json({
+      capo,
+      parti: parti.map((p) => {
+        const conosciuta = conosciute.get(p.animeclick_id);
+
+        return {
+          ...p,
+          giaInCatalogo: conosciuta ? Number(conosciuta.id) : null,
+          giaTua: Boolean(conosciuta?.mia)
+        };
+      })
+    });
+  } catch (err) {
+    console.error("ANIME FRANCHISE ERROR:", err);
     return res.status(502).json({ error: "AnimeClick non risponde" });
   }
 });
@@ -358,11 +458,21 @@ router.get("/:id", async (req, res) => {
  * Si passa l'`animeclick_id` scelto fra i candidati, non un titolo:
  * la scelta l'ha già fatta una persona guardando la lista.
  *
- * Poi succedono due cose che prima non succedevano. La serie entra
- * nella videoteca DI CHI HA PREMUTO (`visioni`), non in un elenco
- * comune. E si va a vedere su AnimeClick se è la stagione di qualcosa
- * che c'è già: se lo è, le due schede finiscono nello stesso gruppo e
- * in griglia restano una copertina sola.
+ * La serie entra nella videoteca DI CHI HA PREMUTO (`visioni`), non
+ * in un elenco comune.
+ *
+ * E si aggiunge TUTTA: con `parti` arrivano gli id di tutte le opere
+ * che compongono la serie — le stagioni, i film, gli OAV — così come
+ * `GET /franchise/:id` le ha proposte e come chi guardava le ha
+ * confermate. Prima ne entrava una sola e le altre andavano cercate a
+ * mano una per una, il che voleva dire cercare «Mushoku Tensei» tre
+ * volte per avere tre stagioni. Le parti finiscono nello stesso
+ * gruppo, in ordine di uscita, e in griglia restano una copertina.
+ *
+ * ⚠️ Può restituire `restanti`: le parti che non sono entrate nel
+ * tempo di una richiesta. Si richiama con le stesse `parti` finché
+ * quell'elenco non è vuoto — le schede già scritte non si rileggono,
+ * quindi il giro seguente costa poco.
  */
 router.post("/", requireAuth, async (req, res) => {
   try {
@@ -373,22 +483,43 @@ router.post("/", requireAuth, async (req, res) => {
     }
 
     const utenteId = await utenteScrive(req);
-    const { anime, episodi } = await videoteca.agganciaSerie(pool, animeclickId);
 
-    await videoteca.mettiInVideoteca(pool, anime.id, utenteId);
+    // `parti` è la serie intera scelta nel pannello: le stagioni, i
+    // film, gli OAV. Senza, si aggancia la sola scheda chiesta — è il
+    // comportamento di prima, e serve ancora a chi vuole aggiungere una
+    // cosa sola (uno special, uno spin-off) senza tirarsi dietro tutto.
+    //
+    // Il tetto di 40 non è una difesa da un attacco: è il numero oltre
+    // il quale una serie non è più una serie. Il franchise più grosso
+    // che AnimeClick elenca ne conta una dozzina, e una richiesta con
+    // cinquecento id dentro sarebbe un errore di chi chiama — meglio
+    // troncarla che passare mezz'ora a leggere schede a caso.
+    const parti = Array.isArray(req.body?.parti)
+      ? [...new Set(req.body.parti.map(numeroValido).filter(Boolean))].slice(0, 40)
+      : [animeclickId];
 
-    // Il raggruppamento non deve poter far fallire l'aggancio: la
-    // serie è già dentro, e una pagina di relazioni che non risponde
-    // vale una copertina in più, non un errore.
-    let gruppoId = null;
+    const esito = await videoteca.agganciaFranchise(pool, {
+      capo: animeclickId,
+      parti,
+      utenteId,
+      // Il nome della serie finisce sotto una copertina: si taglia a
+      // una lunghezza da titolo, non da paragrafo.
+      nome: String(req.body?.nome || "").trim().slice(0, 200) || null
+    });
 
-    try {
-      gruppoId = await videoteca.agganciaStagioni(pool, anime.id);
-    } catch (e) {
-      console.error("ANIME GRUPPO ERROR:", e.message);
-    }
+    const { rows } = await pool.query(`SELECT * FROM anime WHERE id = $1`, [esito.animeId]);
 
-    return res.status(201).json({ success: true, anime, episodi, gruppo_id: gruppoId });
+    return res.status(201).json({
+      success: true,
+      anime: rows[0],
+      gruppo_id: esito.gruppoId,
+      aggiunte: esito.fatte,
+      // Le parti che non sono entrate nel tempo di una richiesta: chi
+      // ha chiamato rimanda le stesse `parti` e il giro riprende da
+      // qui. Non è un errore, è una serie lunga.
+      restanti: esito.restanti,
+      errori: esito.errori
+    });
   } catch (err) {
     console.error("ANIME AGGANCIO ERROR:", err);
 
@@ -583,6 +714,34 @@ router.put("/:id/gruppo", requireAuth, async (req, res) => {
   } catch (err) {
     console.error("ANIME GRUPPO ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+/**
+ * POST /api/anime/riunisci — ripassa la videoteca e rimette insieme le stagioni.
+ *
+ * È la stessa cosa che succede da sola quando si aggiunge una serie,
+ * applicata a quello che c'era già. Serve perché il riconoscimento è
+ * migliorato dopo: una videoteca riempita una serie per volta si
+ * ritrova Shakugan no Shana in tre copertine e Nisekoi in due, e
+ * rimetterle a posto a mano è mezz'ora di clic.
+ *
+ * Non aggiunge e non toglie: guarda le schede che ci sono. Restituisce
+ * `restanti` quando la videoteca è più lunga del tempo di una
+ * richiesta, e si richiama finché è vuoto.
+ *
+ * Sta prima di `/:id/...` per lo stesso motivo di `cerca`: "riunisci"
+ * non è un numero.
+ */
+router.post("/riunisci", requireAuth, async (req, res) => {
+  try {
+    const utenteId = await utenteScrive(req);
+    const esito = await videoteca.riunisciVideoteca(pool, utenteId);
+
+    return res.json({ success: true, ...esito });
+  } catch (err) {
+    console.error("ANIME RIUNISCI ERROR:", err);
+    return res.status(502).json({ error: "AnimeClick non risponde" });
   }
 });
 

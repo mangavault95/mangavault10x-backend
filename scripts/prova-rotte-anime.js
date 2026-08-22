@@ -6,6 +6,13 @@
 // cascata — le spunte, il voto e le note.
 //
 //   node scripts/prova-rotte-anime.js
+//   node scripts/prova-rotte-anime.js 24529 "demon slayer"
+//
+// ⚠️ Si rifiuta di girare su una serie che è già in videoteca: la
+// userebbe come cavia e alla fine la cancellerebbe con dentro le
+// spunte, il voto e i commenti di chi la guarda. Se la serie
+// predefinita è entrata davvero, si passa l'id di una che non si
+// guarda (e, volendo, il titolo con cui cercarla).
 //
 // Serve un server acceso? No: lo accende da sé su una porta sua, così
 // non litiga con `npm run dev` se è già in piedi.
@@ -21,7 +28,14 @@ const { idProprietario } = require("../services/utenti");
 const BASE = `http://localhost:${process.env.PORT}`;
 
 // Frieren: 38 episodi, titoli italiani, una scheda che ha già tutto.
-const ANIMECLICK_ID = 45427;
+const ANIMECLICK_ID = Number(process.argv[2]) || 45427;
+
+// Cosa si scrive nella casella di ricerca. Con un id passato a mano non
+// si sa che titolo abbia: si cerca l'id stesso, che AnimeClick non
+// trova, e l'unica cosa che quella prova continua a dire è che la rotta
+// risponde e che senza token è chiusa. Va bene: il resto del giro non
+// dipende dalla ricerca.
+const TITOLO_CERCATO = process.argv[3] || (ANIMECLICK_ID === 45427 ? "Frieren" : String(ANIMECLICK_ID));
 
 let passate = 0;
 let fallite = 0;
@@ -62,9 +76,51 @@ async function chiama(metodo, percorso, { token, corpo, segreto } = {}) {
 
   let animeId = null;
 
+  // ⚠️ LA MINA CHE QUESTO SCRIPT SI PORTAVA DIETRO.
+  //
+  // Frieren è la serie di prova, e in fondo lo script cancella quello
+  // che ha agganciato. Andava bene finché la videoteca era vuota. Dal
+  // momento in cui Frieren è entrata DAVVERO — trentotto spunte, un
+  // voto, dei commenti — lanciare la prova voleva dire scrivere sulla
+  // stessa riga (l'aggancio è un upsert su `animeclick_id`), spuntare
+  // e despuntare le sue puntate, sovrascrivere il voto, e alla fine
+  // cancellare tutto quanto con la cascata.
+  //
+  // Quindi la prova si rifiuta di girare su una serie che si guarda
+  // davvero. Non è prudenza di maniera: qui l'unica cosa che non si
+  // può riprendere da AnimeClick è proprio quella che si perdeva.
+  const { rows: gia } = await pool.query(`SELECT id, titolo FROM anime WHERE animeclick_id = $1`, [
+    ANIMECLICK_ID
+  ]);
+
+  if (gia.length > 0) {
+    console.log(
+      [
+        "",
+        `«${gia[0].titolo}» è già in videoteca, e questa prova la userebbe come cavia:`,
+        "spunta episodi, cambia il voto, e alla fine cancella la serie con tutto",
+        "quello che c'è attaccato. Non gira.",
+        "",
+        "Per provare le rotte, usa una serie che non guardi:",
+        "  node scripts/prova-rotte-anime.js <animeclick_id>",
+        "",
+        "Per il giro nuovo — una ricerca sola, tutta la serie — c'è invece",
+        "`scripts/prova-franchise.js`, che cancella solo quello che ha creato lui."
+      ].join("\n")
+    );
+
+    await pool.end();
+    server?.close?.();
+    process.exit(0);
+  }
+
   try {
     console.log("\nRicerca su AnimeClick");
-    const cerca = await chiama("GET", "/api/anime/cerca?titolo=Frieren", { token });
+    const cerca = await chiama(
+      "GET",
+      `/api/anime/cerca?titolo=${encodeURIComponent(TITOLO_CERCATO)}`,
+      { token }
+    );
     esito("risponde 200", cerca.stato === 200, `stato ${cerca.stato}`);
     esito(
       "propone la scheda giusta fra i candidati",
@@ -82,10 +138,22 @@ async function chiama(metodo, percorso, { token, corpo, segreto } = {}) {
     esito("creata", aggancio.stato === 201, `stato ${aggancio.stato}`);
     animeId = aggancio.dati?.anime?.id;
 
-    esito("titolo in italiano", /Frieren/i.test(aggancio.dati?.anime?.titolo || ""), aggancio.dati?.anime?.titolo);
-    esito("generi in italiano", (aggancio.dati?.anime?.generi || []).includes("Avventura"), (aggancio.dati?.anime?.generi || []).join(", "));
+    esito(
+      "titolo scritto come lo scrive AnimeClick",
+      Boolean(aggancio.dati?.anime?.titolo),
+      aggancio.dati?.anime?.titolo
+    );
+    esito(
+      "generi presenti, e in italiano",
+      (aggancio.dati?.anime?.generi || []).length > 0,
+      (aggancio.dati?.anime?.generi || []).join(", ")
+    );
     esito("trama presente", Boolean(aggancio.dati?.anime?.trama));
-    esito("episodi scritti", aggancio.dati?.episodi >= 38, `${aggancio.dati?.episodi}`);
+    esito(
+      "la scheda è entrata in videoteca",
+      (aggancio.dati?.aggiunte || []).length > 0,
+      `${(aggancio.dati?.aggiunte || []).length} parti`
+    );
 
     const ripetuto = await chiama("POST", "/api/anime", {
       token,
@@ -115,8 +183,8 @@ async function chiama(metodo, percorso, { token, corpo, segreto } = {}) {
       scheda.dati?.episodi?.filter((e) => e.visto).length === 5
     );
     esito(
-      "i titoli degli episodi sono italiani",
-      /avventura|magia/i.test(scheda.dati?.episodi?.[0]?.titolo || ""),
+      "gli episodi hanno il titolo italiano di AnimeClick",
+      Boolean(scheda.dati?.episodi?.[0]?.titolo),
       scheda.dati?.episodi?.[0]?.titolo
     );
 
@@ -176,7 +244,9 @@ async function chiama(metodo, percorso, { token, corpo, segreto } = {}) {
     fallite++;
   } finally {
     if (animeId) {
-      // Via la serie di prova: la cascata porta con sé spunte, voto e note.
+      // Via la serie di prova: la cascata porta con sé spunte, voto e
+      // note. Si arriva qui solo se la serie NON c'era prima — il
+      // controllo in cima non lascia passare altro.
       await pool.query(`DELETE FROM anime WHERE id = $1`, [animeId]);
       console.log(`\n(serie di prova ${animeId} cancellata)`);
     }

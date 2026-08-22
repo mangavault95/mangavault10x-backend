@@ -15,9 +15,15 @@
 // medaglia — tenere in ordine una videoteca invece che solo riempirla:
 //   agganciaStagioni      unire le schede che sono la stessa serie
 //   rimuoviDallaVideoteca togliersi di torno quello che non si guarda
+//
+// E uno che le mette insieme tutte e due, perché è il gesto vero:
+//   agganciaFranchise     una ricerca sola, e in videoteca ci finisce
+//                         la serie intera — stagioni, film, OAV —
+//                         già raggruppata sotto una copertina.
 
 const ac = require("./providers/animeclickAnime");
 const anilist = require("./providers/anilistAnime");
+const franchise = require("./franchise");
 
 // --------------------------------------------------
 // Scrittura di una serie
@@ -305,8 +311,16 @@ function titoloDiGruppo(titolo) {
  * rispedirlo in fondo perché è uscito dopo. Le stagioni senza un ordine
  * loro si accodano per anno, e a parità di anno per numero di scheda —
  * che su AnimeClick cresce nel tempo.
+ *
+ * `daCapo` butta via quell'ordine e rimette tutto per anno. Serve a un
+ * momento solo: quando si aggiunge una serie INTERA in un colpo
+ * (`agganciaFranchise`). Lì le parti arrivano tutte insieme e in fila
+ * per anno, e tenersi le posizioni di prima vorrebbe dire un film del
+ * 2020 in fondo, dopo la stagione del 2025, solo perché è entrato
+ * dopo. Fuori da quel caso resta spento: il lavoro fatto a mano dalla
+ * Gestione non si tocca per una rilettura.
  */
-async function riordinaGruppo(cliente, gruppoId) {
+async function riordinaGruppo(cliente, gruppoId, { daCapo = false } = {}) {
   await cliente.query(
     `
     UPDATE anime a
@@ -314,7 +328,7 @@ async function riordinaGruppo(cliente, gruppoId) {
       FROM (
         SELECT id,
                ROW_NUMBER() OVER (
-                 ORDER BY ordine NULLS LAST, anno_inizio NULLS LAST, animeclick_id
+                 ORDER BY ${daCapo ? "" : "ordine NULLS LAST,"} anno_inizio NULLS LAST, animeclick_id
                ) AS posizione
           FROM anime
          WHERE gruppo_id = $1
@@ -361,7 +375,7 @@ async function gruppoDi(cliente, animeId) {
 }
 
 /** Mette delle schede nello stesso gruppo, creandolo o fondendo quelli che c'erano. */
-async function riunisci(cliente, idSerie) {
+async function riunisci(cliente, idSerie, { daCapo = false, nome = null } = {}) {
   const { rows: membri } = await cliente.query(
     `SELECT id, titolo, gruppo_id FROM anime WHERE id = ANY($1::bigint[])`,
     [idSerie]
@@ -386,9 +400,13 @@ async function riunisci(cliente, idSerie) {
       [idSerie]
     );
 
+    // Il nome passato da fuori vince su quello dedotto: chi aggiunge un
+    // franchise intero ha già guardato tutte le sue parti insieme, e
+    // sa dire «Mushoku Tensei» meglio di una regola che taglia il
+    // numero in coda a una stagione sola.
     const { rows: creato } = await cliente.query(
       `INSERT INTO anime_gruppi (titolo) VALUES ($1) RETURNING id`,
-      [titoloDiGruppo(primo[0]?.titolo) || "Serie senza nome"]
+      [nome || titoloDiGruppo(primo[0]?.titolo) || "Serie senza nome"]
     );
 
     gruppoId = Number(creato[0].id);
@@ -413,7 +431,7 @@ async function riunisci(cliente, idSerie) {
     [gruppoId, idSerie]
   );
 
-  await riordinaGruppo(cliente, gruppoId);
+  await riordinaGruppo(cliente, gruppoId, { daCapo });
 
   return gruppoId;
 }
@@ -421,18 +439,21 @@ async function riunisci(cliente, idSerie) {
 /**
  * Cerca le altre stagioni di una serie e le mette nello stesso gruppo.
  *
- * Si appoggia alla pagina `/relazioni` di AnimeClick, che dice quale
- * scheda è il seguito di quale. Non trova tutto — ci sono schede
- * elencate senza nessuna parola di relazione — ma sistema i casi
- * normali senza chiedere niente a nessuno, ed è quello che serve
- * perché la videoteca resti ordinata da sé.
+ * Si appoggia alla pagina `/relazioni` di AnimeClick, che dice quali
+ * opere sono legate a questa, e al giudizio di `services/franchise.js`
+ * per capire quali di quelle sono la stessa serie — che è una domanda
+ * a cui la parola di relazione da sola non risponde.
  *
- * Aggancia solo schede GIÀ IN CATALOGO: aggiungere una serie non deve
- * tirarsi dietro cinque stagioni che nessuno ha chiesto.
+ * Aggancia solo schede GIÀ IN CATALOGO: è l'ordinamento di quello che
+ * c'è, non un'aggiunta. Chi vuole la serie intera passa da
+ * `agganciaFranchise`, che le parti mancanti se le va a prendere.
  */
 async function agganciaStagioni(pool, animeId) {
   const { rows } = await pool.query(
-    `SELECT id, animeclick_id, gruppo_id FROM anime WHERE id = $1`,
+    `
+    SELECT id, animeclick_id, gruppo_id, titolo, titolo_originale, titolo_inglese
+      FROM anime WHERE id = $1
+    `,
     [animeId]
   );
 
@@ -441,10 +462,22 @@ async function agganciaStagioni(pool, animeId) {
   const serie = rows[0];
   const suo = serie.gruppo_id ? Number(serie.gruppo_id) : null;
 
+  const titoli = [serie.titolo, serie.titolo_originale, serie.titolo_inglese];
+
   let parenti;
 
   try {
-    parenti = (await ac.relazioni(serie.animeclick_id)).filter((o) => ac.eStessaSerie(o.legame));
+    // Lo stesso giudizio che usa il pannello di aggiunta, e non è una
+    // comodità: fino al 22/08/2026 qui si accettava solo la parola di
+    // relazione, e AnimeClick quella parola la scrive quando gli va.
+    // Bastava a Isekai Farming («Sequel») e non bastava a Mushoku
+    // Tensei III, a Chainsaw Man: Assassins Arc né alle stagioni 2, 3
+    // e 4 di Demon Slayer, che sono elencate senza. Risultato: in
+    // videoteca restavano copertine separate della stessa serie, e
+    // rimetterle insieme era lavoro a mano.
+    parenti = (await ac.relazioni(serie.animeclick_id)).filter(
+      (o) => franchise.giudica(o, titoli).consigliato
+    );
   } catch {
     // AnimeClick muto sulle relazioni non è un motivo per rifiutare
     // l'aggancio: la serie entra lo stesso e il gruppo si fa a mano.
@@ -479,6 +512,208 @@ async function agganciaStagioni(pool, animeId) {
   } finally {
     cliente.release();
   }
+}
+
+// --------------------------------------------------
+// IL FRANCHISE — una ricerca sola, tutta la serie
+//
+// `agganciaStagioni` qui sopra risolve metà del problema: mette insieme
+// le schede che sono GIÀ in catalogo. L'altra metà è che in catalogo
+// ci finiscono una alla volta — per avere Mushoku Tensei bisognava
+// cercarla tre volte, una per stagione, e sperare che si accorpassero.
+//
+// Qui si aggiunge tutta la serie in un colpo: le parti le ha già
+// scelte `services/franchise.js` leggendo AnimeClick, questo le scrive.
+// --------------------------------------------------
+
+/**
+ * Per quanto tempo una scheda letta di recente vale ancora.
+ *
+ * Serve a due giri diversi che finiscono nello stesso posto: aggiungere
+ * una serie che l'altro lettore ha già, e riprendere un'aggiunta
+ * lunga da dove si era fermata. In tutti e due i casi rileggere da
+ * AnimeClick quello che si è letto stamattina è solo traffico.
+ */
+const FRESCA = 24 * 60 * 60 * 1000;
+
+/** La riga di una scheda, letta da AnimeClick solo se serve davvero. */
+async function schedaPronta(pool, animeclickId) {
+  const { rows } = await pool.query(
+    `
+    SELECT a.id, a.titolo, a.animeclick_id, a.letto_il,
+           (SELECT COUNT(*)::int FROM anime_episodi e WHERE e.anime_id = a.id) AS episodi
+      FROM anime a
+     WHERE a.animeclick_id = $1
+    `,
+    [animeclickId]
+  );
+
+  const riga = rows[0];
+  const fresca =
+    riga && riga.episodi > 0 && riga.letto_il && Date.now() - new Date(riga.letto_il) < FRESCA;
+
+  if (fresca) return { riga, letta: false };
+
+  const { anime } = await agganciaSerie(pool, animeclickId);
+
+  return { riga: anime, letta: true };
+}
+
+/**
+ * Aggiunge una serie intera alla videoteca di chi ha chiesto.
+ *
+ * `parti` sono gli id di AnimeClick da prendere, `capo` quello che la
+ * persona ha scelto nella ricerca — che si aggancia per primo perché è
+ * la scheda su cui atterrerà, e una pagina che si apre già completa
+ * vale più di una che si riempie mentre la guardi.
+ *
+ * ⚠️ IL TETTO DI TEMPO. Ogni parte costa due o tre pagine di
+ * AnimeClick, e l'elenco delle puntate di una serie fiume è di due
+ * megabyte: un franchise da otto parti non entra in una richiesta HTTP
+ * senza far pensare a chi guarda che il sito si sia piantato. Quindi
+ * si aggiunge finché c'è tempo e si restituisce `restanti`: chi ha
+ * chiamato richiama con quelli, e intanto ha già qualcosa da mostrare.
+ * Le parti già scritte non si rileggono (vedi `FRESCA`), quindi
+ * richiamare costa poco e ripetere non fa danni.
+ */
+async function agganciaFranchise(
+  pool,
+  { capo, parti = [], utenteId, nome = null, tetto = 20000 } = {}
+) {
+  const inOrdine = [Number(capo), ...parti.map(Number).filter((p) => p !== Number(capo))];
+
+  const cominciato = Date.now();
+  const fatte = [];
+  const restanti = [];
+  const errori = [];
+
+  for (const animeclickId of inOrdine) {
+    // Il tetto non vale per la prima: un'aggiunta che restituisce zero
+    // schede non è un'aggiunta, è un errore travestito.
+    if (fatte.length > 0 && Date.now() - cominciato > tetto) {
+      restanti.push(animeclickId);
+      continue;
+    }
+
+    try {
+      const { riga } = await schedaPronta(pool, animeclickId);
+
+      await mettiInVideoteca(pool, riga.id, utenteId);
+      fatte.push({ id: Number(riga.id), animeclick_id: animeclickId, titolo: riga.titolo });
+    } catch (e) {
+      // Una parte che non si legge non deve far cadere le altre: la
+      // serie entra lo stesso, e quella mancante si riprova dopo.
+      errori.push({ animeclick_id: animeclickId, errore: e.message });
+    }
+  }
+
+  if (fatte.length === 0) {
+    throw new Error(errori[0]?.errore || "AnimeClick non risponde");
+  }
+
+  let gruppoId = null;
+
+  if (fatte.length > 1) {
+    const cliente = await pool.connect();
+
+    try {
+      await cliente.query("BEGIN");
+      gruppoId = await riunisci(cliente, fatte.map((f) => f.id), { daCapo: true, nome });
+      await cliente.query("COMMIT");
+    } catch (e) {
+      await cliente.query("ROLLBACK");
+      throw e;
+    } finally {
+      cliente.release();
+    }
+  } else {
+    // Una parte sola: può comunque essere la stagione di qualcosa che
+    // c'è già in catalogo, e la strada per scoprirlo è quella di prima.
+    try {
+      gruppoId = await agganciaStagioni(pool, fatte[0].id);
+    } catch (e) {
+      console.error("ANIME GRUPPO ERROR:", e.message);
+    }
+  }
+
+  return {
+    animeId: fatte.find((f) => f.animeclick_id === Number(capo))?.id ?? fatte[0].id,
+    gruppoId,
+    fatte,
+    restanti,
+    errori
+  };
+}
+
+/**
+ * Ripassa una videoteca già fatta e rimette insieme le stagioni sparse.
+ *
+ * Serve perché il riconoscimento è migliorato dopo che le serie erano
+ * già dentro. Una videoteca costruita a mano, una serie per volta, ha
+ * Shakugan no Shana in tre copertine, Nisekoi in due e Cyberpunk:
+ * Edgerunners in due — non per un errore di chi l'ha riempita, ma
+ * perché all'epoca il sito sapeva accorpare solo le schede che
+ * AnimeClick dichiara come seguito, e quella parola manca spesso.
+ *
+ * Non aggiunge e non toglie niente: guarda solo le schede che ci sono
+ * già e le mette nei gruppi giusti. Le prime a essere guardate sono
+ * quelle senza gruppo, che sono quelle che hanno più da guadagnarci.
+ *
+ * Come l'aggiunta di un franchise, ha un tetto di tempo e restituisce
+ * `restanti`: una videoteca da ottanta serie sono ottanta pagine da
+ * leggere, e non stanno in una richiesta HTTP. Chi chiama richiama.
+ */
+async function riunisciVideoteca(pool, utenteId, { tetto = 20000, pausa = 250 } = {}) {
+  const { rows } = await pool.query(
+    `
+    SELECT a.id
+      FROM anime a
+      JOIN visioni v ON v.anime_id = a.id AND v.utente_id = $1
+     ORDER BY (a.gruppo_id IS NOT NULL), lower(a.titolo)
+    `,
+    [utenteId]
+  );
+
+  const cominciato = Date.now();
+  const guardate = [];
+  const restanti = [];
+
+  for (const { id } of rows) {
+    if (guardate.length > 0 && Date.now() - cominciato > tetto) {
+      restanti.push(Number(id));
+      continue;
+    }
+
+    try {
+      const gruppoId = await agganciaStagioni(pool, Number(id));
+
+      guardate.push({ id: Number(id), gruppo_id: gruppoId });
+    } catch (e) {
+      console.error("ANIME RIUNISCI ERROR:", id, e.message);
+      guardate.push({ id: Number(id), gruppo_id: null });
+    }
+
+    // Il passo di una persona che sfoglia, non di uno scraper: la
+    // pagina delle relazioni è piccola, ma ottanta di fila non lo sono.
+    if (pausa) await new Promise((r) => setTimeout(r, pausa));
+  }
+
+  const { rows: quanti } = await pool.query(
+    `
+    SELECT COUNT(DISTINCT COALESCE('g' || a.gruppo_id, 'a' || a.id))::int AS serie,
+           COUNT(*)::int AS schede
+      FROM anime a
+      JOIN visioni v ON v.anime_id = a.id AND v.utente_id = $1
+    `,
+    [utenteId]
+  );
+
+  return {
+    guardate: guardate.length,
+    restanti,
+    serie: quanti[0].serie,
+    schede: quanti[0].schede
+  };
 }
 
 /** Mette a mano una serie nel gruppo di un'altra: il rimedio ai buchi di AnimeClick. */
@@ -725,6 +960,8 @@ module.exports = {
   salvaEpisodi,
   // I gruppi e la videoteca di ciascuno (014)
   agganciaStagioni,
+  agganciaFranchise,
+  riunisciVideoteca,
   calcolaTagli,
   accorpaAMano,
   stacca,
