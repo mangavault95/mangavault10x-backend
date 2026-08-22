@@ -269,10 +269,71 @@ function radiceTitolo(titolo) {
 }
 
 /**
- * Due titoli parlano della stessa serie?
+ * Il pezzo di testo più lungo che due titoli hanno in comune.
  *
- * Vero quando la radice di uno è l'inizio dell'altra: «Demon Slayer»
- * contro «Demon Slayer: Kimetsu no Yaiba - Il Quartiere dei Piaceri».
+ * Serve al secondo modo in cui una serie battezza le sue stagioni, che
+ * la radice non vede: quello in cui ogni stagione ha un nome suo e le
+ * tiene insieme una parola di famiglia in mezzo. «Bakemonogatari»,
+ * «Nisemonogatari», «Owarimonogatari», «Tsukimonogatari» non
+ * cominciano allo stesso modo e non finiscono allo stesso modo — hanno
+ * dentro «monogatari». La stessa cosa vale per «Kizumonogatari» e per
+ * «Monogatari Series: Second Season».
+ */
+function pezzoComune(primo, secondo) {
+  const a = senzaAccenti(primo);
+  const b = senzaAccenti(secondo);
+
+  if (!a || !b) return "";
+
+  // La tabella tiene solo la riga precedente: i titoli sono corti, ma
+  // non c'è motivo di allocare una matrice intera per leggerne una
+  // striscia alla volta.
+  let precedente = new Array(b.length + 1).fill(0);
+  let migliore = 0;
+  let fine = 0;
+
+  for (let i = 1; i <= a.length; i++) {
+    const corrente = new Array(b.length + 1).fill(0);
+
+    for (let j = 1; j <= b.length; j++) {
+      if (a[i - 1] !== b[j - 1]) continue;
+
+      corrente[j] = precedente[j - 1] + 1;
+
+      if (corrente[j] > migliore) {
+        migliore = corrente[j];
+        fine = i;
+      }
+    }
+
+    precedente = corrente;
+  }
+
+  return a.slice(fine - migliore, fine).trim();
+}
+
+/**
+ * Quanto sono lunghe le lettere in comune perché valgano da parentela.
+ *
+ * Otto, misurato su quello che sbaglia sotto e sopra questa soglia.
+ * A sette, «Kimetsu no Yaiba» diventerebbe parente di «Kimetsu Gakuen
+ * Monogatari», che è la parodia con i personaggi a scuola. A nove,
+ * «monogatari» passerebbe ancora ma si comincerebbe a perdere le
+ * famiglie dal nome corto.
+ */
+const LETTERE_DI_FAMIGLIA = 8;
+
+/**
+ * Due titoli parlano della stessa serie? E in che modo si somigliano.
+ *
+ * Restituisce come sono imparentati, o `null`:
+ *
+ *   "radice"  uno è l'inizio dell'altro — «Demon Slayer» contro «Demon
+ *             Slayer: Kimetsu no Yaiba - Il Quartiere dei Piaceri». È
+ *             il modo normale di numerare le stagioni.
+ *   "nome"    hanno in mezzo un pezzo di nome lungo abbastanza da non
+ *             essere un caso — «Bakemonogatari» e «Owarimonogatari».
+ *
  * Si confrontano tutti i titoli che una scheda ha — italiano, originale
  * e inglese — perché AnimeClick mescola le lingue fra una stagione e
  * l'altra: la prima di Demon Slayer si chiama così, le sue parti si
@@ -282,14 +343,26 @@ function radiceTitolo(titolo) {
  * chi lo usa lo incrocia con quello che AnimeClick dice del legame e
  * con il tipo dell'opera. Vedi `services/franchise.js`.
  */
-function stessaRadice(titoli, altro) {
+function parentela(titoli, altro) {
+  const buoni = titoli.filter(Boolean);
   const b = radiceTitolo(altro);
 
-  return titoli.filter(Boolean).some((t) => {
+  const perRadice = buoni.some((t) => {
     const a = radiceTitolo(t);
 
     return a.startsWith(b) || b.startsWith(a);
   });
+
+  if (perRadice) return "radice";
+
+  const perNome = buoni.some((t) => pezzoComune(t, altro).length >= LETTERE_DI_FAMIGLIA);
+
+  return perNome ? "nome" : null;
+}
+
+/** Come sopra, quando basta sapere sì o no. */
+function stessaRadice(titoli, altro) {
+  return parentela(titoli, altro) !== null;
 }
 
 // --------------------------------------------------
@@ -703,6 +776,8 @@ module.exports = {
   eAltraOpera,
   radiceTitolo,
   stessaRadice,
+  parentela,
+  pezzoComune,
   punteggioAnime,
   calendario,
   serieDellEpisodio,

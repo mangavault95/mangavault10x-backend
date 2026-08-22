@@ -83,7 +83,7 @@ function giudica(opera, titoliDellaSerie) {
   }
 
   const dichiarata = ac.eStessaSerie(legame);
-  const imparentata = ac.stessaRadice(titoliDellaSerie, opera.titolo);
+  const imparentata = ac.parentela(titoliDellaSerie, opera.titolo);
 
   if (!dichiarata && !imparentata) {
     return {
@@ -126,7 +126,15 @@ function giudica(opera, titoliDellaSerie) {
     return {
       ruolo,
       consigliato: true,
-      motivo: "Stessa serie, stesso nome: AnimeClick non scrive il legame."
+      // Le due parentele si dicono diverse perché sono diverse da
+      // controllare a occhio. «Stesso nome» si verifica leggendo il
+      // titolo; «nome di famiglia» vuol dire che i due titoli hanno in
+      // comune solo un pezzo in mezzo — Bakemonogatari e
+      // Owarimonogatari — ed è lì che vale la pena dare un'occhiata.
+      motivo:
+        imparentata === "nome"
+          ? "Porta il nome di famiglia della serie: AnimeClick non scrive il legame."
+          : "Stessa serie, stesso nome: AnimeClick non scrive il legame."
     };
   }
 
