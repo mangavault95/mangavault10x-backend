@@ -271,6 +271,47 @@ router.get("/franchise/:animeclickId", requireAuth, async (req, res) => {
 });
 
 /**
+ * GET /api/anime/anteprima/:animeclickId — cosa racconta questa parte.
+ *
+ * La proposta di un franchise elenca dei titoli, e certi titoli non
+ * dicono niente: «Koyomimonogatari», «Zoku Owarimonogatari». Questa
+ * rotta risponde alla domanda che uno si fa prima di spuntare la
+ * casella — che roba è?
+ *
+ * Le schede già in catalogo si leggono dal DATABASE: la trama ce
+ * l'abbiamo già, e andare a ridomandarla ad AnimeClick per una cosa
+ * che sappiamo sarebbe scortesia verso un sito che ci lascia leggere
+ * senza chiederci niente. Le altre si vanno a prendere una per volta,
+ * e restano in memoria dieci minuti.
+ */
+router.get("/anteprima/:animeclickId", requireAuth, async (req, res) => {
+  try {
+    const animeclickId = numeroValido(req.params.animeclickId);
+
+    if (!animeclickId) return res.status(400).json({ error: "Serve un id di AnimeClick." });
+
+    const { rows } = await pool.query(
+      `
+      SELECT animeclick_id, titolo, titolo_originale, tipo, anno_inizio,
+             episodi_dichiarati, stato_italia, generi, distributori, trama, cover_url
+        FROM anime
+       WHERE animeclick_id = $1 AND trama IS NOT NULL
+      `,
+      [animeclickId]
+    );
+
+    if (rows.length > 0) return res.json({ ...rows[0], daNoi: true });
+
+    const scheda = await franchise.anteprima(animeclickId);
+
+    return res.json({ ...scheda, daNoi: false });
+  } catch (err) {
+    console.error("ANIME ANTEPRIMA ERROR:", err);
+    return res.status(502).json({ error: "AnimeClick non risponde" });
+  }
+});
+
+/**
  * GET /api/anime/calendario — cosa esce nei prossimi giorni.
  *
  * Legge dal nostro database, non da AnimeClick: le date le porta il

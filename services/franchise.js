@@ -327,8 +327,60 @@ async function esploraConMemoria(animeclickId, opzioni = {}) {
   return esito;
 }
 
+// --------------------------------------------------
+// L'anteprima di una parte
+// --------------------------------------------------
+
+/**
+ * Cosa racconta una delle parti proposte.
+ *
+ * Serve a una domanda che la proposta da sola non sa rispondere:
+ * «Koyomimonogatari» e «Zoku Owarimonogatari» sono titoli che non
+ * dicono niente a chi non ha già visto la serie, e spuntarli alla
+ * cieca vuol dire riempire la videoteca di roba da scoprire dopo.
+ *
+ * La pagina delle relazioni la trama **non** ce l'ha: sta solo sulla
+ * scheda, una richiesta a testa. Per questo si legge una parte per
+ * volta, quando la si chiede, e non tutte insieme all'apertura del
+ * pannello — sedici schede sarebbero sedici richieste per una trama
+ * che magari nessuno guarda.
+ */
+const anteprime = new Map();
+const DURATA_ANTEPRIMA = 10 * 60 * 1000;
+
+async function anteprima(animeclickId, opzioni = {}) {
+  const chiave = Number(animeclickId);
+  const ricordata = anteprime.get(chiave);
+
+  if (ricordata && Date.now() - ricordata.quando < DURATA_ANTEPRIMA) return ricordata.esito;
+
+  const scheda = await ac.scheda(chiave, opzioni);
+
+  const esito = {
+    animeclick_id: chiave,
+    titolo: scheda.titolo,
+    titolo_originale: scheda.titolo_originale,
+    tipo: scheda.tipo,
+    anno_inizio: scheda.anno_inizio,
+    episodi_dichiarati: scheda.episodi_dichiarati,
+    stato_italia: scheda.stato_italia,
+    generi: scheda.generi,
+    distributori: scheda.distributori,
+    trama: scheda.trama,
+    cover_url: scheda.cover_url
+  };
+
+  anteprime.delete(chiave);
+  anteprime.set(chiave, { esito, quando: Date.now() });
+
+  while (anteprime.size > QUANTE) anteprime.delete(anteprime.keys().next().value);
+
+  return esito;
+}
+
 module.exports = {
   esplora: esploraConMemoria,
+  anteprima,
   // Senza memoria e senza rete, per le prove: sono le regole di lettura
   // di una pagina altrui, ed è lì che si sbaglia.
   senzaMemoria: esplora,
