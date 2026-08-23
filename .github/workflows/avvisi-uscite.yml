@@ -1,0 +1,58 @@
+name: Avvisi uscite
+
+# «È appena uscita Frieren 14 su Crunchyroll».
+#
+# Gira ogni mezz'ora e chiede al backend cosa è uscito nell'ULTIMA ORA
+# E MEZZA — non "in questo momento". Il motivo è qui sotto ed è la cosa
+# da capire prima di toccare gli orari:
+#
+#   Il cron di GitHub Actions non è puntuale. Parte quando i runner
+#   condivisi sono liberi: cinque, dieci, venti minuti di ritardo sono
+#   normali, e negli orari di punta (in cima all'ora, soprattutto) un
+#   giro può saltare del tutto. Non è un guasto, è come funziona il
+#   piano gratuito, ed è per questo che l'avviso è "entro la mezz'ora"
+#   e non "alle 17 in punto".
+#
+# Da lì tutto il resto: la finestra larga perché un giro saltato non
+# perda la puntata, e la tabella `avvisi_uscite` perché i tre giri che
+# vedono la stessa puntata non la annuncino tre volte.
+#
+# Di notte gli avvisi partono lo stesso ma silenziosi (lo decide il
+# backend, non questo file): la puntata dell'una di notte esiste, la
+# suoneria a quell'ora no.
+#
+# Costo: zero. Actions è illimitato sui repository pubblici, e queste
+# chiamate tengono sveglio Render invece di lasciarlo addormentare —
+# il che vuol dire anche che il sito si apre subito a chiunque passi.
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      prova:
+        description: "A vuoto: dice cosa manderebbe senza mandarlo"
+        type: boolean
+        default: false
+
+jobs:
+  avvisi:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chiama il backend
+        run: |
+          risposta=$(curl -sS -w "\n%{http_code}" -X POST \
+            --max-time 120 \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{"tipo": "uscita", "prova": ${{ inputs.prova || false }}}' \
+            "https://mangavault10x-api.onrender.com/api/anime/uscite/avvisa")
+
+          corpo=$(echo "$risposta" | head -n -1)
+          codice=$(echo "$risposta" | tail -n 1)
+
+          echo "$corpo"
+
+          if [ "$codice" != "200" ]; then
+            echo "HTTP $codice"
+            exit 1
+          fi

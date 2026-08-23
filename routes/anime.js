@@ -7,6 +7,7 @@ const { utenteLetto, utenteScrive } = require("../services/utenti");
 const ac = require("../services/providers/animeclickAnime");
 const videoteca = require("../services/videoteca");
 const franchise = require("../services/franchise");
+const avvisi = require("../services/avvisi");
 
 // --------------------------------------------------
 // LA VIDEOTECA
@@ -318,16 +319,31 @@ router.get("/anteprima/:animeclickId", requireAuth, async (req, res) => {
 });
 
 /**
- * GET /api/anime/calendario — cosa esce nei prossimi giorni.
+ * GET /api/anime/calendario — cosa esce, e cosa è appena uscito.
  *
  * Legge dal nostro database, non da AnimeClick: le date le porta il
  * lavoro schedulato. Una pagina che si apre non deve dipendere da un
  * sito altrui.
+ *
+ * `indietro` è la finestra all'indietro, in giorni. Serve alla
+ * domanda "mi è sfuggito qualcosa?", che uno si fa aprendo un
+ * calendario quanto "cosa esce stasera".
+ *
+ * Il taglio è la MEZZANOTTE ITALIANA di quel giorno, non l'istante di
+ * adesso meno quattordici giorni: "due settimane fa" per una persona
+ * è un giorno intero, e col taglio all'ora esatta la puntata delle 17
+ * di quattordici giorni fa sparirebbe a metà pomeriggio mentre le sue
+ * vicine dello stesso giorno restano lì.
  */
 router.get("/calendario", async (req, res) => {
   try {
     const utenteId = await utenteLetto(req);
     const giorni = Math.min(Math.max(Number(req.query.giorni) || 14, 1), 60);
+
+    // Non `|| 14`: quello scriverebbe 14 anche su `indietro=0`, che è
+    // la richiesta legittima di "solo da qui in avanti".
+    const chiesti = Number(req.query.indietro);
+    const indietro = Math.min(Math.max(Number.isFinite(chiesti) ? chiesti : 14, 0), 60);
 
     const { rows } = await pool.query(
       `
@@ -342,11 +358,14 @@ router.get("/calendario", async (req, res) => {
       JOIN anime a ON a.id = e.anime_id
       JOIN visioni vis ON vis.anime_id = a.id AND vis.utente_id = $1
       WHERE e.uscita_italia IS NOT NULL
-        AND e.uscita_italia >= NOW() - interval '12 hours'
+        AND e.uscita_italia >= (
+              date_trunc('day', NOW() AT TIME ZONE 'Europe/Rome')
+                - ($3 || ' days')::interval
+            ) AT TIME ZONE 'Europe/Rome'
         AND e.uscita_italia <= NOW() + ($2 || ' days')::interval
       ORDER BY e.uscita_italia
       `,
-      [utenteId, String(giorni)]
+      [utenteId, String(giorni), String(indietro)]
     );
 
     return res.json(rows);
@@ -1298,10 +1317,37 @@ function richiedeSegretoCron(req, res, next) {
  * Legge il calendario italiano di AnimeClick e scrive le date sugli
  * episodi delle serie che abbiamo. Con `{"scrivi": false}` dice solo
  * cosa farebbe: serve a provarlo senza toccare niente.
+ *
+ * Tre pagine, in quest'ordine: il mese scorso, da oggi a fine mese,
+ * il mese prossimo. Le date passate contano perché il calendario
+ * mostra anche le due settimane appena trascorse ("mi è sfuggito
+ * qualcosa?"), e perché il passato di solito ce l'abbiamo già solo se
+ * quel giorno il giro è girato: `prev-month` è la RIPARAZIONE dei
+ * giorni in cui non è girato, e l'unico modo per avere il passato di
+ * una serie aggiunta oggi.
+ *
+ * L'ordine non è casuale: la scrittura è un UPSERT, e l'ultimo che
+ * passa vince. Le pagine più fresche vanno per ultime.
  */
 router.post("/calendario/aggiorna", richiedeSegretoCron, async (req, res) => {
   try {
     const scrivi = req.body?.scrivi !== false;
+
+    // ⚠️ Verificato il 23/08/2026: la pagina del mese corrente parte
+    // da OGGI, non dal primo del mese. I giorni già passati di questo
+    // mese si recuperano solo quando `prev-month` diventa questo mese,
+    // cioè il primo del mese prossimo. Non è un buco che si può
+    // chiudere: AnimeClick non ha un indirizzo per quei giorni.
+    //
+    // Un intoppo qui non deve costare le date di oggi, che sono la
+    // ragione per cui il giro esiste: si annota e si tira dritto.
+    let prima = { lette: 0, riconosciute: 0, scritte: 0 };
+
+    try {
+      prima = await videoteca.aggiornaCalendario(pool, { quando: "prev-month", scrivi });
+    } catch (err) {
+      console.warn("📺 Calendario: il mese scorso non si è letto —", err.message);
+    }
 
     const oggi = await videoteca.aggiornaCalendario(pool, { scrivi });
 
@@ -1311,12 +1357,13 @@ router.post("/calendario/aggiorna", richiedeSegretoCron, async (req, res) => {
     // `next-month` e non `next-week`: verificato il 21/08/2026 che
     // `?paging=next-week` risponde 500 sul loro server, sia da browser
     // sia da qui. Non è colpa nostra e non c'è niente da riprovare.
+    // (Stessa storia per `prev-week`, riprovato il 23/08/2026: 500.)
     const dopo = await videoteca.aggiornaCalendario(pool, { quando: "next-month", scrivi });
 
     const esito = {
-      lette: oggi.lette + dopo.lette,
-      riconosciute: oggi.riconosciute + dopo.riconosciute,
-      scritte: oggi.scritte + dopo.scritte
+      lette: prima.lette + oggi.lette + dopo.lette,
+      riconosciute: prima.riconosciute + oggi.riconosciute + dopo.riconosciute,
+      scritte: prima.scritte + oggi.scritte + dopo.scritte
     };
 
     console.log(
@@ -1345,6 +1392,41 @@ router.post("/serie/aggiorna", richiedeSegretoCron, async (req, res) => {
   } catch (err) {
     console.error("ANIME SERIE CRON ERROR:", err);
     return res.status(502).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/anime/uscite/avvisa — il bot delle uscite.
+ *
+ * Chiamata da GitHub Actions come il calendario, e come quella
+ * protetta dal solo `CRON_SECRET`: da qui non si legge niente di
+ * personale, si manda soltanto — ma si manda a delle persone, ed è
+ * il genere di rotta che non deve poter chiamare un passante.
+ *
+ *   {"tipo": "uscita"}   quello che è uscito nell'ultima ora e mezza
+ *   {"tipo": "mattina"}  cosa esce oggi, in un messaggio solo
+ *   {"prova": true}      dice cosa manderebbe senza mandarlo
+ *
+ * Risponde 200 anche quando non c'è niente da mandare: non avere
+ * nulla da dire è il caso normale, non un guasto. Fallisce solo se
+ * il token non è configurato — quello sì, va visto subito.
+ */
+router.post("/uscite/avvisa", richiedeSegretoCron, async (req, res) => {
+  try {
+    const tipo = req.body?.tipo === "mattina" ? "mattina" : "uscita";
+    const prova = req.body?.prova === true;
+
+    const esito = await avvisi.avvisa(pool, { tipo, prova });
+
+    console.log(
+      `📺 Avvisi (${tipo}${prova ? ", a vuoto" : ""}): ${esito.inviati} messaggi a ${esito.persone} ` +
+        `persone su ${esito.trovate} puntate` + (esito.falliti ? ` — ${esito.falliti} falliti` : "")
+    );
+
+    return res.json({ success: true, ...esito });
+  } catch (err) {
+    console.error("ANIME AVVISI ERROR:", err);
+    return res.status(500).json({ error: err.message });
   }
 });
 

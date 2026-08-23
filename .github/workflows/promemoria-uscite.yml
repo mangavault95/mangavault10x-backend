@@ -1,0 +1,48 @@
+name: Promemoria uscite
+
+# «Oggi escono tre puntate: alle 17 Frieren su Crunchyroll, alle 18:30…»
+#
+# Un messaggio solo, la mattina. È l'avviso che si legge davvero: alle
+# otto uno sa già com'è fatta la sua serata, mentre quello a puntata
+# uscita arriva quando la giornata è già in corso.
+#
+# Alle 6:30 UTC — mezz'ora dopo il giro del calendario, che è alle 6:00.
+# L'ordine conta: il promemoria racconta quello che il calendario ha
+# appena scritto, e invertirli vorrebbe dire raccontare ieri.
+#
+# Non c'è nessuna finestra di recupero e non serve: se questo giro
+# salta, salta il promemoria di oggi — e le puntate le annuncia
+# comunque l'altro lavoro quando escono. Ripeterlo più tardi sarebbe
+# un secondo «buongiorno» a mezzogiorno.
+on:
+  schedule:
+    - cron: "30 6 * * *"
+  workflow_dispatch:
+    inputs:
+      prova:
+        description: "A vuoto: dice cosa manderebbe senza mandarlo"
+        type: boolean
+        default: false
+
+jobs:
+  promemoria:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chiama il backend
+        run: |
+          risposta=$(curl -sS -w "\n%{http_code}" -X POST \
+            --max-time 120 \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{"tipo": "mattina", "prova": ${{ inputs.prova || false }}}' \
+            "https://mangavault10x-api.onrender.com/api/anime/uscite/avvisa")
+
+          corpo=$(echo "$risposta" | head -n -1)
+          codice=$(echo "$risposta" | tail -n 1)
+
+          echo "$corpo"
+
+          if [ "$codice" != "200" ]; then
+            echo "HTTP $codice"
+            exit 1
+          fi
