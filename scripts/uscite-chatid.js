@@ -1,15 +1,18 @@
 /**
  * Collega una persona al bot delle uscite (@Videoteca10xBot).
  *
- * PERCHÉ SERVE UNA COSA A MANO. Un bot di Telegram non può scrivere
- * per primo a nessuno: finché una persona non gli ha parlato, mandarle
- * un messaggio risponde «bot can't initiate conversation with a user».
- * Quindi il giro è: la persona apre il bot e preme Start, noi leggiamo
- * il suo identificativo di chat e lo scriviamo sulla sua riga.
+ * ⚠️ DI SOLITO NON SERVE PIÙ. Adesso il collegamento lo fa il bot da
+ * sé: si preme /start, compaiono i nomi del sito e ognuno tocca il
+ * suo (`mangavault10x-bot/api/uscite.js`). Questo script resta per i
+ * casi che il bot non copre — riprendersi un nome dopo un cambio di
+ * telefono, scollegare qualcuno, mandare una prova.
  *
- * Si fa una volta per persona e mai più. Con tre lettori, un pannello
- * apposta nella Gestione sarebbe più codice da mantenere che tempo
- * risparmiato.
+ * ⚠️ E l'elenco «chi ha scritto al bot» NON funziona più da quando il
+ * webhook è registrato: Telegram consegna gli aggiornamenti a un
+ * indirizzo solo, e `getUpdates` da qui torna vuoto. Non è rotto — è
+ * il segno che l'altra strada è accesa. Per vederli comunque bisogna
+ * staccare il webhook (`npm run webhook -- --togli --uscite` nel repo
+ * del bot), e ricordarsi di rimetterlo.
  *
  * USO
  *   node scripts/uscite-chatid.js
