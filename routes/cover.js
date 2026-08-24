@@ -77,7 +77,10 @@ function tipoDaiByte(b) {
   return null;
 }
 
-const DIMENSIONE_MASSIMA = 6 * 1024 * 1024; // 6 MB
+// 6 MB si è rivelato troppo poco: la copertina PNG di Dandadan su
+// AnimeClick pesa 6,52 MB (non è ridimensionata dalla fonte) e finiva
+// scartata con un 413 — in videoteca sembrava un'immagine mancante.
+const DIMENSIONE_MASSIMA = 10 * 1024 * 1024; // 10 MB
 
 function indirizzoValido(grezzo) {
   let url;
