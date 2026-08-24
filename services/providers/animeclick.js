@@ -651,9 +651,30 @@ async function opereDiAutore(nome, { fetchImpl = fetch } = {}) {
  * comincia la scheda successiva: si taglia lì, perché la stessa pagina
  * contiene anche "Ultima uscita" e le news, piene di altri link a
  * /manga/ che non c'entrano niente.
+ *
+ * Vale per i fumetti e per gli anime — `tipo` cambia l'indirizzo e il
+ * prefisso dei link da riconoscere, il pannello è lo stesso. Attenzione
+ * però a cosa aspettarsi: sui manga i consigli sono tanti e vecchi di
+ * anni (Berserk ne ha 166), sugli anime sono pochi e magri (Dandadan:
+ * nove, il più segnalato da due persone). Chi chiama non deve trattarli
+ * come fonti di pari peso.
+ *
+ * ⚠️ IL MARKUP È CAMBIATO SOTTO I PIEDI, e il modo in cui si è rotto
+ * vale più della correzione: da `<div class="media media-opera">` con
+ * `media-heading` (Bootstrap 4) a `<div class="d-flex media-opera">`
+ * con `mo-heading` (Bootstrap 5). Nessun errore, nessun 404 — la pagina
+ * rispondeva 200, il pannello c'era, e semplicemente non si riconosceva
+ * più un solo riquadro. La metà italiana di "Titoli simili" è rimasta
+ * vuota per mesi senza una riga in console: leggevamo zero consigli da
+ * una pagina che ne conteneva 166. Perciò adesso si riconoscono
+ * tutt'e due le forme — tenere quella vecchia non costa niente, e il
+ * giorno che tornano indietro non ce ne accorgiamo nemmeno.
  */
-async function consigli(animeClickId, { quanti = 12, fetchImpl = fetch } = {}) {
-  const risposta = await prendi(`${BASE}/manga/${animeClickId}/-/consigli`, {}, fetchImpl);
+async function consigli(
+  animeClickId,
+  { quanti = 12, tipo = "manga", fetchImpl = fetch } = {}
+) {
+  const risposta = await prendi(`${BASE}/${tipo}/${animeClickId}/-/consigli`, {}, fetchImpl);
   const html = await risposta.text();
 
   const inizio = html.indexOf('id="consigli"');
@@ -666,13 +687,14 @@ async function consigli(animeClickId, { quanti = 12, fetchImpl = fetch } = {}) {
   if (fine > 0) pannello = pannello.slice(0, fine);
 
   const trovati = [];
+  const collegamento = new RegExp(`href="/${tipo}/(\\d+)/([^"]*)"`, "i");
 
-  for (const blocco of pannello.split("media media-opera").slice(1)) {
+  for (const blocco of pannello.split(/\bmedia-opera\b/).slice(1)) {
     // Lo slug non è fatto solo di lettere e trattini — "kaiju-no.8" ha
     // un punto — e l'espressione più stretta faceva sparire in silenzio
     // proprio la serie madre, lasciando in lista i suoi spin-off.
-    const link = blocco.match(/href="\/manga\/(\d+)\/([^"]*)"/i);
-    const titolo = blocco.match(/media-heading[^>]*>([\s\S]*?)<\/h5>/i);
+    const link = blocco.match(collegamento);
+    const titolo = blocco.match(/(?:media|mo)-heading[^>]*>([\s\S]*?)<\/h5>/i);
 
     if (!link || !titolo) continue;
 
@@ -686,7 +708,7 @@ async function consigli(animeClickId, { quanti = 12, fetchImpl = fetch } = {}) {
     trovati.push({
       id: Number(link[1]),
       titolo: nome,
-      url: `${BASE}/manga/${link[1]}/${link[2] || "-"}`,
+      url: `${BASE}/${tipo}/${link[1]}/${link[2] || "-"}`,
       // Le miniature sono indirizzi relativi al sito, e il ponte delle
       // copertine sa scaricare solo indirizzi interi.
       copertina: copertina ? new URL(copertina[1], BASE).href : null,

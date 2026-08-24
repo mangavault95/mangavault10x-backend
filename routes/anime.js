@@ -1,5 +1,6 @@
 const express = require("express");
 const crypto = require("crypto");
+const NodeCache = require("node-cache");
 const router = express.Router();
 const pool = require("../db");
 const { requireAuth } = require("../services/auth");
@@ -8,6 +9,7 @@ const ac = require("../services/providers/animeclickAnime");
 const videoteca = require("../services/videoteca");
 const franchise = require("../services/franchise");
 const avvisi = require("../services/avvisi");
+const simili = require("../services/similiAnime");
 
 // --------------------------------------------------
 // LA VIDEOTECA
@@ -515,6 +517,99 @@ router.get("/:id", async (req, res) => {
   } catch (err) {
     console.error("ANIME SCHEDA ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+/**
+ * GET /api/anime/:id/simili — «se ti è piaciuto questo».
+ *
+ * Sta in una rotta sua e non dentro la scheda, per una ragione di
+ * tempi: la scheda è tutta roba nostra e risponde in millisecondi,
+ * questa interroga due siti esterni e ci mette qualche secondo. Messe
+ * insieme, ogni apertura di un anime aspetterebbe AnimeClick per
+ * mostrare le puntate. Divise, la pagina si disegna subito e i consigli
+ * arrivano quando arrivano — che è anche il punto in cui stanno, in
+ * fondo a tutto.
+ *
+ * Si legge senza token come la scheda: chi non è entrato vede i
+ * consigli calcolati sulla videoteca del proprietario, che è la stessa
+ * regola di `utenteLetto` in tutto il resto del file.
+ *
+ * La cache è per lettore, e deve esserlo: i due mucchi («da scoprire» e
+ * «riprendile») dipendono da chi ha visto cosa, e una cache in comune
+ * mostrerebbe a uno le serie lasciate a metà dall'altro. Mezz'ora
+ * perché le fonti non cambiano di ora in ora ma le spunte sì — dopo
+ * aver finito una serie, l'attesa peggiore per vederla sparire dai
+ * consigli è quella.
+ */
+const cacheSimili = new NodeCache({ stdTTL: 30 * 60, maxKeys: 400 });
+
+router.get("/:id/simili", async (req, res) => {
+  try {
+    const utenteId = await utenteLetto(req);
+    const id = Number(req.params.id);
+
+    if (!Number.isInteger(id)) {
+      return res.status(400).json({ error: "Id non valido" });
+    }
+
+    const chiave = `simili:${id}:${utenteId}`;
+    const inCache = cacheSimili.get(chiave);
+
+    if (inCache) return res.json(inCache);
+
+    const { rows } = await pool.query(
+      `SELECT id, titolo, titolo_originale, titolo_inglese, animeclick_id, anilist_id, gruppo_id
+       FROM anime WHERE id = $1`,
+      [id]
+    );
+
+    if (!rows.length) return res.status(404).json({ error: "Anime non trovato" });
+
+    // Tutto il catalogo con lo stato di chi guarda: serve a riconoscere
+    // quali consigli sono già in casa, e a dire a che punto erano
+    // rimasti. Sono un paio di centinaia di righe strette — una query
+    // sola, contro una per ogni consiglio da riconoscere.
+    const { rows: catalogo } = await pool.query(
+      `
+      SELECT a.id, a.titolo, a.titolo_originale, a.titolo_inglese,
+             a.animeclick_id, a.anilist_id, a.gruppo_id, a.cover_url,
+             v.episodi_disponibili,
+             (SELECT vi.stato FROM visioni vi
+               WHERE vi.anime_id = a.id AND vi.utente_id = $1)    AS stato_visione,
+             (SELECT MAX(ev.numero) FROM episodi_visti ev
+               WHERE ev.anime_id = a.id AND ev.utente_id = $1)    AS ultimo_visto
+      FROM anime a
+      JOIN v_videoteca v ON v.id = a.id
+      `,
+      [utenteId]
+    );
+
+    const risposta = await simili.similiDi(rows[0], { catalogo });
+
+    // Un risultato vuoto perché le fonti non hanno risposto non va
+    // ricordato per mezz'ora: la prossima apertura riprova.
+    if (risposta.fonti.anilist || risposta.fonti.animeclick) {
+      try {
+        cacheSimili.set(chiave, risposta);
+      } catch {
+        /* cache piena: si risponde comunque */
+      }
+    }
+
+    return res.json(risposta);
+  } catch (err) {
+    console.error("ANIME SIMILI ERROR:", err);
+
+    // Un di più che non arriva non è un guasto del sito: la sezione
+    // sparisce e il resto della scheda non se ne accorge.
+    return res.json({
+      temi: [],
+      daScoprire: [],
+      riprendile: [],
+      gia_viste: 0,
+      fonti: { anilist: false, animeclick: false }
+    });
   }
 });
 

@@ -1,9 +1,32 @@
-// AniList, lato anime — una cosa sola: dove finisce una stagione.
+// AniList, lato anime — due mestieri, e il secondo è arrivato dopo.
+//
+//   1. DOVE FINISCE UNA STAGIONE. Il mestiere originale, e per mesi
+//      l'unico. Si prendono dei NUMERI, che non hanno lingua.
+//   2. CHI ASSOMIGLIA A CHI. Le raccomandazioni votate dagli utenti:
+//      «se ti è piaciuto questo, guarda quest'altro».
 //
 // Il resto della Videoteca sta in italiano e viene da AnimeClick (vedi
-// `animeclickAnime.js`): titoli, trame, generi, orari di uscita. Qui
-// non si prende nessun testo — si prendono dei NUMERI, che non hanno
-// lingua.
+// `animeclickAnime.js`): titoli, trame, generi, orari di uscita.
+//
+// ⚠️ Il secondo mestiere incrina la regola del primo, e va detto invece
+// che nascosto: le raccomandazioni arrivano con dei TESTI inglesi
+// (titoli e temi). La regola resta salva dove conta davvero — niente di
+// tutto questo entra nel database, e a schermo i titoli si mostrano in
+// italiano quando la serie è già in catalogo o AnimeClick la conosce,
+// mentre i temi passano da un vocabolario scritto a mano
+// (`services/temiItaliani.js`) e quelli che non sappiamo tradurre non
+// si mostrano affatto. Un consiglio calcolato al volo e buttato dopo
+// dieci minuti di cache non è la stessa cosa di una trama scritta in
+// tabella per sempre.
+//
+// Perché per gli anime AniList è la fonte FORTE e non la scorta,
+// all'incontrario di tutto il resto della Videoteca — misurato su
+// Dandadan il 24/08/2026: AniList accosta Mob Psycho 100 con 539 voti,
+// Chainsaw Man con 378, FLCL con 212; AnimeClick, sulla stessa serie,
+// dà Zom 100 segnalato da DUE persone e quattro schede dei Cavalieri
+// dello Zodiaco. Sui fumetti il rapporto è rovesciato (Berserk ha 166
+// consigli italiani), ed è il motivo per cui le due sezioni gemelle
+// pesano le fonti in modo diverso.
 //
 // Il motivo è la discordanza annotata fin dalla 013: AnimeClick conta
 // 38 episodi di Frieren, AniList 28. Non sbaglia nessuno dei due —
@@ -282,4 +305,191 @@ async function tagliDiScheda(
   return null;
 }
 
-module.exports = { catenaDaMedia, tagliDa, torna, tagliDiScheda };
+// --------------------------------------------------
+// Secondo mestiere: chi assomiglia a chi
+// --------------------------------------------------
+
+/**
+ * I campi di un'opera consigliata.
+ *
+ * `tags` porta anche il RANGO (0-100), che è quanto quel tema pesa
+ * sull'opera secondo chi ha votato. Senza il rango i temi sarebbero
+ * un elenco piatto in cui «Urban Fantasy» conta come «Acrobatics», e
+ * il motivo scritto sulla carta finirebbe per citare il dettaglio
+ * invece della sostanza.
+ *
+ * `isGeneralSpoiler`/`isMediaSpoiler` esistono perché certi temi
+ * raccontano il finale: su Dandadan «Tragedy» è marcato spoiler. Un
+ * consiglio che rovina una serie che non hai ancora visto è peggio di
+ * nessun consiglio, quindi quelli si buttano e non si mostrano mai.
+ */
+const OPERA_CONSIGLIATA = `
+  id
+  title { romaji english native }
+  format
+  episodes
+  averageScore
+  startDate { year }
+  # ⚠️ I nomi di AniList sono sfalsati di un gradino, verificato il
+  # 24/08/2026: «extraLarge» serve il file sotto /cover/large/, mentre
+  # «large» serve quello sotto /cover/medium/. In una carta 3:4 la
+  # differenza si vede, quindi si chiede il primo — e il secondo resta
+  # come ripiego per le schede che non ce l'hanno.
+  coverImage { extraLarge large }
+  tags { name rank isGeneralSpoiler isMediaSpoiler }
+`;
+
+// Una richiesta sola porta a casa tutto: l'opera di partenza coi suoi
+// temi, le opere accostate, i voti dell'accostamento e i temi di
+// ciascuna. Verificato il 24/08/2026 — 17,5 kB per sei consigli, sotto
+// i 40 kB per quattordici. Il conto è quello che rende questa sezione
+// possibile: senza i temi in linea servirebbe una richiesta per ogni
+// consiglio, cioè quattordici richieste su un limite di novanta al
+// minuto, e la pagina di un anime da sola mangerebbe un sesto del
+// budget.
+const RACCOMANDAZIONI = `
+  query ($id: Int, $quanti: Int) {
+    Media(id: $id, type: ANIME) {
+      id
+      title { romaji english native }
+      tags { name rank isGeneralSpoiler isMediaSpoiler }
+      recommendations(sort: RATING_DESC, perPage: $quanti) {
+        nodes {
+          rating
+          mediaRecommendation { ${OPERA_CONSIGLIATA} }
+        }
+      }
+    }
+  }
+`;
+
+const RACCOMANDAZIONI_PER_TITOLO = `
+  query ($search: String, $quanti: Int) {
+    Page(perPage: 5) {
+      media(search: $search, type: ANIME) {
+        id
+        title { romaji english native }
+        format
+        episodes
+        tags { name rank isGeneralSpoiler isMediaSpoiler }
+        recommendations(sort: RATING_DESC, perPage: $quanti) {
+          nodes {
+            rating
+            mediaRecommendation { ${OPERA_CONSIGLIATA} }
+          }
+        }
+      }
+    }
+  }
+`;
+
+/** I temi mostrabili: niente spoiler, niente dettagli di contorno. */
+function temiDi(media, { rangoMinimo = 50 } = {}) {
+  return (media?.tags || [])
+    .filter((t) => t && !t.isGeneralSpoiler && !t.isMediaSpoiler)
+    .filter((t) => (t.rank ?? 0) >= rangoMinimo)
+    .sort((a, b) => (b.rank ?? 0) - (a.rank ?? 0))
+    .map((t) => ({ nome: t.name, rango: t.rank ?? 0 }));
+}
+
+function opereDa(media) {
+  return (media?.recommendations?.nodes || [])
+    .filter((n) => n?.mediaRecommendation?.id)
+    .map((n) => {
+      const m = n.mediaRecommendation;
+
+      return {
+        anilistId: m.id,
+        // Tutti e tre i titoli, perché servono a due cose diverse:
+        // mostrare (l'inglese è il più leggibile) e RICONOSCERE se
+        // l'opera è già in videoteca, dove il romaji e il nativo
+        // pescano le schede che l'inglese non aggancia.
+        titoli: {
+          romaji: m.title?.romaji || null,
+          inglese: m.title?.english || null,
+          nativo: m.title?.native || null
+        },
+        formato: m.format || null,
+        episodi: m.episodes ?? null,
+        anno: m.startDate?.year ?? null,
+        // AniList dà 0-100, la videoteca ragiona in cinquantesimi di
+        // stella: la conversione la fa chi mostra, qui resta il numero
+        // della fonte.
+        voto: m.averageScore ?? null,
+        copertina: m.coverImage?.extraLarge || m.coverImage?.large || null,
+        temi: temiDi(m),
+        // Quante persone hanno votato QUESTO accostamento. È il segnale
+        // vero della sezione: non «quanto è bella quest'opera» ma
+        // «quanto è giusto accostarla a quella che stai guardando».
+        voti: Number(n.rating) || 0
+      };
+    })
+    // AniList tiene anche gli accostamenti bocciati, con rating
+    // negativo: sono opere che qualcuno ha proposto e gli altri hanno
+    // votato contro. Tenerle sarebbe prendere per consiglio il suo
+    // contrario.
+    .filter((o) => o.voti > 0);
+}
+
+/**
+ * Le opere che i votanti di AniList accostano a questa.
+ *
+ * `anilistId` quando c'è si usa e basta: è già stato verificato col
+ * conto delle puntate quando si sono tagliate le stagioni (vedi
+ * `tagliDiScheda`), quindi è la corrispondenza più solida che abbiamo e
+ * cercare per titolo sarebbe solo un modo di sbagliare.
+ *
+ * Senza, si cerca per titolo con la stessa prudenza del resto del file:
+ * fra i candidati vince quello che somiglia di più, con le serie TV
+ * davanti — e se nessuno somiglia per davvero non si torna il primo
+ * della lista, si torna niente. Consigliare le opere accostate a
+ * un'altra serie è peggio che non consigliare nulla, ed è esattamente
+ * come sbaglia la ricerca di AniList: «Sōsō no Frieren» risponde per
+ * prima la serie di corti.
+ */
+async function raccomandazioni(
+  { anilistId = null, titoli = [] },
+  { quanti = 14, fetchImpl = fetch } = {}
+) {
+  if (anilistId) {
+    const media = await chiedi(RACCOMANDAZIONI, { id: anilistId, quanti }, fetchImpl);
+
+    if (media) {
+      return { anilistId: media.id, temi: temiDi(media), opere: opereDa(media) };
+    }
+  }
+
+  for (const forma of titoli.filter(Boolean)) {
+    const candidati = (await chiedi(RACCOMANDAZIONI_PER_TITOLO, { search: forma, quanti }, fetchImpl)) || [];
+    const cercato = normalizza(forma);
+
+    const scelto = candidati
+      .map((m) => {
+        const nomi = titoliDi(m).map(normalizza);
+
+        const somiglianza = nomi.some((n) => n === cercato)
+          ? 3
+          : nomi.some((n) => n.includes(cercato) || cercato.includes(n))
+            ? 1
+            : 0;
+
+        return { media: m, punteggio: somiglianza + (m.format === "TV" ? 1 : 0) };
+      })
+      // Zero somiglianza vuol dire che AniList ha risposto qualcosa,
+      // ma non quello che si cercava: si passa al titolo successivo.
+      .filter((c) => c.punteggio >= 1)
+      .sort((a, b) => b.punteggio - a.punteggio)[0];
+
+    if (scelto) {
+      return {
+        anilistId: scelto.media.id,
+        temi: temiDi(scelto.media),
+        opere: opereDa(scelto.media)
+      };
+    }
+  }
+
+  return { anilistId: null, temi: [], opere: [] };
+}
+
+module.exports = { catenaDaMedia, tagliDa, torna, tagliDiScheda, raccomandazioni, temiDi };
