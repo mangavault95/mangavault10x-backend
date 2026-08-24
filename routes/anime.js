@@ -363,6 +363,10 @@ router.get("/calendario", async (req, res) => {
                 - ($3 || ' days')::interval
             ) AT TIME ZONE 'Europe/Rome'
         AND e.uscita_italia <= NOW() + ($2 || ' days')::interval
+        -- Mollata o in sospeso: una serie a cui hai già detto "non ora"
+        -- (o "non più"), e il calendario non deve continuare a
+        -- ricordartelo insieme a quelle che segui davvero.
+        AND vis.stato NOT IN ('droppata', 'in_pausa')
       ORDER BY e.uscita_italia
       `,
       [utenteId, String(giorni), String(indietro)]
