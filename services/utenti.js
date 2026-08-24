@@ -713,6 +713,59 @@ async function immagineStriscione(id) {
 }
 
 /**
+ * Dove guarda ogni immagine dello striscione: `{ 12: { x: 50, y: 22 } }`.
+ *
+ * Una lettura A PARTE e non due colonne in più dentro `array_agg(s.id)`.
+ * La forma di `aspetto` finisce in tre query diverse — l'elenco
+ * pubblico, ogni post del Cineforum, la pagina personale — e quelle
+ * girano a ogni visita: bastava che Render andasse in aria prima che
+ * la 020 fosse lanciata a mano su Supabase (succede: le migrazioni
+ * qui si eseguono a mano) per spegnere il sito intero. Isolata qui,
+ * quando la colonna non c'è si risponde «tutte al centro» e l'unica
+ * cosa che manca è lo scostamento.
+ */
+async function fuochiStriscione(utenteId) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, fuoco_x, fuoco_y FROM utenti_striscione WHERE utente_id = $1`,
+      [Number(utenteId)]
+    );
+
+    const per = {};
+
+    for (const r of rows) {
+      per[Number(r.id)] = { x: Number(r.fuoco_x), y: Number(r.fuoco_y) };
+    }
+
+    return per;
+  } catch (err) {
+    // 42703 = colonna che non c'è, 42P01 = tabella che non c'è.
+    if (err.code === "42703" || err.code === "42P01") return {};
+
+    throw err;
+  }
+}
+
+/**
+ * Sposta un'immagine dentro la sua fascia.
+ *
+ * Il `WHERE utente_id` non è una precauzione di stile: senza,
+ * l'identificativo di un'immagine altrui nell'indirizzo sposterebbe
+ * lo striscione di un altro.
+ */
+async function mettiFuoco(utenteId, immagineId, x, y) {
+  const dentro = (valore) => Math.min(100, Math.max(0, Math.round(Number(valore))));
+
+  const { rowCount } = await pool.query(
+    `UPDATE utenti_striscione SET fuoco_x = $1, fuoco_y = $2
+      WHERE id = $3 AND utente_id = $4`,
+    [dentro(x), dentro(y), Number(immagineId), Number(utenteId)]
+  );
+
+  return rowCount > 0;
+}
+
+/**
  * Riscrive lo striscione per intero.
  *
  * `pezzi` è l'elenco nell'ordine voluto, e ogni voce è o un numero —
@@ -817,5 +870,7 @@ module.exports = {
   mettiFaccia,
   togliFaccia,
   immagineStriscione,
-  mettiStriscione
+  mettiStriscione,
+  fuochiStriscione,
+  mettiFuoco
 };

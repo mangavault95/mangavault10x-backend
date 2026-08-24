@@ -512,11 +512,34 @@ async function schedeDeiMessaggi(pool, ids) {
  * videoteca due numeri diversi a seconda di come AnimeClick ha
  * catalogato le loro serie.
  *
+ * SERIE E FILM SI DIVIDONO PER QUANTE PUNTATE HANNO, non per la
+ * colonna `tipo`. È la richiesta, ed è anche la definizione che
+ * regge: `tipo` viene da AnimeClick e chiama «special» o «ona» cose
+ * che durano un'ora e mezza e si guardano come un film, mentre una
+ * puntata sola è una puntata sola in qualunque catalogo. Quando le
+ * puntate non si sanno — scheda appena aggiunta, elenco non ancora
+ * scaricato — si ricade su `tipo`, che è l'unica cosa che resta.
+ *
  * SULLE ORE: la durata vera dell'episodio quando c'è, altrimenti la
  * media della serie, altrimenti ventiquattro minuti — che è la durata
  * di un episodio televisivo standard senza sigle. Un'ora sbagliata di
  * poco è meglio di un buco.
  */
+
+// Quante puntate ha una scheda: quelle dichiarate, o quelle che
+// abbiamo davvero in elenco. NULL quando non lo sappiamo.
+const QUANTE_PUNTATE = `
+  COALESCE(
+    NULLIF(a.episodi_totali, 0),
+    NULLIF((SELECT COUNT(*)::int FROM anime_episodi e WHERE e.anime_id = a.id), 0)
+  )
+`;
+
+// Un film è una scheda con una puntata sola.
+const E_FILM = `
+  (${QUANTE_PUNTATE} = 1 OR (${QUANTE_PUNTATE} IS NULL AND a.tipo = 'film'))
+`;
+
 async function statistiche(pool, utenteId) {
   const id = Number(utenteId);
 
@@ -524,8 +547,9 @@ async function statistiche(pool, utenteId) {
     pool.query(
       `
       SELECT
-        COUNT(DISTINCT COALESCE('g' || a.gruppo_id, 'a' || a.id))                   AS serie,
-        COUNT(*) FILTER (WHERE a.tipo = 'film')                                     AS film,
+        COUNT(DISTINCT COALESCE('g' || a.gruppo_id, 'a' || a.id))
+          FILTER (WHERE NOT ${E_FILM})                                              AS serie,
+        COUNT(*) FILTER (WHERE ${E_FILM})                                           AS film,
         COUNT(*) FILTER (WHERE vis.stato = 'in_visione')                            AS in_visione,
         COUNT(*) FILTER (WHERE vis.stato = 'completa')                              AS finite,
         COUNT(*) FILTER (WHERE vis.stato = 'da_vedere')                             AS da_vedere,

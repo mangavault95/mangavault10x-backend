@@ -5,6 +5,7 @@ const { requireAuth, identificaUtente } = require("../services/auth");
 const utenti = require("../services/utenti");
 const { utenteScrive, idProprietario } = utenti;
 const cineforum = require("../services/cineforum");
+const campanella = require("../services/campanella");
 
 /**
  * IL CINEFORUM — la piazza della videoteca.
@@ -385,6 +386,55 @@ router.delete("/risposte/:id", requireAuth, async (req, res) => {
 });
 
 /* ==================================================
+   LA CAMPANELLA
+   ================================================== */
+
+/**
+ * GET /api/cineforum/avvisi — cosa è successo che ti riguarda.
+ *
+ * Sotto autenticazione, e non per prudenza: senza sapere chi sei non
+ * c'è proprio niente da calcolare. Chi non è entrato non vede la
+ * campanella affatto.
+ */
+router.get("/avvisi", requireAuth, async (req, res) => {
+  try {
+    // `utenteScrive` e non `utenteLetto`: quello guarda anche
+    // `?utente=` nell'indirizzo, che qui vorrebbe dire leggere gli
+    // avvisi di un altro scrivendone il numero. Gli avvisi li dice
+    // solo il token.
+    const utenteId = await utenteScrive(req);
+
+    return res.json(await campanella.avvisi(pool, utenteId));
+  } catch (err) {
+    // La 020 si esegue a mano su Supabase e Render può arrivare
+    // prima: finché la colonna non c'è, la campanella è spenta invece
+    // che rotta. Vale la stessa scelta del feed.
+    if (err.code === "42P01" || err.code === "42703") {
+      return res.json({ avvisi: [], daLeggere: 0, visti_il: null, daMigrare: true });
+    }
+
+    console.error("CINEFORUM AVVISI ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+/** POST /api/cineforum/avvisi/letti — aprire la campanella spegne il pallino. */
+router.post("/avvisi/letti", requireAuth, async (req, res) => {
+  try {
+    const utenteId = await utenteScrive(req);
+
+    return res.json({ visti_il: await campanella.segnaLetti(pool, utenteId) });
+  } catch (err) {
+    if (err.code === "42P01" || err.code === "42703") {
+      return res.json({ visti_il: null, daMigrare: true });
+    }
+
+    console.error("CINEFORUM AVVISI LETTI ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+/* ==================================================
    LE PAGINE PERSONALI
    ================================================== */
 
@@ -402,10 +452,17 @@ router.get("/profilo/:nickname", async (req, res) => {
 
     if (!riga) return res.status(404).json({ error: "Nessuno con questo nome" });
 
-    return res.json({
-      utente: comePersona(riga),
-      statistiche: await cineforum.statistiche(pool, riga.id)
-    });
+    // I fuochi solo qui: la fascia si vede solo su questa pagina, e
+    // `comePersona` finisce anche dentro ogni post del Cineforum,
+    // dove sarebbero due numeri in più per quindici post che non ne
+    // fanno niente. La lettura non può fallire — vedi
+    // `utenti.fuochiStriscione`.
+    const [statistiche, fuochi] = await Promise.all([
+      cineforum.statistiche(pool, riga.id),
+      utenti.fuochiStriscione(riga.id)
+    ]);
+
+    return res.json({ utente: { ...comePersona(riga), fuochi }, statistiche });
   } catch (err) {
     // 42P01 = tabella che non c'e, 42703 = colonna che non c'e.
     // Sono i due modi in cui questa rotta si rompe fra il codice nuovo

@@ -275,6 +275,47 @@ router.put("/io/striscione", requireAuth, async (req, res) => {
 });
 
 /**
+ * PUT /api/utenti/io/striscione/:id/fuoco — quale pezzo si vede.
+ *
+ * Il corpo è `{ x, y }` in percentuale, come `object-position`: 50 e
+ * 50 è il centro, cioè com'era prima che questa rotta esistesse.
+ *
+ * Una rotta a parte e non un campo dentro il PUT di sopra: quello
+ * riscrive la fascia intera e fa viaggiare le immagini, questo manda
+ * due numeri. Trascinando una foto lo si chiama a ogni rilascio, e
+ * rispedire duecento kilobyte per spostarla di un dito sarebbe
+ * assurdo.
+ */
+router.put("/io/striscione/:id/fuoco", requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const x = Number(req.body?.x);
+    const y = Number(req.body?.y);
+
+    if (!Number.isInteger(id)) return res.status(400).json({ error: "Immagine non valida" });
+
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return res.status(400).json({ error: "Servono due percentuali" });
+    }
+
+    const utenteId = await utenti.utenteScrive(req);
+
+    const fatto = await utenti.mettiFuoco(utenteId, id, x, y);
+
+    if (!fatto) return res.status(404).json({ error: "Immagine non trovata" });
+
+    return res.json({ fuochi: await utenti.fuochiStriscione(utenteId) });
+  } catch (err) {
+    if (err.code === "42703" || err.code === "42P01") {
+      return res.status(503).json({ error: "Migrazione 020 non ancora eseguita" });
+    }
+
+    console.error("❌ FUOCO STRISCIONE ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+/**
  * Chi sono io, secondo il token che ho in mano.
  *
  * Tutto viene dal token tranne `biblioteca`, che si chiede al
