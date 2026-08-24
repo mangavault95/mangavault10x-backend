@@ -82,6 +82,19 @@ const PROVE = [
   ["DELETE", "/api/cineforum/messaggi/9", null, 401, "cancellare senza token"],
   ["POST", "/api/anime/12/preferito", {}, 401, "preferiti senza token"],
 
+  // I consigli. Tutti e tre sotto token, compresa la lettura: una
+  // cartolina ha un destinatario, e senza sapere chi sei non c'è
+  // niente da consegnare.
+  [
+    "POST",
+    "/api/cineforum/consigli",
+    { a: 2, animeclickId: 45427, titolo: "Frieren" },
+    401,
+    "consigliare senza token"
+  ],
+  ["GET", "/api/cineforum/consigli/in-arrivo", null, 401, "la posta senza token"],
+  ["POST", "/api/cineforum/consigli/9/aperto", {}, 401, "aprire senza token"],
+
   ["GET", "/api/utenti/1/faccia", null, 404, "la faccia di chi non ne ha"],
   ["GET", "/api/utenti/striscione/9", null, 404, "un'immagine che non c'è"],
   ["PUT", "/api/utenti/io/faccia", { immagine: "ciao" }, 401, "faccia senza token"],

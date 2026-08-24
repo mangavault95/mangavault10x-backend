@@ -188,20 +188,36 @@ router.get("/cerca", requireAuth, async (req, res) => {
     // il bottone «Aggiungi» deve restare acceso.
     const utenteId = await utenteScrive(req);
 
+    // `?per=<id>` chiede la stessa cosa su una SECONDA persona, e la
+    // usa il pannello dei consigli: la stessa ricerca serve a
+    // «aggiungila alla mia» e a «mandala a lei», e nel secondo caso
+    // la cosa da sapere prima di premere è se ce l'ha già. Senza,
+    // consigliare una serie che l'altro ha finito e votato è l'errore
+    // più facile da fare — e quello che rende inutile la funzione.
+    //
+    // Facoltativo: senza il parametro il confronto è con NULL, che non
+    // è mai vero, e `giaSua` esce falso dappertutto. Chi chiamava
+    // prima non si accorge di niente.
+    const per = numeroValido(req.query.per);
+
     const { rows: gia } = await pool.query(
       `
       SELECT a.animeclick_id, a.id,
              EXISTS (SELECT 1 FROM visioni v
-                      WHERE v.anime_id = a.id AND v.utente_id = $2) AS mia
+                      WHERE v.anime_id = a.id AND v.utente_id = $2) AS mia,
+             EXISTS (SELECT 1 FROM visioni v
+                      WHERE v.anime_id = a.id AND v.utente_id = $3) AS sua
         FROM anime a
        WHERE a.animeclick_id = ANY($1::int[])
       `,
-      [candidati.map((c) => c.id), utenteId]
+      [candidati.map((c) => c.id), utenteId, per]
     );
 
     const mappa = new Map(
       gia.filter((g) => g.mia).map((g) => [Number(g.animeclick_id), Number(g.id)])
     );
+
+    const altrui = new Set(gia.filter((g) => g.sua).map((g) => Number(g.animeclick_id)));
 
     return res.json(
       candidati.map((c) => ({
@@ -212,7 +228,8 @@ router.get("/cerca", requireAuth, async (req, res) => {
         url: c.url,
         punteggio: c.punteggio,
         radice: ac.radiceTitolo(c.titolo),
-        giaInVideoteca: mappa.get(c.id) ?? null
+        giaInVideoteca: mappa.get(c.id) ?? null,
+        giaSua: altrui.has(c.id)
       }))
     );
   } catch (err) {

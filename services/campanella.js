@@ -2,23 +2,30 @@
  * LA CAMPANELLA — cosa è successo che riguarda te.
  *
  * Il Cineforum dice cosa hanno fatto tutti; questa dice cosa hanno
- * fatto A TE. Sono tre cose, e sono le tre che è stato chiesto di
+ * fatto A TE. Sono cinque cose, e sono quelle che è stato chiesto di
  * sapere:
  *
  *   RISPOSTA  qualcuno ha risposto a un tuo post, o a un filo in cui
  *             hai scritto anche tu
  *   CUORE     qualcuno ha messo un cuore a un tuo post
  *   NOTA      qualcuno ha commentato una serie che hai visto anche tu
+ *   CONSIGLIO qualcuno ti ha mandato un anime da guardare
+ *   APERTO    qualcuno ha aperto la cartolina che gli hai mandato
  *
  * ---------------------------------------------------------------
  * NESSUNA TABELLA DI AVVISI
  *
  * Vale parola per parola il ragionamento della 016 sul feed: ogni
  * avviso è già una riga da qualche parte — `cineforum_risposte`,
- * `cineforum_cuori`, `note_anime` — e scriverne una copia altrove
- * vorrebbe dire due verità che possono divergere. Con la copia, chi
- * cancella una risposta lascia in giro l'avviso che la annunciava;
- * senza, sparisce da sé.
+ * `cineforum_cuori`, `note_anime`, `consigli` — e scriverne una copia
+ * altrove vorrebbe dire due verità che possono divergere. Con la
+ * copia, chi cancella una risposta lascia in giro l'avviso che la
+ * annunciava; senza, sparisce da sé.
+ *
+ * Gli ultimi due avvisi vengono dalla STESSA riga di `consigli`, letta
+ * dai due capi: quella riga esiste = te l'hanno mandato, quella riga
+ * ha `aperto_il` = l'hanno letta. Una tabella di notifiche avrebbe
+ * scritto due righe in più per dire quello che una diceva già.
  *
  * Quello che dalle righe non si ricava è una cosa sola — fin dove hai
  * già guardato — e infatti la 020 aggiunge una colonna sola.
@@ -76,6 +83,26 @@ function persona(r) {
 }
 
 /**
+ * Una lettura che può non avere ancora la sua tabella.
+ *
+ * Le migrazioni si eseguono a mano su Supabase e Render può servire il
+ * codice nuovo prima (il 22/08/2026 ci ha messo 35 minuti). In mezzo,
+ * una query sui `consigli` solleva 42P01 — e dentro un `Promise.all`
+ * una sola query caduta porta giù la campanella intera: niente cuori,
+ * niente risposte, niente commenti, per una tabella che riguarda una
+ * riga su venti. Meglio zero avvisi di UN tipo che zero avvisi.
+ */
+async function forse(promessa) {
+  try {
+    return await promessa;
+  } catch (err) {
+    if (err.code === "42P01" || err.code === "42703") return { rows: [] };
+
+    throw err;
+  }
+}
+
+/**
  * Gli avvisi di una persona, dal più recente.
  *
  * `visti_il` è NULL per chi non ha mai aperto la campanella: allora
@@ -91,7 +118,7 @@ async function avvisi(pool, utenteId) {
 
   const visti = chiSono[0]?.avvisi_visti_il ?? null;
 
-  const [risposte, cuori, note] = await Promise.all([
+  const [risposte, cuori, note, consigli, aperti] = await Promise.all([
     // Anche i fili in cui hai scritto tu e non solo i tuoi post: una
     // risposta alla tua risposta è la cosa più simile a «qualcuno ti
     // ha parlato» che ci sia qui dentro, e non arrivava.
@@ -159,6 +186,54 @@ async function avvisi(pool, utenteId) {
        LIMIT $2
       `,
       [id, QUANTI]
+    ),
+
+    // I consigli che ti hanno mandato. La cartolina si apre da sola al
+    // primo accesso, ma l'avviso serve lo stesso: passata quella
+    // volta, «chi mi aveva consigliato cosa?» non avrebbe nessun altro
+    // posto dove stare. Ci sono anche quelli non ancora aperti — sono
+    // arrivati, e il pallino deve dirlo anche a chi non ha ancora
+    // riaperto la videoteca.
+    forse(
+      pool.query(
+        `
+        SELECT c.id, c.titolo, c.testo, c.mandato_il AS quando,
+               an.id AS anime_id, c.cover_url,
+               ${CHI}
+          FROM consigli c
+          JOIN utenti u ON u.id = c.da_utente_id
+          LEFT JOIN anime an ON an.animeclick_id = c.animeclick_id
+         WHERE c.a_utente_id = $1::bigint
+           AND c.mandato_il > NOW() - INTERVAL '${GIORNI} days'
+         ORDER BY c.mandato_il DESC
+         LIMIT $2
+        `,
+        [id, QUANTI]
+      )
+    ),
+
+    // E le cartoline che hai mandato tu, quando sono state aperte:
+    // l'unica domanda che ci si fa dopo aver consigliato qualcosa.
+    // L'istante è `aperto_il` e non `mandato_il`, perché la notizia è
+    // quella — un consiglio mandato tre settimane fa e letto stamattina
+    // è una novità di stamattina.
+    forse(
+      pool.query(
+        `
+        SELECT c.id, c.titolo, c.aperto_il AS quando,
+               an.id AS anime_id, c.cover_url,
+               ${CHI}
+          FROM consigli c
+          JOIN utenti u ON u.id = c.a_utente_id
+          LEFT JOIN anime an ON an.animeclick_id = c.animeclick_id
+         WHERE c.da_utente_id = $1::bigint
+           AND c.aperto_il IS NOT NULL
+           AND c.aperto_il > NOW() - INTERVAL '${GIORNI} days'
+         ORDER BY c.aperto_il DESC
+         LIMIT $2
+        `,
+        [id, QUANTI]
+      )
     )
   ]);
 
@@ -197,6 +272,35 @@ async function avvisi(pool, utenteId) {
       numeroEpisodio: r.numero_episodio,
       anime: {
         id: Number(r.anime_id),
+        titolo: r.titolo,
+        cover_url: r.cover_url
+      }
+    })),
+
+    // `anime.id` può essere NULL: si consiglia anche quello che non è
+    // in catalogo, ed è il caso più interessante. Chi disegna la riga
+    // deve saperlo — senza id non c'è dove portare, e la riga non è un
+    // collegamento.
+    ...consigli.rows.map((r) => ({
+      chiave: `consiglio-${r.id}`,
+      tipo: "consiglio",
+      quando: r.quando,
+      chi: persona(r),
+      testo: r.testo,
+      anime: {
+        id: r.anime_id ? Number(r.anime_id) : null,
+        titolo: r.titolo,
+        cover_url: r.cover_url
+      }
+    })),
+
+    ...aperti.rows.map((r) => ({
+      chiave: `consiglio-aperto-${r.id}`,
+      tipo: "consiglio-aperto",
+      quando: r.quando,
+      chi: persona(r),
+      anime: {
+        id: r.anime_id ? Number(r.anime_id) : null,
         titolo: r.titolo,
         cover_url: r.cover_url
       }

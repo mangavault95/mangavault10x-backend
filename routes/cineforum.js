@@ -6,6 +6,7 @@ const utenti = require("../services/utenti");
 const { utenteScrive, idProprietario } = utenti;
 const cineforum = require("../services/cineforum");
 const campanella = require("../services/campanella");
+const consigli = require("../services/consigli");
 
 /**
  * IL CINEFORUM — la piazza della videoteca.
@@ -430,6 +431,166 @@ router.post("/avvisi/letti", requireAuth, async (req, res) => {
     }
 
     console.error("CINEFORUM AVVISI LETTI ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+/* ==================================================
+   I CONSIGLI
+   ==================================================
+
+   «Guarda questo», detto a una persona sola. Il ragionamento su
+   com'è fatto sta in `services/consigli.js`; qui ci sono le tre cose
+   che si possono fare: mandarne uno, sapere se ne hai in arrivo,
+   dire che l'hai aperto.
+
+   Tutte e tre sotto autenticazione, e non per prudenza: un consiglio
+   ha per definizione un mittente e un destinatario, e senza sapere
+   chi sei non c'è niente da leggere né da scrivere. */
+
+/** Un titolo o una copertina lunghi come un romanzo sono un errore, non un dato. */
+const TITOLO_MAX = 300;
+const INDIRIZZO_MAX = 600;
+
+/**
+ * L'indirizzo della copertina, accettato solo se è un indirizzo.
+ *
+ * Finisce dentro un `<img src>` sulla cartolina di qualcun altro, e
+ * chi lo scrive è un utente. Il ponte delle copertine ha già una
+ * lista di domini ammessi — quindi da qui non si scarica niente di
+ * arbitrario — ma `urlCopertina` lascia passare `data:` e `/` senza
+ * rimbalzarli, e quelli non hanno nessun controllo dietro. Http e
+ * https e basta: è tutto quello che AnimeClick manda.
+ */
+function copertinaValida(grezza) {
+  const url = String(grezza || "").trim();
+
+  if (!url || url.length > INDIRIZZO_MAX) return null;
+  if (!/^https?:\/\//i.test(url)) return null;
+
+  return url;
+}
+
+/**
+ * POST /api/cineforum/consigli — manda una cartolina.
+ *
+ * Il titolo e la copertina arrivano dal browser insieme all'id di
+ * AnimeClick, invece di essere riletti qui dalla fonte. È voluto: chi
+ * manda ha appena visto quella riga nella ricerca, e rileggere la
+ * scheda vorrebbe dire far aspettare AnimeClick a chi preme «manda»
+ * per riscrivere le stesse due stringhe che ha già in mano.
+ * `animeclick_id` resta l'identità vera, e su quella si ritrova la
+ * scheda in catalogo quando c'è.
+ */
+router.post("/consigli", requireAuth, async (req, res) => {
+  try {
+    const daId = await utenteScrive(req);
+
+    const aId = Number(req.body?.a);
+    const animeclickId = Number(req.body?.animeclickId);
+    const titolo = String(req.body?.titolo || "").trim().slice(0, TITOLO_MAX);
+    const testo = String(req.body?.testo || "").trim();
+
+    if (!Number.isInteger(aId) || aId <= 0) {
+      return res.status(400).json({ error: "Manca la persona a cui mandarlo" });
+    }
+
+    if (aId === Number(daId)) {
+      return res.status(400).json({ error: "Non puoi consigliarti qualcosa da solo" });
+    }
+
+    if (!Number.isInteger(animeclickId) || animeclickId <= 0) {
+      return res.status(400).json({ error: "Manca la serie da consigliare" });
+    }
+
+    if (!titolo) return res.status(400).json({ error: "Manca il titolo della serie" });
+
+    if (testo.length > consigli.TESTO_MAX) {
+      return res
+        .status(400)
+        .json({ error: `Il commento supera ${consigli.TESTO_MAX} caratteri` });
+    }
+
+    const consiglio = await consigli.manda(pool, {
+      daId,
+      aId,
+      animeclickId,
+      titolo,
+      coverUrl: copertinaValida(req.body?.coverUrl),
+      testo
+    });
+
+    return res.status(201).json(consiglio);
+  } catch (err) {
+    if (err.stato) return res.status(err.stato).json({ error: err.message });
+
+    if (err.code === "42P01" || err.code === "42703") {
+      return res
+        .status(503)
+        .json({ error: "Il server non ha ancora l'ultima migrazione: riprova fra poco." });
+    }
+
+    console.error("CINEFORUM CONSIGLIO ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+/**
+ * GET /api/cineforum/consigli/in-arrivo — le cartoline non ancora aperte.
+ *
+ * La chiede la cornice a ogni apertura del mondo videoteca, per
+ * mostrare l'animazione a schermo intero. È la ragione dell'indice
+ * parziale della 021: deve costare quanto una lettura di chiave.
+ *
+ * Prima della migrazione risponde con una lista vuota invece che con
+ * un errore — Render può servire il codice nuovo prima che la
+ * migrazione sia girata, e una cartolina che non arriva è un'attesa
+ * mentre un 500 in cima a ogni pagina è un guasto.
+ */
+router.get("/consigli/in-arrivo", requireAuth, async (req, res) => {
+  try {
+    const utenteId = await utenteScrive(req);
+
+    return res.json({ consigli: await consigli.inArrivo(pool, utenteId) });
+  } catch (err) {
+    if (err.code === "42P01" || err.code === "42703") {
+      return res.json({ consigli: [], daMigrare: true });
+    }
+
+    console.error("CINEFORUM CONSIGLI IN ARRIVO ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+/**
+ * POST /api/cineforum/consigli/:id/aperto — «l'ho vista».
+ *
+ * Si chiama quando la cartolina COMPARE, non quando si chiude: chi
+ * spegne il telefono a metà animazione l'ha comunque vista, e
+ * rimostrargliela per sempre sarebbe peggio che darla per letta.
+ *
+ * È anche il momento in cui il mittente riceve il suo avviso, perché
+ * quell'avviso non è una riga ma la stessa riga letta dall'altro capo
+ * (vedi `services/campanella.js`).
+ */
+router.post("/consigli/:id/aperto", requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    if (!Number.isInteger(id)) return res.status(400).json({ error: "Identificativo non valido" });
+
+    const utenteId = await utenteScrive(req);
+
+    // `null` vuol dire «non era tua, o l'avevi già aperta»: nessuna
+    // delle due è un errore da mostrare — la cartolina è comunque
+    // fuori dalla coda, che è quello che il browser voleva sapere.
+    return res.json({ aperto_il: await consigli.apri(pool, id, utenteId) });
+  } catch (err) {
+    if (err.code === "42P01" || err.code === "42703") {
+      return res.json({ aperto_il: null, daMigrare: true });
+    }
+
+    console.error("CINEFORUM CONSIGLIO APERTO ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
   }
 });
