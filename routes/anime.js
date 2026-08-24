@@ -321,6 +321,120 @@ router.get("/anteprima/:animeclickId", requireAuth, async (req, res) => {
 });
 
 /**
+ * GET /api/anime/consiglio/anteprima — cos'è questa serie consigliata?
+ *
+ * Serve al riquadro che si apre toccando un consiglio in fondo alla
+ * scheda di un anime. Prima quel tocco portava su AniList: fuori dal
+ * sito, in inglese, e con la domanda vera («la aggiungo o no?») lasciata
+ * a metà. La trama in italiano ce l'ha AnimeClick, e questa rotta va a
+ * prenderla.
+ *
+ * Il lavoro grosso è TROVARE la scheda. I consigli di AnimeClick
+ * portano già il loro identificativo e allora non si cerca niente;
+ * quelli di AniList hanno solo dei titoli, e vanno cercati.
+ *
+ * ⚠️ Si prova più di un titolo, in ordine, e si tiene il punteggio
+ * migliore: la ricerca di AnimeClick è letterale e il titolo ORIGINALE
+ * funziona molto meglio di quello inglese — «Shoujo Shuumatsu Ryokou»
+ * risponde 100, «Girls' Last Tour» risponde 5. Un punteggio basso però
+ * NON si scarta: cinque vuol dire «nessuna parola in comune, ma
+ * AnimeClick l'ha trovata lo stesso», ed è il caso normale quando le
+ * due fonti chiamano l'opera in due lingue diverse. Si tiene, e il
+ * riquadro mostra il titolo trovato accanto a quello consigliato:
+ * se l'abbinamento è sbagliato si vede a occhio, invece di essere
+ * nascosto da un filtro che avrebbe buttato via anche quelli giusti.
+ *
+ * Chiede il token come le altre rotte che interrogano AnimeClick: è la
+ * stessa cautela di `/cerca`, che senza sarebbe un modo per far fare al
+ * nostro server le ricerche di chiunque passi.
+ */
+const cacheAnteprimaConsiglio = new NodeCache({ stdTTL: 60 * 60 * 6, maxKeys: 500 });
+
+router.get("/consiglio/anteprima", requireAuth, async (req, res) => {
+  try {
+    const dichiarato = numeroValido(req.query.animeclick_id);
+
+    const titoli = []
+      .concat(req.query.titolo || [], req.query.altri || [])
+      .flatMap((t) => String(t).split("\n"))
+      .map((t) => t.trim())
+      .filter(Boolean)
+      .slice(0, 3);
+
+    if (!dichiarato && !titoli.length) {
+      return res.status(400).json({ error: "Serve un id di AnimeClick o un titolo." });
+    }
+
+    const chiave = `anteprima-consiglio:${dichiarato || titoli.join("|")}`;
+    const inCache = cacheAnteprimaConsiglio.get(chiave);
+
+    if (inCache !== undefined) return res.json(inCache);
+
+    let animeclickId = dichiarato;
+    let trovato = null;
+
+    if (!animeclickId) {
+      for (const titolo of titoli) {
+        const candidati = await ac.cercaAnime(titolo, { quanti: 3 }).catch(() => []);
+        const migliore = [...candidati].sort((a, b) => (b.punteggio || 0) - (a.punteggio || 0))[0];
+
+        if (!migliore) continue;
+
+        if (!trovato || (migliore.punteggio || 0) > (trovato.punteggio || 0)) {
+          trovato = migliore;
+        }
+
+        // Un punteggio pieno vuol dire che il titolo combacia alla
+        // lettera: non c'è niente di meglio da cercare più avanti.
+        if ((migliore.punteggio || 0) >= 100) break;
+      }
+
+      animeclickId = trovato?.id || null;
+    }
+
+    if (!animeclickId) {
+      const vuoto = { trovata: false };
+
+      cacheAnteprimaConsiglio.set(chiave, vuoto);
+
+      return res.json(vuoto);
+    }
+
+    // Se la serie è già in catalogo la trama ce l'abbiamo in casa: è la
+    // stessa scorciatoia di `/anteprima/:animeclickId`, e vale doppio
+    // qui perché evita di disturbare AnimeClick per una scheda che
+    // abbiamo già letto.
+    const { rows } = await pool.query(
+      `
+      SELECT animeclick_id, titolo, titolo_originale, tipo, anno_inizio,
+             episodi_dichiarati, stato_italia, generi, distributori, trama, cover_url
+        FROM anime
+       WHERE animeclick_id = $1 AND trama IS NOT NULL
+      `,
+      [animeclickId]
+    );
+
+    const scheda = rows.length > 0 ? rows[0] : await franchise.anteprima(animeclickId);
+
+    const risposta = {
+      trovata: true,
+      daNoi: rows.length > 0,
+      animeclick_id: animeclickId,
+      url: ac.urlScheda(animeclickId),
+      ...scheda
+    };
+
+    cacheAnteprimaConsiglio.set(chiave, risposta);
+
+    return res.json(risposta);
+  } catch (err) {
+    console.error("ANTEPRIMA CONSIGLIO ERROR:", err);
+
+    return res.status(502).json({ error: "AnimeClick non risponde" });
+  }
+});
+
+/**
  * GET /api/anime/calendario — cosa esce, e cosa è appena uscito.
  *
  * Legge dal nostro database, non da AnimeClick: le date le porta il

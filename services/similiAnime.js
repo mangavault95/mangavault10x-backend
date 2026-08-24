@@ -457,6 +457,15 @@ async function similiDi(anime, { catalogo = [], quanti = 12, fetchImpl = fetch }
     animeclickId: c.animeclickId,
     anilistId: c.anilistId,
     collegamento: c.collegamento,
+    // I nomi con cui cercare questa serie su AnimeClick, quando si apre
+    // l'anteprima. Ce ne vuole più d'uno e conta l'ordine: la ricerca
+    // di AnimeClick è letterale, e col titolo ORIGINALE va molto
+    // meglio che con quello inglese — «Shoujo Shuumatsu Ryokou»
+    // risponde 100, «Girls' Last Tour» risponde 5 (trovata lo stesso,
+    // ma per un pelo). Chi cerca prova nell'ordine e tiene il migliore.
+    titoliRicerca: [c.titoli?.romaji, c.titoli?.inglese, c.titolo].filter(
+      (t, i, tutti) => t && tutti.indexOf(t) === i
+    ),
     // Quando è in casa si manda alla scheda interna e si dice a che
     // punto era rimasta: è tutto quello che serve per riprenderla.
     inVideoteca: c.inCasa
