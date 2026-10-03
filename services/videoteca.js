@@ -235,21 +235,37 @@ async function calcolaTagli(pool, animeId) {
 /**
  * Rilegge le serie che possono ancora cambiare.
  *
- * Le concluse non si rileggono: quello che dicono oggi lo diranno
- * anche fra un anno, e ogni richiesta risparmiata è cortesia verso un
- * sito che ci lascia leggere senza chiederci niente.
+ * Le concluse VECCHIE non si rileggono: quello che dicono oggi lo
+ * diranno anche fra un anno, e ogni richiesta risparmiata è cortesia
+ * verso un sito che ci lascia leggere senza chiederci niente.
+ *
+ * ⚠️ Le concluse RECENTI sì, ogni due settimane. «Conclusa» su
+ * AnimeClick vuol dire «finita la parte di adesso»: le serie a due
+ * cour la scrivono a metà e poi tornano. Verificato il 04/10/2026 su
+ * The Ramparts of Ice — letta il 21/08 come conclusa a 14 puntate,
+ * tornata «in corso» in autunno con la 15 — e per questo la
+ * Videoteca non la mostrava più aggiornata: una conclusa non entrava
+ * mai nel giro, e la puntata nuova non arrivava.
  */
-async function aggiornaSerie(pool, { giorni = 7, quante = 20 } = {}) {
+async function aggiornaSerie(pool, { giorni = 7, quante = 20, giorniConcluse = 14 } = {}) {
   const { rows } = await pool.query(
     `
     SELECT id, animeclick_id
     FROM anime
-    WHERE stato IN ('in_corso', 'in_pausa', 'inedita')
-      AND (letto_il IS NULL OR letto_il < NOW() - ($1 || ' days')::interval)
+    WHERE (
+            stato IN ('in_corso', 'in_pausa', 'inedita')
+            AND (letto_il IS NULL OR letto_il < NOW() - ($1 || ' days')::interval)
+          )
+       OR (
+            stato = 'conclusa'
+            AND tipo IN ('serie_tv', 'ona')
+            AND anno_inizio >= EXTRACT(YEAR FROM NOW())::int - 1
+            AND (letto_il IS NULL OR letto_il < NOW() - ($3 || ' days')::interval)
+          )
     ORDER BY letto_il NULLS FIRST
     LIMIT $2
     `,
-    [String(giorni), quante]
+    [String(giorni), quante, String(giorniConcluse)]
   );
 
   const esito = { lette: 0, errori: [] };
