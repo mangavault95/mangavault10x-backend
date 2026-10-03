@@ -53,6 +53,7 @@ const CAMPI = `
   format
   status
   startDate { year month day }
+  nextAiringEpisode { episode }
   relations {
     edges {
       relationType
@@ -186,6 +187,11 @@ async function catenaDaMedia(primo, { fetchImpl = fetch } = {}) {
       id: m.id,
       titolo: m.title?.romaji || m.title?.english || null,
       episodi: m.episodes ?? null,
+      // Per una stagione in onda il totale non c'è ancora, ma AniList
+      // dice qual è la PROSSIMA puntata: quelle già uscite sono una di
+      // meno. Serve a `torna` (vedi lì).
+      stato: m.status ?? null,
+      usciti: m.nextAiringEpisode ? m.nextAiringEpisode.episode - 1 : null,
       formato: m.format,
       anno: m.startDate?.year ?? null
     }));
@@ -220,7 +226,22 @@ function progressive(stagioni) {
  * è l'unico numero di cui ci si fida per decidere.
  */
 function tagliDa(stagioni, disponibili) {
-  return progressive(stagioni)
+  const somme = progressive(stagioni);
+
+  // Il conto torna a metà catena, ma dopo ci sono stagioni GIÀ uscite:
+  // quella scheda non è «le prime k stagioni», è un'altra scheda che
+  // ha lo stesso numero di puntate per caso. Verificato il 04/10/2026
+  // su BEASTARS FINAL SEASON: 24 puntate, come 12 + 12 delle prime due,
+  // e il taglio alla 13 spezzava a metà la stagione finale. Se le
+  // stagioni dopo sono solo annunciate (Frieren 3, nel 2027) la scheda
+  // è davvero quelle prime, e il taglio resta.
+  const k = somme.indexOf(disponibili);
+
+  if (k >= 0 && stagioni.slice(k + 1).some((s) => s.stato && s.stato !== "NOT_YET_RELEASED")) {
+    return [];
+  }
+
+  return somme
     .map((somma) => somma + 1)
     .filter((taglio) => taglio > 1 && taglio <= disponibili);
 }
@@ -242,7 +263,45 @@ function tagliDa(stagioni, disponibili) {
  * campo a mano nella Gestione.
  */
 function torna(stagioni, disponibili) {
-  return progressive(stagioni).includes(disponibili);
+  const somme = progressive(stagioni);
+
+  return somme.includes(disponibili) || tornaConStagioneInOnda(stagioni, somme, disponibili);
+}
+
+/**
+ * Una stagione nuova è appena cominciata e il suo totale non c'è.
+ *
+ * La prova aritmetica di `torna` chiede che le stagioni sommate diano
+ * esattamente le puntate di AnimeClick, e una stagione in onda la
+ * rompe per costruzione: AniList non sa ancora quante puntate avrà
+ * (`episodes: null`), AnimeClick ne ha già qualcuna in coda alla
+ * scheda. Verificato il 04/10/2026 su The Ramparts of Ice: stagione 1
+ * di 14 puntate finita, stagione 2 uscita il primo ottobre con una
+ * sola puntata. AnimeClick elenca 15 puntate, la somma nota è 14, la
+ * catena veniva scartata e la 15 finiva in coda alla prima stagione.
+ * Lo stesso succede a ogni stagione nuova di ogni serie, ogni volta.
+ *
+ * Qui si sostituisce il totale mancante con quello che AniList sa: le
+ * puntate già uscite. La prova resta aritmetica — le puntate di
+ * AnimeClick devono cadere fra «una dopo le stagioni finite» e «tutte
+ * quelle uscite più la prossima», che AnimeClick a volte elenca in
+ * anticipo — e quindi una catena sbagliata non passa per caso.
+ *
+ * Servono almeno una stagione finita prima (somma > 0): senza, il
+ * taglio sarebbe vuoto e non c'è niente da proteggere o da scrivere.
+ */
+function tornaConStagioneInOnda(stagioni, somme, disponibili) {
+  const indice = stagioni.findIndex((s) => !s.episodi);
+
+  if (indice < 1 || somme.length !== indice) return false;
+
+  const inOnda = stagioni[indice];
+
+  if (inOnda.stato !== "RELEASING" || !(inOnda.usciti > 0)) return false;
+
+  const somma = somme[somme.length - 1];
+
+  return disponibili > somma && disponibili <= somma + inOnda.usciti + 1;
 }
 
 /**
