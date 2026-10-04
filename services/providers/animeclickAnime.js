@@ -753,6 +753,91 @@ async function calendario({ quando = null, fetchImpl = fetch } = {}) {
 }
 
 /**
+ * Le uscite dei VOLUMI in Italia, dal calendario manga.
+ *
+ * Sta qui e non in `animeclick.js` perché è il gemello di `calendario`
+ * qui sopra: stessa pagina, stessi separatori di data, stessa regola
+ * per l'anno che scavalca dicembre. Verificato il 04/10/2026 che
+ * `/calendario-manga` ha la stessa struttura di quello degli anime.
+ *
+ * Ogni card dice tre cose che servono a riconoscere un volume:
+ *
+ *   <h5>  la serie           «One Piece»
+ *   <h3>  il volume          «One Piece Limited Edition 114»
+ *   <h4>  l'editore          «Star Comics»
+ *
+ * L'EDIZIONE è quello che resta del volume togliendo la serie in testa
+ * e il numero in coda: «Limited Edition», «Color New Edition», o niente
+ * per l'edizione normale. È il pezzo che decide se un'uscita è tua: di
+ * One Piece in casa c'è la New Edition, e il 114 normale non lo è.
+ *
+ * Le card senza numero in coda («Nana 1st Illustrations») sono artbook
+ * e simili: non sono il volume di nessuna serie e si scartano.
+ *
+ * `quando` come in `calendario`: senza, da oggi a fine mese;
+ * "next-month" il mese dopo. Il prezzo la pagina non lo scrive.
+ */
+async function calendarioManga({ quando = null, fetchImpl = fetch } = {}) {
+  const url = quando ? `${BASE}/calendario-manga?paging=${quando}` : `${BASE}/calendario-manga`;
+
+  const risposta = await prendi(url, {}, fetchImpl);
+  const html = await risposta.text();
+
+  const intestazione = html.match(/<div class="calendario-mese">[\s\S]*?<h2>([\s\S]*?)<\/h2>/i);
+  const testoIntestazione = intestazione ? testoDi(intestazione[1]) : "";
+  const annoTitolo = Number((testoIntestazione.match(/\d{4}/) || [])[0]) || new Date().getFullYear();
+  const meseTitolo = MESI.findIndex((m) => new RegExp(m, "i").test(testoIntestazione)) + 1;
+
+  const uscite = [];
+
+  for (const pezzo of html.split(/<div class="col-12 date-separator">/i).slice(1)) {
+    const giorno = testoDi((pezzo.match(/<div class="date">([\s\S]*?)<\/div>/i) || [])[1]);
+    const mese = testoDi((pezzo.match(/<div class="month">([\s\S]*?)<\/div>/i) || [])[1]);
+    const numeroMese = MESI.findIndex((m) => m === mese.toLowerCase()) + 1;
+
+    if (!giorno || !numeroMese) continue;
+
+    const anno = meseTitolo && numeroMese < meseTitolo ? annoTitolo + 1 : annoTitolo;
+    const data = `${anno}-${String(numeroMese).padStart(2, "0")}-${String(Number(giorno)).padStart(2, "0")}`;
+
+    for (const card of pezzo.split(/<div class="card panel-evento-calendario/i).slice(1)) {
+      const serie = testoDi((card.match(/<h5>([\s\S]*?)<\/h5>/i) || [])[1]);
+      const volume = testoDi((card.match(/<h3>([\s\S]*?)<\/h3>/i) || [])[1]);
+      const editore = testoDi((card.match(/<h4[^>]*>([\s\S]*?)<\/h4>/i) || [])[1]) || null;
+      const link = card.match(/href="\/edizione\/(\d+)\//i);
+      const immagine = card.match(/data-original="([^"]+)"/i);
+
+      const numerato = volume.match(/^(.*?)\s+(\d+)$/);
+
+      if (!serie || !numerato) continue;
+
+      const nomeEdizione = numerato[1];
+
+      // L'edizione è il nome del volume meno la serie in testa. Se il
+      // volume non comincia con la serie (succede con i titoli tradotti
+      // diversamente) tutto il nome vale come edizione: non combacerà
+      // con niente, che è meglio di combaciare con la cosa sbagliata.
+      const edizione = nomeEdizione.toLowerCase().startsWith(serie.toLowerCase())
+        ? nomeEdizione.slice(serie.length).trim()
+        : nomeEdizione;
+
+      uscite.push({
+        data,
+        serie,
+        titolo: volume,
+        edizione,
+        numero: Number(numerato[2]),
+        editore,
+        edizione_animeclick_id: link ? Number(link[1]) : null,
+        copertina: immagine ? `${BASE}${encodeURI(immagine[1])}` : null
+      });
+    }
+  }
+
+  return uscite;
+}
+
+/**
  * A quale serie appartiene un episodio del calendario.
  *
  * Una richiesta a testa: si usa solo sulle card che somigliano a una
@@ -780,6 +865,7 @@ module.exports = {
   pezzoComune,
   punteggioAnime,
   calendario,
+  calendarioManga,
   serieDellEpisodio,
   urlScheda,
   // Esportate per le prove: sono le regole di traduzione fra il modo

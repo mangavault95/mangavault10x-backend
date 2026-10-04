@@ -658,6 +658,28 @@ router.get("/", async (req, res) => {
 });
 
 // Vista arricchita: completamento, spesa stimata, schede incomplete.
+/**
+ * GET /api/manga/uscite?giorni=7 — i volumi in uscita per le serie che
+ * avete, nella stessa edizione (vedi `services/usciteManga.js`).
+ *
+ * Si legge senza entrare, come la collezione. Se AnimeClick non
+ * risponde la home deve restare in piedi: si risponde con un elenco
+ * vuoto e `errore`, non con un 502 che spegnerebbe la sezione intera.
+ */
+router.get("/uscite", async (req, res) => {
+  const giorni = Math.min(Math.max(Number(req.query.giorni) || 7, 1), 45);
+
+  try {
+    const uscite = await require("../services/usciteManga").usciteDellaCollezione(pool, { giorni });
+
+    return res.json({ uscite });
+  } catch (err) {
+    console.error("MANGA USCITE ERROR:", err.message);
+
+    return res.json({ uscite: [], errore: "Il calendario di AnimeClick non risponde" });
+  }
+});
+
 router.get("/riepilogo", async (req, res) => {
   try {
     const { rows } = await pool.query(
