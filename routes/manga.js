@@ -680,6 +680,45 @@ router.get("/uscite", async (req, res) => {
   }
 });
 
+/**
+ * POST /api/manga/:id/acquisto — un volume comprato, registrato dal sito.
+ * Body: { volumi?: number[], prezzo?: number (totale), data?: "AAAA-MM-GG" }
+ * Stesse regole del bot di Telegram: vedi `services/acquisti.js`.
+ */
+router.post("/:id/acquisto", richiediBiblioteca, async (req, res) => {
+  const { registraAcquisto, AcquistoNonValido } = require("../services/acquisti");
+
+  try {
+    const esito = await registraAcquisto(pool, {
+      mangaId: Number(req.params.id),
+      volumi: Array.isArray(req.body?.volumi) ? req.body.volumi : null,
+      prezzo: req.body?.prezzo ?? null,
+      data: req.body?.data ?? null
+    });
+
+    return res.json(esito);
+  } catch (err) {
+    if (err instanceof AcquistoNonValido) return res.status(400).json({ error: err.message });
+
+    console.error("❌ ACQUISTO ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+/** POST /api/manga/acquisti/annulla — Body: { ids: number[] } */
+router.post("/acquisti/annulla", richiediBiblioteca, async (req, res) => {
+  const { annullaAcquisti, AcquistoNonValido } = require("../services/acquisti");
+
+  try {
+    return res.json(await annullaAcquisti(pool, req.body?.ids));
+  } catch (err) {
+    if (err instanceof AcquistoNonValido) return res.status(400).json({ error: err.message });
+
+    console.error("❌ ANNULLA ACQUISTO ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
 router.get("/riepilogo", async (req, res) => {
   try {
     const { rows } = await pool.query(
