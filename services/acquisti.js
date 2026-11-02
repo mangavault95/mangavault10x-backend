@@ -13,9 +13,10 @@
  *     intervalli e non saprebbe rappresentare un salto;
  *   - il prezzo scritto è il TOTALE della riga, diviso fra i blocchi in
  *     proporzione ai volumi, con i centesimi che avanzano sul primo;
- *   - il contatore dei posseduti si INCREMENTA, non si porta al numero
- *     del volume: chi ne ha 41 e compra il 45 ne ha 42, e il buco va
- *     detto (lo dice chi chiama, con `mancano`), non nascosto.
+ *   - il volume comprato entra nell'ELENCO dei posseduti (dal 02/11/2026,
+ *     migrazione 022): chi ha 1-41 e compra il 45 ha 1-41 e 45, e il
+ *     buco 42-44 va detto (lo dice chi chiama, con `mancano`), non
+ *     nascosto. Il conteggio lo ricava da sé il trigger della 022.
  *
  * Una differenza voluta: senza prezzo il bot va a cercarlo su
  * AnimeClick; qui si usa il prezzo di copertina della scheda, e se non
@@ -63,10 +64,21 @@ function oggiInItalia() {
 
 class AcquistoNonValido extends Error {}
 
+/** Il primo numero che non c'è: in [1,2,3,4,5,11] è il 6, non il 12. */
+function primoMancante(posseduti) {
+  const presenti = new Set(posseduti);
+  let n = 1;
+
+  while (presenti.has(n)) n += 1;
+
+  return n;
+}
+
 /**
  * Registra uno o più volumi di una serie.
  *
- * `volumi` vuoto vuol dire «il prossimo» (posseduti + 1), come nel bot.
+ * `volumi` vuoto vuol dire «il prossimo», cioè il primo che manca: per
+ * una serie sparsa è il primo buco, non quello dopo il più alto.
  * `prezzo` è il totale; `null` usa la stima della scheda.
  */
 async function registraAcquisto(pool, { mangaId, volumi = null, prezzo = null, data = null }) {
@@ -76,7 +88,7 @@ async function registraAcquisto(pool, { mangaId, volumi = null, prezzo = null, d
     await cliente.query("BEGIN");
 
     const { rows } = await cliente.query(
-      `SELECT "ID", "Titolo", "VolumiPosseduti", "VolumiItalia", "VolumiTotali", "PrezzoCopertina", "Costo"
+      `SELECT "ID", "Titolo", "NumeriPosseduti", "VolumiItalia", "VolumiTotali", "PrezzoCopertina", "Costo"
          FROM "Manga" WHERE "ID" = $1 FOR UPDATE`,
       [mangaId]
     );
@@ -84,9 +96,9 @@ async function registraAcquisto(pool, { mangaId, volumi = null, prezzo = null, d
     if (!rows.length) throw new AcquistoNonValido("Questa serie non è in collezione");
 
     const serie = rows[0];
-    const posseduti = Number(serie.VolumiPosseduti) || 0;
+    const posseduti = (serie.NumeriPosseduti || []).map(Number);
 
-    const numeri = (volumi && volumi.length ? volumi : [posseduti + 1]).map(Number);
+    const numeri = (volumi && volumi.length ? volumi : [primoMancante(posseduti)]).map(Number);
 
     if (numeri.some((n) => !Number.isInteger(n) || n < 1)) throw new AcquistoNonValido("Volumi non validi");
     if (numeri.length > MASSIMO_VOLUMI) throw new AcquistoNonValido("Troppi volumi in un acquisto solo");
@@ -111,26 +123,35 @@ async function registraAcquisto(pool, { mangaId, volumi = null, prezzo = null, d
       scritti.push(riga[0]);
     }
 
-    const quanti = gruppi.reduce((s, g) => s + (g.a - g.da + 1), 0);
-
+    // Ordine, doppioni e conteggio li sistema il trigger della 022.
     const { rows: aggiornata } = await cliente.query(
-      `UPDATE "Manga" SET "VolumiPosseduti" = COALESCE("VolumiPosseduti", 0) + $1
-        WHERE "ID" = $2 RETURNING "VolumiPosseduti"`,
-      [quanti, mangaId]
+      `UPDATE "Manga" SET "NumeriPosseduti" = "NumeriPosseduti" || $1::int[]
+        WHERE "ID" = $2 RETURNING "VolumiPosseduti", "NumeriPosseduti"`,
+      [numeri, mangaId]
     );
 
     await cliente.query("COMMIT");
 
+    // Il buco prima del primo volume comprato, cioè quelli sotto di lui
+    // che ancora mancano: chi chiama lo dice.
     const primo = Math.min(...numeri);
+    const dopo = new Set(aggiornata[0].NumeriPosseduti.map(Number));
+    const buchi = [];
+
+    for (let n = 1; n < primo; n += 1) if (!dopo.has(n)) buchi.push(n);
 
     return {
-      serie: { id: Number(serie.ID), titolo: serie.Titolo, posseduti: Number(aggiornata[0].VolumiPosseduti) },
+      serie: {
+        id: Number(serie.ID),
+        titolo: serie.Titolo,
+        posseduti: Number(aggiornata[0].VolumiPosseduti),
+        numeri: [...dopo]
+      },
       acquisti: scritti.map((r) => Number(r.id)),
       volumi: [...new Set(numeri)].sort((a, b) => a - b),
       totale,
       stimato: prezzo == null,
-      // Il buco prima del primo volume comprato: chi chiama lo dice.
-      mancano: primo > posseduti + 1 ? { da: posseduti + 1, a: primo - 1 } : null
+      mancano: buchi.length ? { da: buchi[0], a: buchi[buchi.length - 1], quanti: buchi.length } : null
     };
   } catch (errore) {
     await cliente.query("ROLLBACK");
@@ -141,9 +162,10 @@ async function registraAcquisto(pool, { mangaId, volumi = null, prezzo = null, d
 }
 
 /**
- * Disfa degli acquisti appena registrati: toglie le righe e restituisce
- * i volumi al contatore. Solo le righe nominate, e solo se esistono
- * ancora — un secondo tocco su «Annulla» non deve scalare due volte.
+ * Disfa degli acquisti appena registrati: toglie le righe e toglie dai
+ * posseduti i numeri che quelle righe avevano portato. Solo le righe
+ * nominate, e solo se esistono ancora — un secondo tocco su «Annulla»
+ * non deve togliere due volte.
  */
 async function annullaAcquisti(pool, ids) {
   const numeri = (Array.isArray(ids) ? ids : []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
@@ -160,16 +182,14 @@ async function annullaAcquisti(pool, ids) {
       [numeri]
     );
 
-    const perSerie = new Map();
-
     for (const r of rows) {
-      perSerie.set(r.manga_id, (perSerie.get(r.manga_id) || 0) + (r.volume_a - r.volume_da + 1));
-    }
-
-    for (const [mangaId, quanti] of perSerie) {
       await cliente.query(
-        `UPDATE "Manga" SET "VolumiPosseduti" = GREATEST(0, COALESCE("VolumiPosseduti", 0) - $1) WHERE "ID" = $2`,
-        [quanti, mangaId]
+        `UPDATE "Manga"
+            SET "NumeriPosseduti" = ARRAY(
+              SELECT n FROM unnest("NumeriPosseduti") AS n WHERE n NOT BETWEEN $1 AND $2 ORDER BY n
+            )
+          WHERE "ID" = $3`,
+        [r.volume_da, r.volume_a, r.manga_id]
       );
     }
 
@@ -184,4 +204,4 @@ async function annullaAcquisti(pool, ids) {
   }
 }
 
-module.exports = { registraAcquisto, annullaAcquisti, blocchi, ripartisci, AcquistoNonValido };
+module.exports = { registraAcquisto, annullaAcquisti, blocchi, ripartisci, primoMancante, AcquistoNonValido };

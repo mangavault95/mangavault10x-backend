@@ -252,6 +252,10 @@ const CAMPI_AGGIORNABILI = {
   editore: "Editore",
   costo: "Costo",
   volumiposseduti: "VolumiPosseduti",
+  // Dal 02/11/2026 (022) QUALI volumi, non solo quanti: un elenco di
+  // numeri. Il conteggio qui sopra resta accettato — la Gestione lo
+  // scrive ancora — e il trigger della 022 li tiene d'accordo.
+  numeriposseduti: "NumeriPosseduti",
   volumitotali: "VolumiTotali",
   // `valutazione` non è più un campo della scheda: il voto è di una
   // persona, non della serie, e si scrive da /updateRating.
@@ -268,6 +272,32 @@ const CAMPI_AGGIORNABILI = {
   operaId: "OperaId"
 };
 
+const MASSIMO_NUMERI = 500;
+
+/**
+ * Il valore da scrivere per un campo, o un errore.
+ *
+ * Quasi tutti i campi passano come arrivano. L'elenco dei volumi no: è
+ * l'unico che è una lista, e una lista sbagliata (un «3» stringa, uno
+ * zero, mille voci) deve fermarsi qui con un messaggio, non arrivare a
+ * Postgres come errore di tipo.
+ */
+function valoreDi(chiave, valore) {
+  if (chiave !== "numeriposseduti") return { valore: valore === "" ? null : valore };
+
+  if (!Array.isArray(valore) || valore.length > MASSIMO_NUMERI) {
+    return { errore: "L'elenco dei volumi non è valido" };
+  }
+
+  const numeri = valore.map(Number);
+
+  if (numeri.some((n) => !Number.isInteger(n) || n < 1)) {
+    return { errore: "I volumi sono numeri interi dall'1 in su" };
+  }
+
+  return { valore: [...new Set(numeri)].sort((a, b) => a - b) };
+}
+
 async function aggiornaManga(id, body) {
   const set = [];
   const valori = [];
@@ -275,7 +305,11 @@ async function aggiornaManga(id, body) {
   for (const [chiave, colonna] of Object.entries(CAMPI_AGGIORNABILI)) {
     if (body[chiave] === undefined) continue;
 
-    valori.push(body[chiave] === "" ? null : body[chiave]);
+    const { valore, errore } = valoreDi(chiave, body[chiave]);
+
+    if (errore) return { errore };
+
+    valori.push(valore);
     set.push(`"${colonna}" = $${valori.length}`);
   }
 
@@ -322,7 +356,11 @@ router.post("/", richiediBiblioteca, async (req, res) => {
     for (const [chiave, colonna] of Object.entries(CAMPI_AGGIORNABILI)) {
       if (chiave === "titolo" || req.body[chiave] === undefined) continue;
 
-      valori.push(req.body[chiave] === "" ? null : req.body[chiave]);
+      const { valore, errore } = valoreDi(chiave, req.body[chiave]);
+
+      if (errore) return res.status(400).json({ error: errore });
+
+      valori.push(valore);
       colonne.push(`"${colonna}"`);
     }
 

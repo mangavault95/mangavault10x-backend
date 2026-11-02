@@ -101,7 +101,7 @@ async function usciteDellaCollezione(pool, { giorni = 7 } = {}) {
   const calendario = (await Promise.all(pagine)).flat();
 
   const { rows: collezione } = await pool.query(
-    `SELECT "ID", "Titolo", "Edizione", "Editore", "VolumiPosseduti", "Costo", "CoverURL" FROM "Manga"`
+    `SELECT "ID", "Titolo", "Edizione", "Editore", "NumeriPosseduti", "Costo", "CoverURL" FROM "Manga"`
   );
 
   const perTitolo = new Map();
@@ -137,8 +137,14 @@ async function usciteDellaCollezione(pool, { giorni = 7 } = {}) {
 
     visti.add(chiave);
 
-    const posseduti = Number(serie.VolumiPosseduti) || 0;
-    const mancanti = Math.max(0, uscita.numero - posseduti - 1);
+    // Dalla 022 si sa QUALI volumi ci sono: «già tuo» è avere proprio
+    // quel numero, e i mancanti sono i buchi sotto di lui — non più
+    // «numero meno quanti ne hai», che per una serie sparsa sbagliava.
+    const numeri = new Set((serie.NumeriPosseduti || []).map(Number));
+    const posseduti = numeri.size;
+    let mancanti = 0;
+
+    for (let n = 1; n < uscita.numero; n += 1) if (!numeri.has(n)) mancanti += 1;
 
     risultato.push({
       data: uscita.data,
@@ -146,7 +152,7 @@ async function usciteDellaCollezione(pool, { giorni = 7 } = {}) {
       titolo: uscita.titolo,
       editore: uscita.editore,
       copertina: uscita.copertina,
-      stato: posseduti >= uscita.numero ? "gia" : mancanti > 0 ? "manca" : "prossimo",
+      stato: numeri.has(uscita.numero) ? "gia" : mancanti > 0 ? "manca" : "prossimo",
       mancanti,
       serie: {
         id: Number(serie.ID),
