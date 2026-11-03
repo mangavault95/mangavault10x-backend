@@ -719,6 +719,95 @@ router.get("/uscite", async (req, res) => {
 });
 
 /**
+ * GET /api/manga/uscite/archivio?mese=2026-10&tutte=1 — le uscite di un
+ * mese, passato o futuro, dal calendario che abbiamo messo da parte
+ * (`uscite_manga`, vedi sql/023).
+ *
+ * Senza `tutte` sono solo quelle delle serie in collezione; con
+ * `tutte=1` tutte quelle che AnimeClick elenca, e per le serie che non
+ * avete `serie` è null e il nome sta in `serieNome`. Si legge senza
+ * entrare, come `/uscite`.
+ */
+router.get("/uscite/archivio", async (req, res) => {
+  const mese = /^\d{4}-(0[1-9]|1[0-2])$/.test(req.query.mese || "")
+    ? req.query.mese
+    : new Date().toISOString().slice(0, 7);
+
+  const [anno, m] = mese.split("-").map(Number);
+  const ultimo = new Date(Date.UTC(anno, m, 0)).getUTCDate();
+  const { usciteTra, piuGiorni } = require("../services/usciteManga");
+
+  try {
+    const uscite = await usciteTra(pool, {
+      // «dopo» è esclusa: per avere il primo del mese si parte dall'ultimo di quello prima.
+      dopo: piuGiorni(`${mese}-01`, -1),
+      fino: `${mese}-${String(ultimo).padStart(2, "0")}`,
+      soloMie: req.query.tutte !== "1"
+    });
+
+    return res.json({ mese, uscite });
+  } catch (err) {
+    console.error("MANGA USCITE ARCHIVIO ERROR:", err.message);
+
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+/**
+ * POST /api/manga/uscite/aggiorna — il giro quotidiano che mette da
+ * parte il calendario di AnimeClick (vedi `registraCalendario`).
+ * Protetta dal solo segreto del cron, come il calendario anime.
+ *
+ *   {"prova": true}   legge e conta, ma non scrive
+ */
+router.post("/uscite/aggiorna", richiedeSegretoCron, async (req, res) => {
+  const scrivi = req.body?.prova !== true;
+
+  try {
+    const esito = await require("../services/usciteManga").registraCalendario(pool, { scrivi });
+
+    console.log(
+      `📚 Calendario manga: ${esito.lette} uscite lette (${esito.meseScorso} dal mese scorso), ` +
+        `${esito.scritte} nuove o cambiate${scrivi ? "" : " — prova a vuoto"}`
+    );
+
+    return res.json({ success: true, ...esito });
+  } catch (err) {
+    console.error("MANGA USCITE AGGIORNA ERROR:", err);
+
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/manga/uscite/riepilogo — il riepilogo del 10, su Telegram
+ * (vedi `services/riepilogoUscite.js`). Protetta dal segreto del cron.
+ *
+ *   {"prova": true}          dice cosa manderebbe senza mandarlo
+ *   {"oggi": "2026-11-10"}   per le prove: finge un altro giorno
+ */
+router.post("/uscite/riepilogo", richiedeSegretoCron, async (req, res) => {
+  const prova = req.body?.prova === true;
+  const oggi = /^\d{4}-\d{2}-\d{2}$/.test(req.body?.oggi || "") ? req.body.oggi : null;
+
+  try {
+    const esito = await require("../services/riepilogoUscite").riepilogaMese(pool, { prova, oggi });
+
+    console.log(
+      `📚 Riepilogo uscite (${esito.periodo.dopo} → ${esito.periodo.fino}${prova ? ", a vuoto" : ""}): ` +
+        `${esito.daRecuperare} da recuperare, ${esito.inviati} messaggi a ${esito.persone} persone` +
+        (esito.falliti ? ` — ${esito.falliti} falliti` : "")
+    );
+
+    return res.json({ success: true, ...esito });
+  } catch (err) {
+    console.error("MANGA RIEPILOGO ERROR:", err);
+
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * POST /api/manga/:id/acquisto — un volume comprato, registrato dal sito.
  * Body: { volumi?: number[], prezzo?: number (totale), data?: "AAAA-MM-GG" }
  * Stesse regole del bot di Telegram: vedi `services/acquisti.js`.

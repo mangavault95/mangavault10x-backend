@@ -1,0 +1,45 @@
+name: Uscite manga
+# Mette da parte il calendario manga di AnimeClick, una volta al giorno.
+#
+# AnimeClick mostra solo da oggi in avanti: un volume uscito ieri sparisce
+# dalla pagina. Senza questa copia non si potrebbe dire «cosa è uscito dal
+# 10 al 10» (il riepilogo mensile) né mostrare le uscite passate sul sito.
+#
+# Alle 6:15 UTC, un quarto d'ora dopo il calendario anime: stesso sito,
+# e due richieste ravvicinate sono meno gentili di due distanziate.
+#
+# Se un giro salta non si perde niente: la pagina corrente e quella del
+# mese dopo coprono settimane, e il giro successivo riscrive le stesse
+# righe senza duplicarle (la chiave è serie + edizione + numero).
+on:
+  schedule:
+    - cron: "15 6 * * *"
+  workflow_dispatch:
+    inputs:
+      prova:
+        description: "A vuoto: legge e conta, ma non scrive"
+        type: boolean
+        default: false
+
+jobs:
+  uscite:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chiama il backend
+        run: |
+          risposta=$(curl -sS -w "\n%{http_code}" -X POST \
+            --max-time 180 \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{"prova": ${{ inputs.prova || false }}}' \
+            "https://mangavault10x-api.onrender.com/api/manga/uscite/aggiorna")
+
+          corpo=$(echo "$risposta" | head -n -1)
+          codice=$(echo "$risposta" | tail -n 1)
+
+          echo "$corpo"
+
+          if [ "$codice" != "200" ]; then
+            echo "HTTP $codice"
+            exit 1
+          fi

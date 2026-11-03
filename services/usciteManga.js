@@ -98,8 +98,24 @@ async function usciteDellaCollezione(pool, { giorni = 7 } = {}) {
     pagine.push(paginaCalendario("next-month").catch(() => []));
   }
 
-  const calendario = (await Promise.all(pagine)).flat();
+  const calendario = (await Promise.all(pagine))
+    .flat()
+    .filter((uscita) => uscita.data >= dal && uscita.data <= al);
 
+  return abbinaAllaCollezione(pool, calendario);
+}
+
+/**
+ * Tiene delle uscite solo quelle che vi riguardano, nella stessa
+ * edizione, e dice per ognuna a che punto siete.
+ *
+ * Sta a parte perché la usano due: il calendario che si legge adesso
+ * (`usciteDellaCollezione`) e quello che abbiamo messo da parte negli
+ * ultimi giorni (`uscite_manga`, per il riepilogo del mese e per
+ * la pagina delle uscite passate). Due copie della regola
+ * sull'edizione sarebbero finite per dire due cose diverse.
+ */
+async function abbinaAllaCollezione(pool, calendario) {
   const { rows: collezione } = await pool.query(
     `SELECT "ID", "Titolo", "Edizione", "Editore", "NumeriPosseduti", "Costo", "CoverURL" FROM "Manga"`
   );
@@ -118,8 +134,6 @@ async function usciteDellaCollezione(pool, { giorni = 7 } = {}) {
   const risultato = [];
 
   for (const uscita of calendario) {
-    if (uscita.data < dal || uscita.data > al) continue;
-
     const candidate = perTitolo.get(ossa(uscita.serie)) || [];
 
     const serie = candidate.find(
@@ -170,4 +184,138 @@ async function usciteDellaCollezione(pool, { giorni = 7 } = {}) {
   return risultato.sort((a, b) => a.data.localeCompare(b.data));
 }
 
-module.exports = { usciteDellaCollezione, edizioneDi, editoreDi, stessoEditore };
+/**
+ * Mette da parte il calendario di AnimeClick.
+ *
+ * AnimeClick mostra solo da oggi in avanti: una volta passato, un
+ * volume sparisce da lì e non c'è modo di sapere che è uscito. Per
+ * dire «ecco cosa è uscito dal 10 al 10» bisogna averlo scritto prima,
+ * ed è quello che fa questo giro, una volta al giorno: legge la pagina
+ * del mese e quella dopo e le copia in `uscite_manga`. Le righe non
+ * si cancellano mai, e se una data cambia si aggiorna la stessa riga.
+ *
+ * Il mese scorso si prova per fortuna: se AnimeClick lo conosce
+ * (`paging=prev-month`, da verificare dal server) il giro riempie anche
+ * il buco prima del primo giorno; se no, ci si accontenta di quello che
+ * c'è e il primo riepilogo sarà parziale.
+ */
+async function registraCalendario(pool, { scrivi = true } = {}) {
+  const pagine = await Promise.all([
+    ac.calendarioManga({ quando: null }),
+    ac.calendarioManga({ quando: "next-month" }).catch(() => []),
+    ac.calendarioManga({ quando: "prev-month" }).catch(() => [])
+  ]);
+
+  const [correnti, prossime, scorse] = pagine;
+
+  // Le tre pagine si possono sovrapporre (e un «mese scorso» che
+  // AnimeClick non conosce può restituire la pagina corrente): la
+  // chiave le fonde, l'ultima scritta vince.
+  const perChiave = new Map();
+
+  for (const uscita of [...scorse, ...correnti, ...prossime]) {
+    perChiave.set(chiaveUscita(uscita), uscita);
+  }
+
+  const righe = [...perChiave.entries()];
+
+  const esito = {
+    lette: righe.length,
+    meseScorso: scorse.length,
+    scritte: 0,
+    scrivi
+  };
+
+  if (!scrivi || righe.length === 0) return esito;
+
+  const { rowCount } = await pool.query(
+    `
+    INSERT INTO uscite_manga (chiave, data, serie, numero, titolo, edizione, editore, copertina)
+    SELECT * FROM UNNEST(
+      $1::text[], $2::date[], $3::text[], $4::int[], $5::text[], $6::text[], $7::text[], $8::text[]
+    )
+    ON CONFLICT (chiave) DO UPDATE
+       SET data = EXCLUDED.data,
+           titolo = EXCLUDED.titolo,
+           copertina = COALESCE(EXCLUDED.copertina, uscite_manga.copertina),
+           aggiornata_il = NOW()
+     WHERE uscite_manga.data IS DISTINCT FROM EXCLUDED.data
+        OR uscite_manga.titolo IS DISTINCT FROM EXCLUDED.titolo
+    `,
+    [
+      righe.map(([k]) => k),
+      righe.map(([, u]) => u.data),
+      righe.map(([, u]) => u.serie),
+      righe.map(([, u]) => u.numero),
+      righe.map(([, u]) => u.titolo || null),
+      righe.map(([, u]) => u.edizione || null),
+      righe.map(([, u]) => u.editore || null),
+      righe.map(([, u]) => u.copertina || null)
+    ]
+  );
+
+  esito.scritte = rowCount;
+
+  return esito;
+}
+
+/** Serie, edizione, editore e numero: quello che fa di un'uscita la stessa uscita anche se la data si sposta. */
+function chiaveUscita(u) {
+  return [ossa(u.serie), edizioneDi(u.edizione), editoreDi(u.editore), u.numero].join("|");
+}
+
+/**
+ * Le uscite messe da parte fra due date, tutte o solo le vostre.
+ *
+ * `dopo` esclusa e `fino` inclusa: così due finestre una dietro l'altra
+ * (dal 10 al 10, poi dal 10 al 10) non contano mai due volte il giorno
+ * di confine.
+ *
+ * Con `soloMie` restano quelle delle serie in collezione (con lo stato
+ * rispetto ai volumi che avete); senza, tutte, e `serie` è null per
+ * quelle che non vi riguardano.
+ */
+async function usciteTra(pool, { dopo, fino, soloMie = true }) {
+  const { rows } = await pool.query(
+    `SELECT data::text AS data, serie, numero, titolo, edizione, editore, copertina
+       FROM uscite_manga
+      WHERE data > $1::date AND data <= $2::date
+      ORDER BY data, serie, numero`,
+    [dopo, fino]
+  );
+
+  const mie = await abbinaAllaCollezione(pool, rows);
+
+  if (soloMie) return mie;
+
+  const miePerChiave = new Map(mie.map((m) => [`${m.data}|${ossa(m.serie.titolo)}|${m.numero}`, m]));
+
+  return rows.map(
+    (r) =>
+      miePerChiave.get(`${r.data}|${ossa(r.serie)}|${r.numero}`) || {
+        data: r.data,
+        numero: r.numero,
+        titolo: r.titolo,
+        editore: r.editore,
+        copertina: r.copertina,
+        stato: null,
+        mancanti: 0,
+        // Non è in collezione: il nome della serie sta qui, e `serie`
+        // (l'oggetto della collezione) manca.
+        serie: null,
+        serieNome: r.serie,
+        edizione: r.edizione
+      }
+  );
+}
+
+module.exports = {
+  usciteDellaCollezione,
+  registraCalendario,
+  usciteTra,
+  edizioneDi,
+  editoreDi,
+  stessoEditore,
+  piuGiorni,
+  oggiInItalia
+};

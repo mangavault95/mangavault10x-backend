@@ -1,0 +1,42 @@
+name: Riepilogo uscite manga
+# Il 10 di ogni mese, su Telegram: i volumi usciti dal 10 del mese scorso
+# a oggi per le tue serie, e quali ti mancano da recuperare.
+#
+# Alle 7:00 UTC (8 o 9 in Italia), dopo il giro quotidiano delle 6:15 che
+# ha appena messo da parte il calendario: l'ordine conta, il riepilogo
+# racconta quello che quel giro ha scritto.
+#
+# Se parte due volte non scrive due volte: `riepiloghi_manga` ricorda a chi
+# è già arrivato, e il secondo giro trova il posto occupato.
+on:
+  schedule:
+    - cron: "0 7 10 * *"
+  workflow_dispatch:
+    inputs:
+      prova:
+        description: "A vuoto: dice cosa manderebbe senza mandarlo"
+        type: boolean
+        default: true
+
+jobs:
+  riepilogo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chiama il backend
+        run: |
+          risposta=$(curl -sS -w "\n%{http_code}" -X POST \
+            --max-time 120 \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{"prova": ${{ inputs.prova || false }}}' \
+            "https://mangavault10x-api.onrender.com/api/manga/uscite/riepilogo")
+
+          corpo=$(echo "$risposta" | head -n -1)
+          codice=$(echo "$risposta" | tail -n 1)
+
+          echo "$corpo"
+
+          if [ "$codice" != "200" ]; then
+            echo "HTTP $codice"
+            exit 1
+          fi
