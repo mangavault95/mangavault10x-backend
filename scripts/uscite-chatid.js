@@ -39,10 +39,13 @@ const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 
 const pool = require("../db");
-const telegram = require("../services/telegram");
+// Con --manga si parla al bot della spesa manga (@Spesamanga10xbot), senza al bot delle uscite anime.
+const telegram = process.argv.includes("--manga")
+  ? require("../services/telegram").manga
+  : require("../services/telegram");
 
 const argomenti = process.argv.slice(2);
-const comando = argomenti.find((a) => a.startsWith("--")) || "--chi";
+const comando = argomenti.find((a) => a.startsWith("--") && a !== "--manga") || "--chi";
 const resto = argomenti.filter((a) => !a.startsWith("--"));
 
 /** La persona, cercata per soprannome o per nome utente, senza badare alle maiuscole. */

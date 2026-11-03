@@ -1,7 +1,7 @@
 /**
  * Il riepilogo del 10 — «cosa è uscito e ti manca».
  *
- * Una volta al mese il bot delle uscite scrive i volumi usciti dal 10
+ * Una volta al mese il bot della spesa manga (@Spesamanga10xbot) scrive i volumi usciti dal 10
  * del mese scorso a oggi per le serie in collezione, e dice quali non
  * ci sono ancora. Serve a recuperarli in una volta sola invece di
  * accorgersene a caso in fumetteria.
@@ -20,7 +20,7 @@
  * fallisce si toglie il segno: vedi `services/avvisi.js` per il perché.
  */
 
-const telegram = require("./telegram");
+const telegram = require("./telegram").manga;
 const { usciteTra, piuGiorni, oggiInItalia } = require("./usciteManga");
 const { haBiblioteca } = require("./utenti");
 
@@ -155,7 +155,7 @@ async function destinatari(pool) {
  */
 async function riepilogaMese(pool, { prova = false, oggi = null } = {}) {
   if (!telegram.configurato()) {
-    throw new Error("TELEGRAM_USCITE_TOKEN non configurato: i riepiloghi sono spenti");
+    throw new Error("TELEGRAM_MANGA_TOKEN non configurato: il riepilogo è spento");
   }
 
   const fino = oggi || oggiInItalia();

@@ -17,21 +17,36 @@
 const TIMEOUT = 12000;
 
 /** Il bot delle uscite. Vuoto = gli avvisi sono spenti, e va detto. */
-function gettone() {
-  return process.env.TELEGRAM_USCITE_TOKEN || "";
+const VARIABILE_USCITE = "TELEGRAM_USCITE_TOKEN";
+
+/**
+ * I bot sono due che MANDANO e basta: quello delle uscite anime
+ * (`TELEGRAM_USCITE_TOKEN`) e quello della spesa manga
+ * (`TELEGRAM_MANGA_TOKEN`, il riepilogo del 10). Stesse funzioni,
+ * token diverso: `bot(variabile)` le fabbrica per quello scelto, e le
+ * esportazioni di sempre restano quelle del bot delle uscite.
+ *
+ * Due bot e non uno per poter silenziare gli avvisi anime, frequenti,
+ * senza perdere il riepilogo di un mese. La chat è la stessa persona:
+ * l'identificativo di una chat privata non cambia da un bot all'altro,
+ * quindi `utenti.telegram_chat_id` vale per entrambi — basta che la
+ * persona abbia premuto Start su tutti e due.
+ */
+function gettone(variabile = VARIABILE_USCITE) {
+  return process.env[variabile] || "";
 }
 
-function configurato() {
-  return Boolean(gettone());
+function configurato(variabile = VARIABILE_USCITE) {
+  return Boolean(gettone(variabile));
 }
 
-async function chiama(metodo, corpo = {}) {
-  if (!configurato()) {
-    return { ok: false, descrizione: "TELEGRAM_USCITE_TOKEN non configurato" };
+async function chiama(metodo, corpo = {}, variabile = VARIABILE_USCITE) {
+  if (!configurato(variabile)) {
+    return { ok: false, descrizione: `${variabile} non configurato` };
   }
 
   try {
-    const risposta = await fetch(`https://api.telegram.org/bot${gettone()}/${metodo}`, {
+    const risposta = await fetch(`https://api.telegram.org/bot${gettone(variabile)}/${metodo}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(corpo),
@@ -106,4 +121,29 @@ function chiSono() {
   return chiama("getMe");
 }
 
-module.exports = { aggiornamenti, chiSono, configurato, esc, invia };
+/** Le stesse funzioni, per un altro bot: `bot("TELEGRAM_MANGA_TOKEN")`. */
+function bot(variabile) {
+  return {
+    configurato: () => configurato(variabile),
+    esc,
+    invia: (chatId, testo, { silenzioso = false, anteprima = false } = {}) =>
+      chiama(
+        "sendMessage",
+        {
+          chat_id: chatId,
+          text: testo,
+          parse_mode: "HTML",
+          disable_notification: silenzioso,
+          link_preview_options: { is_disabled: !anteprima }
+        },
+        variabile
+      ),
+    aggiornamenti: () => chiama("getUpdates", { timeout: 0, allowed_updates: ["message"] }, variabile),
+    chiSono: () => chiama("getMe", {}, variabile)
+  };
+}
+
+// Il bot della spesa manga (@Spesamanga10xbot): il riepilogo del 10.
+const manga = bot("TELEGRAM_MANGA_TOKEN");
+
+module.exports = { aggiornamenti, bot, chiSono, configurato, esc, invia, manga };
