@@ -298,9 +298,28 @@ function valoreDi(chiave, valore) {
   return { valore: [...new Set(numeri)].sort((a, b) => a - b) };
 }
 
+/**
+ * Aggiorna una scheda. Se fra i campi ci sono i NUMERI posseduti e ne
+ * compaiono di nuovi, ognuno è un volume entrato in casa: si scrive
+ * anche l'acquisto (03/11/2026).
+ *
+ * Prima i volumi segnati dalla scheda non lasciavano traccia in
+ * `acquisti`, e «Il vostro mese» — che conta gli acquisti — non li
+ * vedeva: i volumi sparsi di Yu-Gi-Oh di ottobre erano in collezione e
+ * non nel riassunto. Ora la scheda fa quello che fanno il bot e la
+ * casella Cerca: le stesse regole di `services/acquisti.js` (blocchi
+ * contigui, prezzo diviso in proporzione), con data di oggi e il prezzo
+ * di copertina della serie (o il costo) come stima.
+ *
+ * Solo i numeri AGGIUNTI contano: salvare la scheda con lo stesso
+ * elenco, o con qualche numero in meno, non scrive niente. Chi sta
+ * sistemando l'archivio e NON vuole registrare acquisti manda
+ * `senzaAcquisto: true`.
+ */
 async function aggiornaManga(id, body) {
   const set = [];
   const valori = [];
+  let nuoviNumeri = null;
 
   for (const [chiave, colonna] of Object.entries(CAMPI_AGGIORNABILI)) {
     if (body[chiave] === undefined) continue;
@@ -308,6 +327,8 @@ async function aggiornaManga(id, body) {
     const { valore, errore } = valoreDi(chiave, body[chiave]);
 
     if (errore) return { errore };
+
+    if (chiave === "numeriposseduti") nuoviNumeri = valore;
 
     valori.push(valore);
     set.push(`"${colonna}" = $${valori.length}`);
@@ -317,14 +338,70 @@ async function aggiornaManga(id, body) {
     return { errore: "Nessun campo da aggiornare" };
   }
 
+  const registra = nuoviNumeri !== null && body.senzaAcquisto !== true;
+
   valori.push(id);
 
-  const { rows } = await pool.query(
-    `UPDATE "Manga" SET ${set.join(", ")} WHERE "ID" = $${valori.length} RETURNING *`,
-    valori
-  );
+  const cliente = await pool.connect();
 
-  return rows.length === 0 ? { errore: "Record non trovato" } : { riga: rows[0] };
+  try {
+    await cliente.query("BEGIN");
+
+    let aggiunti = [];
+    let unitario = 0;
+
+    if (registra) {
+      const { rows: prima } = await cliente.query(
+        `SELECT "NumeriPosseduti", "PrezzoCopertina", "Costo" FROM "Manga" WHERE "ID" = $1 FOR UPDATE`,
+        [id]
+      );
+
+      if (prima.length === 0) {
+        await cliente.query("ROLLBACK");
+        return { errore: "Record non trovato" };
+      }
+
+      const avevo = new Set((prima[0].NumeriPosseduti || []).map(Number));
+
+      aggiunti = nuoviNumeri.filter((n) => !avevo.has(n));
+
+      // Il prezzo scritto nella stessa richiesta vale più di quello vecchio.
+      unitario = Number(body.prezzoCopertina ?? prima[0].PrezzoCopertina) || Number(body.costo ?? prima[0].Costo) || 0;
+    }
+
+    const { rows } = await cliente.query(
+      `UPDATE "Manga" SET ${set.join(", ")} WHERE "ID" = $${valori.length} RETURNING *`,
+      valori
+    );
+
+    if (rows.length === 0) {
+      await cliente.query("ROLLBACK");
+      return { errore: "Record non trovato" };
+    }
+
+    if (aggiunti.length > 0) {
+      const { blocchi, ripartisci } = require("../services/acquisti");
+      const { oggiInItalia } = require("../services/usciteManga");
+      const giorno = oggiInItalia();
+
+      for (const g of ripartisci(unitario * aggiunti.length, blocchi(aggiunti))) {
+        await cliente.query(
+          `INSERT INTO acquisti (manga_id, volume_da, volume_a, prezzo, data_acquisto, condizione)
+           VALUES ($1, $2, $3, $4, $5, 'nuovo')`,
+          [id, g.da, g.a, g.prezzo, giorno]
+        );
+      }
+    }
+
+    await cliente.query("COMMIT");
+
+    return { riga: rows[0], acquistiRegistrati: aggiunti };
+  } catch (errore) {
+    await cliente.query("ROLLBACK");
+    throw errore;
+  } finally {
+    cliente.release();
+  }
 }
 
 // --------------------------------------------------
