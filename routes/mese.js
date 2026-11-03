@@ -94,6 +94,16 @@ router.get("/", async (req, res) => {
           LIMIT 1`,
         finestra
       ),
+      // Ogni acquisto del mese, con la serie: l'elenco di cosa è entrato.
+      pool.query(
+        `SELECT m."ID" AS id, m."Titolo" AS titolo, m."Edizione" AS edizione,
+                m."CoverURL" AS copertina, a.volume_da, a.volume_a,
+                a.prezzo::float AS prezzo, a.data_acquisto::text AS data
+           FROM acquisti a JOIN "Manga" m ON m."ID" = a.manga_id
+          WHERE a.data_acquisto >= $1::date AND a.data_acquisto < ($1::date + INTERVAL '1 month')
+          ORDER BY a.data_acquisto DESC, a.id DESC`,
+        finestra
+      ),
       pool.query(
         `SELECT u.id, u.nickname, u.colore, COUNT(*)::int AS volumi
            FROM reading_history r JOIN utenti u ON u.id = r.utente_id
