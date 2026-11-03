@@ -1,12 +1,12 @@
 /**
- * La ricerca del 9 — cosa è uscito delle tue serie in corso.
+ * La ricerca del 7 — cosa è uscito delle tue serie in corso.
  *
  * AnimeClick non si può più leggere in automatico (verifica anti-bot di
  * Cloudflare sul calendario). Finché non ci sarà un accesso concordato,
- * il 9 di ogni mese si cerca ALTROVE, solo per le serie in corso della
- * collezione, i volumi usciti dal 10 del mese scorso al 10 di questo
+ * il 7 di ogni mese si cerca ALTROVE, solo per le serie in corso della
+ * collezione, i volumi usciti dall'8 del mese scorso all'8 di questo
  * mese. Se un volume si trova lo si scrive in `uscite_manga` (e il
- * riepilogo del 10 lo racconta); se non si trova non si scrive niente.
+ * riepilogo dell'8 lo racconta); se non si trova non si scrive niente.
  *
  * La fonte è Fumettologica, che ogni settimana pubblica l'elenco dei
  * volumi in uscita di Planet Manga (Panini), J-Pop e Star Comics: vedi
@@ -24,22 +24,42 @@
  * cosa ha trovato: è il modo di giudicare la fonte prima di fidarsene.
  */
 
-const { salvaUscite, oggiInItalia } = require("./usciteManga");
-const { dieciDelMesePrima } = require("./riepilogoUscite");
+const { salvaUscite, oggiInItalia, piuGiorni } = require("./usciteManga");
+const { giornoDelMesePrima, GIORNO_RIEPILOGO, dueCifre } = require("./riepilogoUscite");
 const { fonteDi, usciteDellaRivista } = require("./usciteFumettologica");
 
 const FONTE = "fumettologica";
 
 const nomeSerie = (s) => String(s.Titolo).trim() + (s.Edizione ? ` · ${s.Edizione}` : "");
 
-/**
- * Il lavoro intero. `oggi` (AAAA-MM-GG) serve alle prove.
- */
-async function cercaUsciteDelMese(pool, { prova = false, oggi = null } = {}) {
+/** La ricerca del 7: dall'8 del mese scorso all'8 di questo. `oggi` (AAAA-MM-GG) serve alle prove. */
+function cercaUsciteDelMese(pool, { prova = false, oggi = null } = {}) {
   const giorno = oggi || oggiInItalia();
-  const dopo = dieciDelMesePrima(giorno);
-  const fino = `${giorno.slice(0, 7)}-10`;
 
+  return cercaNellaFinestra(pool, {
+    prova,
+    dopo: giornoDelMesePrima(giorno),
+    fino: `${giorno.slice(0, 7)}-${dueCifre(GIORNO_RIEPILOGO)}`
+  });
+}
+
+/**
+ * La ricerca settimanale: due settimane indietro e due avanti da oggi.
+ *
+ * Tiene aggiornata la home («Esce questa settimana») e la pagina Uscite:
+ * Fumettologica pubblica l'elenco di una settimana in quella settimana
+ * (Star Comics il lunedì, Planet Manga a metà settimana), quindi il giro
+ * mensile da solo vedrebbe le uscite di dopo giorni. Due settimane
+ * indietro perché un giro saltato non lasci buchi; avanti non si sa di più
+ * di quello che già hanno pubblicato, e va bene così.
+ */
+function cercaUsciteSettimana(pool, { prova = false, oggi = null } = {}) {
+  const giorno = oggi || oggiInItalia();
+
+  return cercaNellaFinestra(pool, { prova, dopo: piuGiorni(giorno, -14), fino: piuGiorni(giorno, 14) });
+}
+
+async function cercaNellaFinestra(pool, { prova, dopo, fino }) {
   const { rows: serie } = await pool.query(
     `SELECT "ID", "Titolo", "Edizione", "Editore"
        FROM "Manga"
@@ -111,4 +131,4 @@ async function cercaUsciteDelMese(pool, { prova = false, oggi = null } = {}) {
   return esito;
 }
 
-module.exports = { cercaUsciteDelMese };
+module.exports = { cercaUsciteDelMese, cercaUsciteSettimana };

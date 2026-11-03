@@ -1,0 +1,47 @@
+name: Cerca uscite manga (settimana)
+# Due volte a settimana: le uscite delle serie in corso nelle due settimane
+# intorno a oggi, da Fumettologica, scritte in `uscite_manga`. È quello che
+# tiene vivi la home («Esce questa settimana») e la pagina Uscite: senza,
+# il giro mensile del 7 farebbe comparire i volumi con giorni di ritardo.
+#
+# Il lunedì a mezzogiorno UTC: Star Comics pubblica il suo elenco il lunedì.
+# Il mercoledì alle 19 UTC: Planet Manga e J-Pop pubblicano a metà settimana,
+# di giorno, e la sera sono già tutti usciti prima del giovedì.
+#
+# Poche richieste (una per editore coperto) e con una pausa fra l'una e
+# l'altra: è un sito di altri, vedi `services/usciteFumettologica.js`.
+# Se un giro salta non si perde niente: la finestra copre due settimane
+# indietro, e le righe si riscrivono senza duplicarsi.
+on:
+  schedule:
+    - cron: "0 12 * * 1"
+    - cron: "0 19 * * 3"
+  workflow_dispatch:
+    inputs:
+      prova:
+        description: "A vuoto: cerca e racconta, ma non scrive"
+        type: boolean
+        default: true
+
+jobs:
+  cerca:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chiama il backend
+        run: |
+          risposta=$(curl -sS -w "\n%{http_code}" -X POST \
+            --max-time 120 \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{"settimana": true, "prova": ${{ github.event_name == 'workflow_dispatch' && inputs.prova || false }}}' \
+            "https://mangavault10x-api.onrender.com/api/manga/uscite/cerca")
+
+          corpo=$(echo "$risposta" | head -n -1)
+          codice=$(echo "$risposta" | tail -n 1)
+
+          echo "$corpo"
+
+          if [ "$codice" != "200" ]; then
+            echo "HTTP $codice"
+            exit 1
+          fi

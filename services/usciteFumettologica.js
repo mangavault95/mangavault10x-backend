@@ -12,7 +12,7 @@
  *
  * ⚠️ La data è quella della SETTIMANA («12 – 18 ottobre»), non del
  * giorno. Si salva il giovedi della settimana, che è il giorno in cui
- * di norma escono i manga: per il riepilogo del 10 serve il mese, non
+ * di norma escono i manga: per il riepilogo dell'8 serve il mese, non
  * il giorno, e dire «giovedi» è più onesto che inventare una precisione.
  *
  * Niente dipendenze del database: le funzioni ricevono le serie come

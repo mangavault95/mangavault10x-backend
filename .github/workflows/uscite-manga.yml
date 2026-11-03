@@ -2,8 +2,8 @@ name: Uscite manga
 # Mette da parte il calendario manga di AnimeClick, una volta al giorno.
 #
 # AnimeClick mostra solo da oggi in avanti: un volume uscito ieri sparisce
-# dalla pagina. Senza questa copia non si potrebbe dire «cosa è uscito dal
-# 10 al 10» (il riepilogo mensile) né mostrare le uscite passate sul sito.
+# dalla pagina. Senza questa copia non si potrebbe dire «cosa è uscito dall'8
+# all'8» (il riepilogo mensile) né mostrare le uscite passate sul sito.
 #
 # Alle 6:15 UTC, un quarto d'ora dopo il calendario anime: stesso sito,
 # e due richieste ravvicinate sono meno gentili di due distanziate.
@@ -15,7 +15,7 @@ name: Uscite manga
 # (Cloudflare) sul calendario e da qui la lettura risponde 403, quindi
 # il giro quotidiano falliva ogni giorno. Resta il file, e si lancia a
 # mano, per quando arriverà un accesso concordato: basta rimettere il
-# `schedule` qui sotto. Nel frattempo le uscite si cercano il 9 di ogni
+# `schedule` qui sotto. Nel frattempo le uscite si cercano il 7 di ogni
 # mese con `cerca-uscite-manga.yml`.
 on:
   # schedule:

@@ -1,7 +1,7 @@
 /**
- * Il riepilogo del 10 — «cosa è uscito e ti manca».
+ * Il riepilogo dell'8 — «cosa è uscito e ti manca».
  *
- * Una volta al mese il bot della spesa manga (@Spesamanga10xbot) scrive i volumi usciti dal 10
+ * Una volta al mese il bot della spesa manga (@Spesamanga10xbot) scrive i volumi usciti dall'8
  * del mese scorso a oggi per le serie in collezione, e dice quali non
  * ci sono ancora. Serve a recuperarli in una volta sola invece di
  * accorgersene a caso in fumetteria.
@@ -11,10 +11,15 @@
  * c'è solo cosa mandare e a chi; i dati li ha già messi da parte il giro
  * quotidiano del calendario (`registraCalendario`).
  *
- * La finestra è (10 del mese scorso, 10 di questo mese]: il giorno di
+ * La finestra è (8 del mese scorso, 8 di questo mese]: il giorno di
  * partenza è escluso e quello di arrivo incluso, così il riepilogo
  * seguente comincia dove questo finisce e un volume uscito proprio il
- * 10 non si conta due volte né si perde.
+ * 8 non si conta due volte né si perde.
+ *
+ * (03/11/2026: il giorno era il 10, Carmine l'ha portato all'8. Sta in
+ * `GIORNO_RIEPILOGO`: cambiarlo qui sposta la finestra; i due cron dei
+ * workflow — la ricerca il giorno prima, il riepilogo quel giorno — si
+ * cambiano a mano.)
  *
  * Come per gli avvisi si SEGNA prima e si MANDA dopo, e se la mandata
  * fallisce si toglie il segno: vedi `services/avvisi.js` per il perché.
@@ -34,16 +39,21 @@ const MESI = [
   "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"
 ];
 
-/** Il 10 del mese prima di `giorno` ("AAAA-MM-GG"). */
-function dieciDelMesePrima(giorno) {
+/** Il giorno in cui chiude la finestra, e a cui arriva il riepilogo. */
+const GIORNO_RIEPILOGO = 8;
+
+const dueCifre = (n) => String(n).padStart(2, "0");
+
+/** Il giorno del riepilogo del mese prima di `giorno` ("AAAA-MM-GG"). */
+function giornoDelMesePrima(giorno) {
   const [anno, mese] = giorno.split("-").map(Number);
   const a = mese === 1 ? anno - 1 : anno;
   const m = mese === 1 ? 12 : mese - 1;
 
-  return `${a}-${String(m).padStart(2, "0")}-10`;
+  return `${a}-${dueCifre(m)}-${dueCifre(GIORNO_RIEPILOGO)}`;
 }
 
-/** "10 ottobre", "3 nov": la data come si dice a voce. */
+/** "8 ottobre", "3 nov": la data come si dice a voce. */
 function giornoMese(data, breve = false) {
   const [, m, g] = data.split("-").map(Number);
   const mese = MESI[m - 1];
@@ -159,7 +169,7 @@ async function riepilogaMese(pool, { prova = false, oggi = null } = {}) {
   }
 
   const fino = oggi || oggiInItalia();
-  const dopo = dieciDelMesePrima(fino);
+  const dopo = giornoDelMesePrima(fino);
 
   const uscite = await usciteTra(pool, { dopo, fino, soloMie: true });
   const persone = await destinatari(pool);
@@ -221,4 +231,4 @@ async function riepilogaMese(pool, { prova = false, oggi = null } = {}) {
   return esito;
 }
 
-module.exports = { riepilogaMese, messaggi, dieciDelMesePrima };
+module.exports = { riepilogaMese, messaggi, giornoDelMesePrima, GIORNO_RIEPILOGO, dueCifre };

@@ -22,7 +22,7 @@ const VARIABILE_USCITE = "TELEGRAM_USCITE_TOKEN";
 /**
  * I bot sono due che MANDANO e basta: quello delle uscite anime
  * (`TELEGRAM_USCITE_TOKEN`) e quello della spesa manga
- * (`TELEGRAM_MANGA_TOKEN`, il riepilogo del 10). Stesse funzioni,
+ * (`TELEGRAM_MANGA_TOKEN`, il riepilogo dell'8). Stesse funzioni,
  * token diverso: `bot(variabile)` le fabbrica per quello scelto, e le
  * esportazioni di sempre restano quelle del bot delle uscite.
  *
@@ -143,7 +143,7 @@ function bot(variabile) {
   };
 }
 
-// Il bot della spesa manga (@Spesamanga10xbot): il riepilogo del 10.
+// Il bot della spesa manga (@Spesamanga10xbot): il riepilogo dell'8.
 const manga = bot("TELEGRAM_MANGA_TOKEN");
 
 module.exports = { aggiornamenti, bot, chiSono, configurato, esc, invia, manga };

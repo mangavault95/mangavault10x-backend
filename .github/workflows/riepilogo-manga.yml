@@ -1,5 +1,5 @@
 name: Riepilogo uscite manga
-# Il 10 di ogni mese, su Telegram: i volumi usciti dal 10 del mese scorso
+# L'8 di ogni mese, su Telegram: i volumi usciti dall'8 del mese scorso
 # a oggi per le tue serie, e quali ti mancano da recuperare.
 #
 # Alle 7:00 UTC (8 o 9 in Italia), dopo il giro quotidiano delle 6:15 che
@@ -10,7 +10,7 @@ name: Riepilogo uscite manga
 # è già arrivato, e il secondo giro trova il posto occupato.
 on:
   schedule:
-    - cron: "0 7 10 * *"
+    - cron: "0 7 8 * *"
   workflow_dispatch:
     inputs:
       prova:

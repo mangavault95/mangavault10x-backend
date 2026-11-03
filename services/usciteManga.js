@@ -79,6 +79,11 @@ async function paginaCalendario(quando) {
 /**
  * Le uscite dei prossimi `giorni` per le serie della collezione.
  *
+ * (03/11/2026: legge da `uscite_manga`, non più in diretta dal calendario
+ * di AnimeClick, che ha messo una verifica anti-bot: la home restava senza
+ * volumi. Le uscite le scrive la ricerca di Fumettologica, vedi
+ * `services/cercaUscite.js`: quella del 7 e quella settimanale.)
+ *
  * Ogni uscita porta il suo `stato` rispetto a quello che avete:
  *   "prossimo"  è il volume dopo l'ultimo in casa
  *   "manca"     prima di questo ve ne mancano altri (`mancanti`)
@@ -87,22 +92,9 @@ async function paginaCalendario(quando) {
  */
 async function usciteDellaCollezione(pool, { giorni = 7 } = {}) {
   const dal = oggiInItalia();
-  const al = piuGiorni(dal, giorni);
 
-  // La pagina corrente va da oggi a fine mese; se la finestra scavalca
-  // il mese, serve anche quella dopo. Un intoppo sulla seconda non deve
-  // costare la prima.
-  const pagine = [paginaCalendario(null)];
-
-  if (al.slice(0, 7) !== dal.slice(0, 7)) {
-    pagine.push(paginaCalendario("next-month").catch(() => []));
-  }
-
-  const calendario = (await Promise.all(pagine))
-    .flat()
-    .filter((uscita) => uscita.data >= dal && uscita.data <= al);
-
-  return abbinaAllaCollezione(pool, calendario);
+  // «dopo» è esclusa: per avere anche oggi si parte da ieri.
+  return usciteTra(pool, { dopo: piuGiorni(dal, -1), fino: piuGiorni(dal, giorni), soloMie: true });
 }
 
 /**
@@ -189,7 +181,7 @@ async function abbinaAllaCollezione(pool, calendario) {
  *
  * AnimeClick mostra solo da oggi in avanti: una volta passato, un
  * volume sparisce da lì e non c'è modo di sapere che è uscito. Per
- * dire «ecco cosa è uscito dal 10 al 10» bisogna averlo scritto prima,
+ * dire «ecco cosa è uscito dall'8 all'8» bisogna averlo scritto prima,
  * ed è quello che fa questo giro, una volta al giorno: legge la pagina
  * del mese e quella dopo e le copia in `uscite_manga`. Le righe non
  * si cancellano mai, e se una data cambia si aggiorna la stessa riga.
@@ -239,7 +231,7 @@ async function registraCalendario(pool, { scrivi = true } = {}) {
  * `fonte` si ricorda riga per riga perché le fonti non valgono lo
  * stesso: una data di AnimeClick o scritta a mano ("manuale") non si
  * lascia mai sovrascrivere da una di un'altra fonte (Fumettologica, la
- * ricerca del 9 del mese), mentre il contrario sì. Restituisce quante
+ * ricerca del 7 del mese), mentre il contrario sì. Restituisce quante
  * righe sono nuove o cambiate.
  */
 async function salvaUscite(pool, uscite, fonte) {
@@ -291,7 +283,7 @@ function chiaveUscita(u) {
  * Le uscite messe da parte fra due date, tutte o solo le vostre.
  *
  * `dopo` esclusa e `fino` inclusa: così due finestre una dietro l'altra
- * (dal 10 al 10, poi dal 10 al 10) non contano mai due volte il giorno
+ * (dall'8 all'8, poi dall'8 all'8) non contano mai due volte il giorno
  * di confine.
  *
  * Con `soloMie` restano quelle delle serie in collezione (con lo stato

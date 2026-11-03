@@ -1,9 +1,9 @@
 name: Cerca uscite manga
-# Il 9 di ogni mese: cosa è uscito delle serie in corso dal 10 del mese
-# scorso al 10 di questo. Se un volume si trova lo si scrive, se no
-# niente. Il giorno dopo, il 10, il riepilogo lo racconta su Telegram.
+# Il 7 di ogni mese: cosa è uscito delle serie in corso dall'8 del mese
+# scorso all'8 di questo. Se un volume si trova lo si scrive, se no
+# niente. Il giorno dopo, l'8, il riepilogo lo racconta su Telegram.
 #
-# Perché il 9 e non il 10: il riepilogo delle 7:00 UTC del 10 deve
+# Perché il 7 e non l'8: il riepilogo delle 7:00 UTC dell'8 deve
 # trovare la tabella già piena. Fare tutto lo stesso giorno
 # vorrebbe dire che un ritardo di GitHub Actions (succede, anche di
 # venti minuti) fa partire il riepilogo prima della ricerca.
@@ -13,7 +13,7 @@ name: Cerca uscite manga
 # significa. A mano, con `prova` attivo, dice cosa troverebbe senza scrivere.
 on:
   schedule:
-    - cron: "0 6 9 * *"
+    - cron: "0 6 7 * *"
   workflow_dispatch:
     inputs:
       prova:

@@ -791,7 +791,7 @@ router.get("/uscite", async (req, res) => {
   } catch (err) {
     console.error("MANGA USCITE ERROR:", err.message);
 
-    return res.json({ uscite: [], errore: "Il calendario di AnimeClick non risponde" });
+    return res.json({ uscite: [], errore: "Le uscite non si leggono adesso" });
   }
 });
 
@@ -857,20 +857,25 @@ router.post("/uscite/aggiorna", richiedeSegretoCron, async (req, res) => {
 });
 
 /**
- * POST /api/manga/uscite/cerca — la ricerca del 9: cosa è uscito delle
- * serie in corso dal 10 del mese scorso al 10 di questo, scritto in
+ * POST /api/manga/uscite/cerca — la ricerca del 7: cosa è uscito delle
+ * serie in corso dall'8 del mese scorso all'8 di questo, scritto in
  * `uscite_manga` solo se trovato (vedi `services/cercaUscite.js`).
  * Protetta dal segreto del cron.
  *
  *   {"prova": true}          cerca e racconta, ma non scrive
- *   {"oggi": "2026-11-09"}   per le prove: finge un altro giorno
+ *   {"oggi": "2026-11-07"}   per le prove: finge un altro giorno
+ *   {"settimana": true}      invece del mese, le due settimane intorno a oggi
+ *                            (il giro che tiene la home aggiornata)
  */
 router.post("/uscite/cerca", richiedeSegretoCron, async (req, res) => {
   const prova = req.body?.prova === true;
   const oggi = /^\d{4}-\d{2}-\d{2}$/.test(req.body?.oggi || "") ? req.body.oggi : null;
 
   try {
-    const esito = await require("../services/cercaUscite").cercaUsciteDelMese(pool, { prova, oggi });
+    const cerca = require("../services/cercaUscite");
+    const esito = req.body?.settimana === true
+      ? await cerca.cercaUsciteSettimana(pool, { prova, oggi })
+      : await cerca.cercaUsciteDelMese(pool, { prova, oggi });
 
     console.log(
       `📚 Ricerca uscite (${esito.periodo.dopo} → ${esito.periodo.fino}${prova ? ", a vuoto" : ""}): ` +
