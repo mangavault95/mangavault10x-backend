@@ -29,6 +29,46 @@ function meseDi(grezzo) {
   return scorso.toISOString().slice(0, 7);
 }
 
+/**
+ * Gli acquisti del mese raggruppati per serie: quali volumi (come numeri
+ * in fila, «3-5, 8»), quanti, quanto sono costati. In ordine di quanti
+ * volumi sono entrati, poi dal più recente. Un acquisto senza numero di
+ * volume (se la riga non lo dice) conta come un volume solo e non finisce
+ * fra i numeri.
+ */
+function elencoAcquisti(righe) {
+  const perSerie = new Map();
+
+  for (const r of righe) {
+    if (!perSerie.has(r.id)) {
+      perSerie.set(r.id, {
+        id: r.id,
+        titolo: r.titolo,
+        edizione: r.edizione || null,
+        copertina: r.copertina,
+        volumi: 0,
+        spesa: 0,
+        numeri: new Set(),
+        ultimo: r.data
+      });
+    }
+
+    const s = perSerie.get(r.id);
+    const da = r.volume_da ?? r.volume_a;
+    const a = r.volume_a ?? r.volume_da;
+
+    s.volumi += da == null ? 1 : a - da + 1;
+    s.spesa += r.prezzo || 0;
+
+    if (da != null) for (let n = da; n <= a; n += 1) s.numeri.add(n);
+    if (r.data > s.ultimo) s.ultimo = r.data;
+  }
+
+  return [...perSerie.values()]
+    .sort((x, y) => y.volumi - x.volumi || y.ultimo.localeCompare(x.ultimo))
+    .map(({ numeri, ...s }) => ({ ...s, spesa: Math.round(s.spesa * 100) / 100, numeri: [...numeri].sort((p, q) => p - q) }));
+}
+
 router.get("/", async (req, res) => {
   const mese = meseDi(req.query.m);
   const dal = `${mese}-01`;
@@ -36,7 +76,7 @@ router.get("/", async (req, res) => {
   try {
     const finestra = [dal];
 
-    const [acquisti, serieTop, letti, puntate, animeTop] = await Promise.all([
+    const [acquisti, serieTop, righeAcquisti, letti, puntate, animeTop] = await Promise.all([
       pool.query(
         `SELECT COALESCE(SUM(volume_a - volume_da + 1), 0)::int AS volumi,
                 COALESCE(SUM(prezzo), 0)::float AS spesa
@@ -86,7 +126,7 @@ router.get("/", async (req, res) => {
 
     return res.json({
       mese,
-      acquisti: { ...acquisti.rows[0], serie: serieTop.rows[0] || null },
+      acquisti: { ...acquisti.rows[0], serie: serieTop.rows[0] || null, elenco: elencoAcquisti(righeAcquisti.rows) },
       letti: letti.rows,
       puntate: puntate.rows,
       anime: animeTop.rows[0] || null
