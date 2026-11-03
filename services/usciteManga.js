@@ -228,19 +228,43 @@ async function registraCalendario(pool, { scrivi = true } = {}) {
 
   if (!scrivi || righe.length === 0) return esito;
 
+  esito.scritte = await salvaUscite(pool, righe.map(([, u]) => u), "animeclick");
+
+  return esito;
+}
+
+/**
+ * Scrive delle uscite in `uscite_manga`, da qualunque fonte vengano.
+ *
+ * `fonte` si ricorda riga per riga perché le fonti non valgono lo
+ * stesso: una data di AnimeClick o scritta a mano ("manuale") non si
+ * lascia mai sovrascrivere da una di un'altra fonte (Fumettologica, la
+ * ricerca del 9 del mese), mentre il contrario sì. Restituisce quante
+ * righe sono nuove o cambiate.
+ */
+async function salvaUscite(pool, uscite, fonte) {
+  if (uscite.length === 0) return 0;
+
+  // Una chiave sola per riga: la stessa uscita trovata due volte conta una volta.
+  const perChiave = new Map(uscite.map((u) => [chiaveUscita(u), u]));
+  const righe = [...perChiave.entries()];
+
   const { rowCount } = await pool.query(
     `
-    INSERT INTO uscite_manga (chiave, data, serie, numero, titolo, edizione, editore, copertina)
-    SELECT * FROM UNNEST(
-      $1::text[], $2::date[], $3::text[], $4::int[], $5::text[], $6::text[], $7::text[], $8::text[]
-    )
+    INSERT INTO uscite_manga (chiave, data, serie, numero, titolo, edizione, editore, copertina, fonte)
+    SELECT k, d, s, n, t, e, ed, c, $9::text
+      FROM UNNEST(
+        $1::text[], $2::date[], $3::text[], $4::int[], $5::text[], $6::text[], $7::text[], $8::text[]
+      ) AS x(k, d, s, n, t, e, ed, c)
     ON CONFLICT (chiave) DO UPDATE
        SET data = EXCLUDED.data,
            titolo = EXCLUDED.titolo,
            copertina = COALESCE(EXCLUDED.copertina, uscite_manga.copertina),
+           fonte = EXCLUDED.fonte,
            aggiornata_il = NOW()
-     WHERE uscite_manga.data IS DISTINCT FROM EXCLUDED.data
-        OR uscite_manga.titolo IS DISTINCT FROM EXCLUDED.titolo
+     WHERE (uscite_manga.data IS DISTINCT FROM EXCLUDED.data
+            OR uscite_manga.titolo IS DISTINCT FROM EXCLUDED.titolo)
+       AND (EXCLUDED.fonte = 'animeclick' OR uscite_manga.fonte NOT IN ('animeclick', 'manuale'))
     `,
     [
       righe.map(([k]) => k),
@@ -250,13 +274,12 @@ async function registraCalendario(pool, { scrivi = true } = {}) {
       righe.map(([, u]) => u.titolo || null),
       righe.map(([, u]) => u.edizione || null),
       righe.map(([, u]) => u.editore || null),
-      righe.map(([, u]) => u.copertina || null)
+      righe.map(([, u]) => u.copertina || null),
+      fonte
     ]
   );
 
-  esito.scritte = rowCount;
-
-  return esito;
+  return rowCount;
 }
 
 /** Serie, edizione, editore e numero: quello che fa di un'uscita la stessa uscita anche se la data si sposta. */
@@ -312,7 +335,9 @@ async function usciteTra(pool, { dopo, fino, soloMie = true }) {
 module.exports = {
   usciteDellaCollezione,
   registraCalendario,
+  salvaUscite,
   usciteTra,
+  ossa,
   edizioneDi,
   editoreDi,
   stessoEditore,

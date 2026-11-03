@@ -11,9 +11,15 @@ name: Uscite manga
 # Se un giro salta non si perde niente: la pagina corrente e quella del
 # mese dopo coprono settimane, e il giro successivo riscrive le stesse
 # righe senza duplicarle (la chiave è serie + edizione + numero).
+# ⚠️ SPENTO (03/11/2026): AnimeClick ha messo una verifica anti-bot
+# (Cloudflare) sul calendario e da qui la lettura risponde 403, quindi
+# il giro quotidiano falliva ogni giorno. Resta il file, e si lancia a
+# mano, per quando arriverà un accesso concordato: basta rimettere il
+# `schedule` qui sotto. Nel frattempo le uscite si cercano il 9 di ogni
+# mese con `cerca-uscite-manga.yml`.
 on:
-  schedule:
-    - cron: "15 6 * * *"
+  # schedule:
+  #   - cron: "15 6 * * *"
   workflow_dispatch:
     inputs:
       prova:

@@ -1,0 +1,45 @@
+name: Cerca uscite manga
+# Il 9 di ogni mese: cosa è uscito delle serie in corso dal 10 del mese
+# scorso al 10 di questo. Se un volume si trova lo si scrive, se no
+# niente. Il giorno dopo, il 10, il riepilogo lo racconta su Telegram.
+#
+# Perché il 9 e non il 10: il riepilogo delle 7:00 UTC del 10 deve
+# trovare la tabella già piena. Fare tutto lo stesso giorno
+# vorrebbe dire che un ritardo di GitHub Actions (succede, anche di
+# venti minuti) fa partire il riepilogo prima della ricerca.
+#
+# La fonte è Fumettologica (AnimeClick non si può più leggere in
+# automatico): vedi `services/usciteFumettologica.js` per cosa legge e cosa
+# significa. A mano, con `prova` attivo, dice cosa troverebbe senza scrivere.
+on:
+  schedule:
+    - cron: "0 6 9 * *"
+  workflow_dispatch:
+    inputs:
+      prova:
+        description: "A vuoto: cerca e racconta, ma non scrive"
+        type: boolean
+        default: true
+
+jobs:
+  cerca:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chiama il backend
+        run: |
+          risposta=$(curl -sS -w "\n%{http_code}" -X POST \
+            --max-time 300 \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{"prova": ${{ inputs.prova || false }}}' \
+            "https://mangavault10x-api.onrender.com/api/manga/uscite/cerca")
+
+          corpo=$(echo "$risposta" | head -n -1)
+          codice=$(echo "$risposta" | tail -n 1)
+
+          echo "$corpo"
+
+          if [ "$codice" != "200" ]; then
+            echo "HTTP $codice"
+            exit 1
+          fi
