@@ -774,8 +774,59 @@ async function categoriaDi(animeClickId, { fetchImpl = fetch } = {}) {
   return null;
 }
 
+/**
+ * Lo stato dell'edizione ITALIANA, letto dal <dl> della scheda.
+ *
+ * Conta solo la voce che nomina l'Italia («Stato in Italia»): la voce
+ * «Stato» da sola è quella dell'opera originale, e un manga concluso in
+ * Giappone può essere ancora in corso da noi — è proprio il caso che il
+ * controllo mensile deve distinguere. Se la scheda non ha una voce così,
+ * `stato` è null e non si cambia niente: meglio non sapere che sapere male.
+ *
+ * `etichette` riporta tutte le voci che parlano di stato, così chi legge il
+ * rapporto può vedere cosa c'è davvero sulla scheda e correggere il parser
+ * se AnimeClick le chiama in modo diverso.
+ */
+function leggiStatoItaliano(html) {
+  const dl = tabellaScheda(html);
+  const etichette = [];
+  let stato = null;
+  let testo = null;
+
+  for (const [, dt, dd] of dl.matchAll(/<dt>([\s\S]*?)<\/dt>\s*<dd>([\s\S]*?)<\/dd>/g)) {
+    const etichetta = testoDi(dt);
+
+    if (!/stato/i.test(etichetta)) continue;
+
+    const valore = testoDi(dd);
+
+    etichette.push(`${etichetta}: ${valore}`);
+
+    if (!/ital/i.test(etichetta)) continue;
+
+    testo = valore;
+
+    const v = senzaAccenti(valore);
+
+    if (/\bnon\s+(conclus|complet|terminat)/.test(v)) stato = "in_corso";
+    else if (/\b(conclus|complet|terminat|finit)/.test(v)) stato = "conclusa";
+    else if (/\b(in corso|in pubblicazione|in uscita)/.test(v)) stato = "in_corso";
+    else stato = null; // sospeso, annunciato, interrotto…: non si decide
+  }
+
+  return { stato, testo, etichette };
+}
+
+async function statoItalianoDi(animeClickId, { fetchImpl = fetch } = {}) {
+  const risposta = await prendi(`${BASE}/manga/${animeClickId}/-/`, {}, fetchImpl);
+
+  return leggiStatoItaliano(await risposta.text());
+}
+
 module.exports = {
   volumiUsciti,
+  leggiStatoItaliano,
+  statoItalianoDi,
   urlEdizioni,
   USER_AGENT,
   BASE,

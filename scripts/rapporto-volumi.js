@@ -5,6 +5,7 @@
 //
 //   node scripts/rapporto-volumi.js            → prova a vuoto, non tocca niente
 //   node scripts/rapporto-volumi.js --scrivi   → applica le modifiche sicure
+//   node scripts/rapporto-volumi.js --stato    → controlla anche se in Italia è conclusa
 //
 // Senza `--scrivi` il database non viene toccato: è la modalità con
 // cui guardare cosa succederebbe. Le righe segnate "da controllare"
@@ -25,6 +26,7 @@ const { Pool } = require("pg");
 const { eseguiRapportoVolumi } = require("../services/rapportoVolumi");
 
 const SCRIVI = process.argv.includes("--scrivi");
+const STATO = process.argv.includes("--stato"); // anche lo stato italiano (giro mensile)
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -34,11 +36,22 @@ const pool = new Pool({
 (async () => {
   const risultato = await eseguiRapportoVolumi(pool, {
     scrivi: SCRIVI,
+    controllaStato: STATO,
     log: (riga) => console.log(riga)
   });
 
   console.log("\n===== RIEPILOGO =====");
   for (const [azione, n] of Object.entries(risultato.conteggi)) console.log(`  ${azione.padEnd(16)} ${n}`);
+
+  if (risultato.concluse.length) {
+    console.log("\nConcluse in Italia:");
+    risultato.concluse.forEach((d) => console.log("  - " + d));
+  }
+
+  if (STATO) {
+    console.log("\nVoci di stato viste sulle schede:", risultato.etichetteStato);
+    console.log("Stato non letto per:", risultato.statoNonLetto.length, "serie");
+  }
 
   if (risultato.daControllare.length) {
     console.log("\nDa guardare a mano prima di fidarsi:");

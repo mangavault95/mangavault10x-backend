@@ -1,31 +1,45 @@
 name: Rapporto volumi Italia
 
-# Il controllo mensile di quanti volumi sono usciti in Italia per le
-# serie in corso (services/rapportoVolumi.js). Gira qui e non dentro
-# un cron in-process perché Render (piano gratuito) addormenta il
-# servizio dopo un quarto d'ora di inattività: un cron nello stesso
-# processo non si sveglierebbe mai da solo. Questa richiesta invece
-# arriva da fuori e lo sveglia, pagando solo l'attesa del primo giro.
+# Due giri, entrambi su services/rapportoVolumi.js.
 #
-# Ogni lunedì e non una volta al mese: i volumi escono ogni settimana, e
-# con un controllo mensile «Da comprare» restava indietro di settimane
-# (una serie in pari risultava ferma all'ultimo giro).
+# OGNI LUNEDÌ: quanti volumi sono usciti in Italia (le serie in corso e le
+# concluse a cui ancora mancano volumi), perché i volumi escono ogni
+# settimana e con un controllo mensile «Da comprare» restava indietro.
+#
+# IL 3 DEL MESE: lo stesso giro, e in più si legge lo stato dell'edizione
+# italiana di OGNI serie in corso. Quelle che in Italia risultano concluse
+# passano a «conclusa» e non restano in corso per sempre.
+#
+# Gira qui e non dentro un cron in-process perché Render (piano gratuito)
+# addormenta il servizio dopo un quarto d'ora di inattività: un cron nello
+# stesso processo non si sveglierebbe mai da solo. Questa richiesta invece
+# arriva da fuori e lo sveglia, pagando solo l'attesa del primo giro.
 on:
   schedule:
     - cron: "0 6 * * 1"
-  workflow_dispatch: {}
+    - cron: "0 7 3 * *"
+  workflow_dispatch:
+    inputs:
+      controllaStato:
+        description: "Controlla anche lo stato italiano (giro mensile)"
+        type: boolean
+        default: false
 
 jobs:
   rapporto-volumi:
     runs-on: ubuntu-latest
     steps:
       - name: Chiama il backend
+        env:
+          GIRO_MENSILE: ${{ github.event.schedule == '0 7 3 * *' || inputs.controllaStato == true }}
         run: |
+          # Il giro mensile legge due pagine per serie: più lento, e il
+          # servizio può dover prima svegliarsi.
           risposta=$(curl -sS -w "\n%{http_code}" -X POST \
-            --max-time 120 \
+            --max-time 600 \
             -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
             -H "Content-Type: application/json" \
-            -d '{"scrivi": true}' \
+            -d "{\"scrivi\": true, \"controllaStato\": ${GIRO_MENSILE}}" \
             "https://mangavault10x-api.onrender.com/api/manga/rapporto-volumi")
 
           corpo=$(echo "$risposta" | head -n -1)

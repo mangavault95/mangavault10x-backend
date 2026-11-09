@@ -209,10 +209,11 @@ router.post("/rapporto-volumi", richiedeSegretoCron, async (req, res) => {
   const scrivi = req.body?.scrivi !== false; // il job schedulato scrive di default
 
   try {
-    const risultato = await eseguiRapportoVolumi(pool, { scrivi });
+    const controllaStato = req.body?.controllaStato === true; // solo il giro mensile
+    const risultato = await eseguiRapportoVolumi(pool, { scrivi, controllaStato });
 
     console.log(
-      `📚 Rapporto volumi: ${risultato.scritte} aggiornate su ${risultato.mappate} mappate ` +
+      `📚 Rapporto volumi: ${risultato.scritte} aggiornate su ${risultato.mappate} mappate, ${risultato.concluse.length} passate a conclusa ` +
         `(${scrivi ? "scrittura" : "prova a vuoto"})`
     );
 

@@ -121,4 +121,25 @@ async function controllaSerie(riga, opzioni = {}) {
   return { esito, decisione };
 }
 
-module.exports = { decidiAggiornamento, controllaSerie };
+/**
+ * Una serie in corso la cui edizione italiana risulta conclusa passa a
+ * «conclusa» e non resta in corso per sempre.
+ *
+ * Le guardie, ognuna per un modo di sbagliare:
+ * - **solo in_corso → conclusa.** Il controllo non riapre mai una serie
+ *   (se l'editore la riprende lo si cambia a mano) e non tocca le altre.
+ * - **serve il numero dell'ultimo volume uscito.** Senza, non si può
+ *   scrivere quanti sono in tutto, e «conclusa» senza totale sarebbe la
+ *   scheda da finire che Gestione cerca di non lasciare in giro.
+ * - **solo se la scheda dice esplicitamente «concluso» per l'Italia**
+ *   (vedi `leggiStatoItaliano`): ogni altro testo lascia lo stato com'è.
+ */
+function decidiStato({ statoAttuale, statoItalia, ultimoVolume }) {
+  if (statoAttuale !== "in_corso") return { azione: "niente", motivo: "non è in corso" };
+  if (statoItalia !== "conclusa") return { azione: "niente", motivo: "in Italia non risulta conclusa" };
+  if (!ultimoVolume) return { azione: "da_controllare", motivo: "conclusa in Italia ma senza numero dell'ultimo volume" };
+
+  return { azione: "concludi", valore: ultimoVolume, motivo: `conclusa in Italia al volume ${ultimoVolume}` };
+}
+
+module.exports = { decidiAggiornamento, decidiStato, controllaSerie };
