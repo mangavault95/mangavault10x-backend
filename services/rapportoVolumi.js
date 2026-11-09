@@ -20,9 +20,11 @@ const PAUSA_MS_DEFAULT = 1500; // gentile con AnimeClick: non è un'API pensata 
 async function eseguiRapportoVolumi(pool, { scrivi = false, pausaMs = PAUSA_MS_DEFAULT, log = () => {} } = {}) {
   const { rows } = await pool.query(`
     SELECT "ID", "Titolo", "Edizione", "Editore", "VolumiPosseduti",
-           "VolumiItalia", "StatoSerie", "AnimeClickID"
+           "VolumiItalia", "VolumiTotali", "StatoSerie", "AnimeClickID"
       FROM "Manga"
      WHERE "StatoSerie" = 'in_corso'
+        OR ("AnimeClickID" IS NOT NULL
+            AND COALESCE("VolumiTotali", 0) > COALESCE("VolumiPosseduti", 0))
      ORDER BY "AnimeClickID" IS NULL, "Titolo"`);
 
   const mappate = rows.filter((r) => r.AnimeClickID).length;

@@ -7,11 +7,12 @@ name: Rapporto volumi Italia
 # processo non si sveglierebbe mai da solo. Questa richiesta invece
 # arriva da fuori e lo sveglia, pagando solo l'attesa del primo giro.
 #
-# Il giorno 3 e non il giorno 1: dà tempo a chi pubblica le uscite
-# italiane di aggiornare le proprie pagine dopo il weekend/inizio mese.
+# Ogni lunedì e non una volta al mese: i volumi escono ogni settimana, e
+# con un controllo mensile «Da comprare» restava indietro di settimane
+# (una serie in pari risultava ferma all'ultimo giro).
 on:
   schedule:
-    - cron: "0 6 3 * *"
+    - cron: "0 6 * * 1"
   workflow_dispatch: {}
 
 jobs:

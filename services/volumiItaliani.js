@@ -29,8 +29,17 @@ const { volumiUsciti } = require("./providers/animeclick");
  * 3. **Solo l'edizione giusta** — se ne occupa il provider, che
  *    scarta ristampe ed edizioni sorelle prima di contare.
  */
-function decidiAggiornamento({ attuale, posseduti, trovato, statoSerie }) {
-  if (statoSerie !== "in_corso") return { azione: "saltata", motivo: "non è in corso" };
+function decidiAggiornamento({ attuale, posseduti, trovato, statoSerie, totaleGiappone = null }) {
+  // Le concluse si saltano — tranne quelle a cui ancora mancano volumi:
+  // l'editore italiano può essere indietro rispetto al Giappone
+  // (Chainsaw Man: 24 in Giappone, 23 in Italia), e senza il dato
+  // italiano la pagina «Da comprare» proporrebbe un volume che in
+  // negozio non c'è.
+  const ancoraIncompleta = totaleGiappone != null && posseduti < totaleGiappone;
+
+  if (statoSerie !== "in_corso" && !ancoraIncompleta) {
+    return { azione: "saltata", motivo: "non è in corso" };
+  }
   if (trovato == null) return { azione: "niente", motivo: "nessun volume trovato" };
 
   // I volumi posseduti NON sono il pavimento del "non scende mai":
@@ -91,7 +100,8 @@ async function controllaSerie(riga, opzioni = {}) {
     attuale: riga.VolumiItalia ?? null,
     posseduti: Number(riga.VolumiPosseduti) || 0,
     trovato: esito.massimo,
-    statoSerie: riga.StatoSerie
+    statoSerie: riga.StatoSerie,
+    totaleGiappone: riga.VolumiTotali == null ? null : Number(riga.VolumiTotali)
   });
 
   // Una sequenza con dei buchi non invalida il massimo, ma vale la
