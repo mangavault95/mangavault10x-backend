@@ -7,7 +7,8 @@
 // Actions) — la logica sta qui una volta sola perché uno dei due
 // che la riscrivesse per conto suo finirebbe per divergere.
 
-const { controllaSerie, decidiStato } = require("./volumiItaliani");
+const { controllaSerie, decidiStato, decidiAggiornamento } = require("./volumiItaliani");
+const { riempiArchivio, ultimoVolumeUscito, SCARTO_MASSIMO } = require("./volumiDaUscite");
 const { statoItalianoDi } = require("./providers/animeclick");
 
 const PAUSA_MS_DEFAULT = 1500; // gentile con AnimeClick: non è un'API pensata per questo
@@ -47,8 +48,52 @@ async function eseguiRapportoVolumi(
   const etichetteViste = new Set();
   let scritte = 0;
 
+  // La riserva: se AnimeClick non risponde (verifica anti-bot, 403), il
+  // numero si prende dall'archivio delle uscite di Fumettologica. L'archivio
+  // si riempie una volta sola, alla prima serie che ne ha bisogno.
+  let archivioPronto = false;
+  let daRiserva = 0;
+  let riempimento = null;
+
   for (const r of rows) {
-    const { esito, decisione } = await controllaSerie(r);
+    let { esito, decisione } = await controllaSerie(r);
+
+    if (decisione.azione === "errore") {
+      try {
+        if (!archivioPronto) {
+          archivioPronto = true;
+          riempimento = await riempiArchivio(pool, rows, { scrivi });
+          log(`Riserva Fumettologica: ${riempimento.lette} articoli letti, ${riempimento.nuove} uscite nuove`);
+        }
+
+        const trovato = await ultimoVolumeUscito(pool, r, { extra: riempimento?.uscite });
+
+        const base = Math.max(Number(r.VolumiItalia) || 0, Number(r.VolumiPosseduti) || 0);
+
+        if (trovato != null && trovato - base > SCARTO_MASSIMO) {
+          // Troppo avanti per essere vero: non si scrive, lo vede una persona.
+          decisione = {
+            azione: "da_controllare",
+            valore: trovato,
+            motivo: `[Fumettologica] trovato ${trovato} contro ${base} che si sapeva: scarto di ${trovato - base}, forse un'altra edizione o la light novel`
+          };
+          esito = { massimo: trovato, riserva: true, url: "fumettologica" };
+        } else if (trovato != null) {
+          decisione = decidiAggiornamento({
+            attuale: r.VolumiItalia ?? null,
+            posseduti: Number(r.VolumiPosseduti) || 0,
+            trovato,
+            statoSerie: r.StatoSerie,
+            totaleGiappone: r.VolumiTotali == null ? null : Number(r.VolumiTotali)
+          });
+          decisione = { ...decisione, motivo: `[Fumettologica] ${decisione.motivo}` };
+          esito = { massimo: trovato, riserva: true, url: "fumettologica" };
+          daRiserva++;
+        }
+      } catch (e) {
+        decisione = { ...decisione, motivo: `${decisione.motivo}; riserva non riuscita: ${e.message}` };
+      }
+    }
 
     conteggi[decisione.azione] = (conteggi[decisione.azione] || 0) + 1;
 
@@ -75,7 +120,7 @@ async function eseguiRapportoVolumi(
 
     // Il giro mensile: la serie in corso la cui edizione italiana è
     // finita smette di essere «in corso». Un errore qui non ferma il giro.
-    if (controllaStato && r.StatoSerie === "in_corso" && esito) {
+    if (controllaStato && r.StatoSerie === "in_corso" && esito && !esito.riserva) {
       try {
         const letto = await statoItalianoDi(r.AnimeClickID);
 
@@ -125,6 +170,9 @@ async function eseguiRapportoVolumi(
     scritte,
     scrivi,
     controllaStato,
+    // Quante serie hanno avuto il numero dalla riserva e non da AnimeClick.
+    daRiserva,
+    riempimentoArchivio: riempimento && { lette: riempimento.lette, nuove: riempimento.nuove, errori: riempimento.errori },
     // Serie passate (o da passare, in prova) a «conclusa».
     concluse,
     // Serie di cui la scheda non dice lo stato italiano: se sono molte,

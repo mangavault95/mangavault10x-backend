@@ -147,7 +147,10 @@ async function articoli(rivista, { dopo, fino }) {
 
   const url =
     `${API}?search=${encodeURIComponent(`${rivista} in uscita questa settimana`)}` +
-    `&per_page=40&after=${inizio.toISOString().slice(0, 10)}T00:00:00&_fields=date,link,title,content`;
+    `&per_page=40&after=${inizio.toISOString().slice(0, 10)}T00:00:00` +
+    // Il tetto serve alle finestre nel passato (riempimento dell'archivio):
+    // senza, la richiesta riporterebbe i 40 articoli più recenti e non quelli cercati.
+    `&before=${fino}T23:59:59&_fields=date,link,title,content`;
 
   const risposta = await fetch(url, {
     headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
