@@ -10,6 +10,7 @@
 const { controllaSerie, decidiStato, decidiAggiornamento } = require("./volumiItaliani");
 const { riempiArchivio, ultimoVolumeUscito, SCARTO_MASSIMO } = require("./volumiDaUscite");
 const { statoItalianoDi } = require("./providers/animeclick");
+const { concludeSecondoAniList } = require("./concludeDaAniList");
 
 const PAUSA_MS_DEFAULT = 1500; // gentile con AnimeClick: non è un'API pensata per questo
 
@@ -27,7 +28,7 @@ async function eseguiRapportoVolumi(
   { scrivi = false, pausaMs = PAUSA_MS_DEFAULT, controllaStato = false, log = () => {} } = {}
 ) {
   const { rows } = await pool.query(`
-    SELECT "ID", "Titolo", "Edizione", "Editore", "VolumiPosseduti",
+    SELECT "ID", "Titolo", "Autore", "Edizione", "Editore", "VolumiPosseduti",
            "VolumiItalia", "VolumiTotali", "StatoSerie", "AnimeClickID"
       FROM "Manga"
      WHERE "StatoSerie" = 'in_corso'
@@ -120,17 +121,43 @@ async function eseguiRapportoVolumi(
 
     // Il giro mensile: la serie in corso la cui edizione italiana è
     // finita smette di essere «in corso». Un errore qui non ferma il giro.
-    if (controllaStato && r.StatoSerie === "in_corso" && esito && !esito.riserva) {
+    if (controllaStato && r.StatoSerie === "in_corso" && (esito || r.VolumiItalia)) {
       try {
-        const letto = await statoItalianoDi(r.AnimeClickID);
+        const ultimoVolume = Math.max(esito?.massimo || 0, Number(r.VolumiItalia) || 0) || null;
 
-        for (const e of letto.etichette) etichetteViste.add(e);
+        // Prima la scheda italiana di AnimeClick, se si lascia leggere.
+        let letto = { stato: null, etichette: [] };
+
+        // Se la scheda AnimeClick non ha risposto nemmeno per i volumi, inutile riprovare per lo stato.
+        if (esito && !esito.riserva) {
+          letto = await statoItalianoDi(r.AnimeClickID);
+
+          for (const e of letto.etichette) etichetteViste.add(e);
+        }
+
+        // Altrimenti (o se non ne esce niente) lo si deduce da AniList:
+        // opera finita di N volumi e in Italia usciti N o più.
+        let fonteStato = "AnimeClick";
+        let motivoAniList = null;
+
+        if (letto.stato == null) {
+          const dedotto = await concludeSecondoAniList(r, ultimoVolume);
+
+          motivoAniList = dedotto.motivo;
+
+          if (dedotto.conclusa) {
+            letto = { ...letto, stato: "conclusa" };
+            fonteStato = `AniList: ${dedotto.motivo}`;
+          }
+        }
 
         const verdetto = decidiStato({
           statoAttuale: r.StatoSerie,
           statoItalia: letto.stato,
-          ultimoVolume: Math.max(esito.massimo || 0, Number(r.VolumiItalia) || 0) || null
+          ultimoVolume
         });
+
+        if (verdetto.azione === "concludi") verdetto.motivo += ` [${fonteStato}]`;
 
         if (verdetto.azione === "concludi") {
           concluse.push(`${String(r.Titolo).trim()} → ${verdetto.motivo}`);
@@ -149,10 +176,10 @@ async function eseguiRapportoVolumi(
         } else if (verdetto.azione === "da_controllare") {
           daControllare.push(`${String(r.Titolo).trim()} → ${verdetto.motivo}`);
         } else if (letto.stato == null) {
-          statoNonLetto.push(String(r.Titolo).trim());
+          statoNonLetto.push(`${String(r.Titolo).trim()} (${motivoAniList || "stato non letto"})`);
         }
 
-        await new Promise((x) => setTimeout(x, Math.min(pausaMs, 800)));
+        await new Promise((x) => setTimeout(x, Math.max(pausaMs, 1500)));
       } catch (e) {
         statoNonLetto.push(`${String(r.Titolo).trim()} (${e.message})`);
       }
