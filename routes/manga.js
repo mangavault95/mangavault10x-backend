@@ -269,6 +269,11 @@ const CAMPI_AGGIORNABILI = {
   // `droppato` è uscito di qui insieme a `valutazione`, e per lo stesso
   // motivo: mollare una serie è di chi legge, non della serie. Si
   // scrive da /api/letture-droppate.
+  //
+  // `smessa` invece È della serie (026, 13/11/2026): «non la compriamo
+  // più», in comune ai due lettori. Arriva come sì/no e si scrive come
+  // data — da quel giorno spariscono le sue uscite (vedi `valoreDi`).
+  smessa: "SmessaIl",
   edizione: "Edizione",
   operaId: "OperaId"
 };
@@ -284,6 +289,15 @@ const MASSIMO_NUMERI = 500;
  * Postgres come errore di tipo.
  */
 function valoreDi(chiave, valore) {
+  // Sì = da adesso; no = la si segue di nuovo. Una data mandata dal
+  // browser non si accetta: «da quando» lo sa il server, non l'orologio
+  // del telefono.
+  if (chiave === "smessa") {
+    if (typeof valore !== "boolean") return { errore: "«smessa» è un sì o un no" };
+
+    return { valore: valore ? new Date() : null };
+  }
+
   if (chiave !== "numeriposseduti") return { valore: valore === "" ? null : valore };
 
   if (!Array.isArray(valore) || valore.length > MASSIMO_NUMERI) {
@@ -981,11 +995,17 @@ router.get("/statistiche", async (req, res) => {
         ROUND(COALESCE(SUM(spesa_stimata), 0), 2)       AS valore_collezione,
         ROUND(COALESCE(AVG(prezzo_volume), 0), 2)       AS prezzo_medio_volume,
         COUNT(*) FILTER (WHERE "StatoSerie" = 'conclusa')::int  AS serie_concluse,
-        COUNT(*) FILTER (WHERE "StatoSerie" = 'in_corso')::int  AS serie_in_corso,
+        -- «In corso» = esce ancora E la seguiamo: una serie smessa (026)
+        -- esce ancora, ma non è più una cosa da tenere d'occhio.
+        COUNT(*) FILTER (WHERE "StatoSerie" = 'in_corso' AND smessa.il IS NULL)::int AS serie_in_corso,
+        COUNT(*) FILTER (WHERE smessa.il IS NOT NULL)::int      AS serie_smesse,
         COUNT(*) FILTER (WHERE completamento_pct = 100)::int    AS serie_complete,
         COUNT(*) FILTER (WHERE scheda_incompleta)::int          AS schede_incomplete,
         COUNT(*) FILTER (WHERE trama_mancante)::int             AS trame_mancanti
-      FROM v_collezione_riepilogo
+      FROM v_collezione_riepilogo r
+      -- La vista è del 009 e non ha la colonna: si prende da "Manga"
+      -- invece di ricrearla (DROP VIEW + CREATE per una colonna sola).
+      LEFT JOIN LATERAL (SELECT m."SmessaIl" AS il FROM "Manga" m WHERE m."ID" = r."ID") smessa ON TRUE
     `);
 
     return res.json(rows[0]);

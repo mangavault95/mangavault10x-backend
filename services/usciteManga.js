@@ -98,6 +98,25 @@ async function usciteDellaCollezione(pool, { giorni = 7 } = {}) {
 }
 
 /**
+ * Questa uscita riguarda ancora una serie che forse avete smesso di
+ * comprare? (026, 13/11/2026)
+ *
+ * `serie.SmessaIl` è null se la seguite, altrimenti il momento in cui
+ * avete detto «non la compro più» (un Date). `uscita.data` è il giorno
+ * dell'uscita come "AAAA-MM-GG". Da qui passano TUTTI: la pagina Uscite,
+ * la home, il riepilogo Telegram dell'8 — anche per i mesi passati.
+ *
+ * Deciso da Carmine il 13/11/2026: una serie smessa sparisce da TUTTE le
+ * uscite, passate e future. Restano solo i volumi in casa (nella scheda
+ * e in collezione), che qui non passano. La data serve a sapere da quando,
+ * non a tracciare un confine.
+ */
+// eslint-disable-next-line no-unused-vars
+function ancoraSeguita(serie, uscita) {
+  return serie.SmessaIl == null;
+}
+
+/**
  * Tiene delle uscite solo quelle che vi riguardano, nella stessa
  * edizione, e dice per ognuna a che punto siete.
  *
@@ -109,7 +128,7 @@ async function usciteDellaCollezione(pool, { giorni = 7 } = {}) {
  */
 async function abbinaAllaCollezione(pool, calendario) {
   const { rows: collezione } = await pool.query(
-    `SELECT "ID", "Titolo", "Edizione", "Editore", "NumeriPosseduti", "Costo", "CoverURL" FROM "Manga"`
+    `SELECT "ID", "Titolo", "Edizione", "Editore", "NumeriPosseduti", "Costo", "CoverURL", "SmessaIl" FROM "Manga"`
   );
 
   const perTitolo = new Map();
@@ -135,6 +154,9 @@ async function abbinaAllaCollezione(pool, calendario) {
     );
 
     if (!serie) continue;
+
+    // Non la compriamo più (026): l'uscita non vi riguarda. Vedi `ancoraSeguita`.
+    if (!ancoraSeguita(serie, uscita)) continue;
 
     // La pagina corrente e quella del mese dopo possono sovrapporsi.
     const chiave = `${serie.ID}:${uscita.numero}`;

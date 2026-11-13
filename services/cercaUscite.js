@@ -64,6 +64,9 @@ async function cercaNellaFinestra(pool, { prova, dopo, fino }) {
     `SELECT "ID", "Titolo", "Edizione", "Editore"
        FROM "Manga"
       WHERE "StatoSerie" = 'in_corso'
+        -- Una serie smessa (026) non si cerca nemmeno: un articolo letto
+        -- in meno, e niente righe che poi nessuno guarderebbe.
+        AND "SmessaIl" IS NULL
       ORDER BY "Titolo"`
   );
 
