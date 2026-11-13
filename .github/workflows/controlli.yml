@@ -1,0 +1,38 @@
+name: Controlli
+# A ogni push e a ogni richiesta di unione: il codice si legge senza
+# errori di sintassi e le prove che non hanno bisogno né della rete né
+# del database passano. Gli altri file di questa cartella sono sveglie
+# che chiamano il server; questo è l'unico che guarda il codice.
+#
+# Le prove che parlano col database vero (scripts/prova-*.js con
+# DATABASE_URL) restano da lanciare a mano: qui non ci sono segreti, e
+# non devono esserci.
+on:
+  push:
+  pull_request:
+
+jobs:
+  controlli:
+    runs-on: ubuntu-latest
+    env:
+      # Valori finti: servono solo a far partire il codice, che senza
+      # si ferma apposta all'avvio.
+      JWT_SECRET: una-chiave-finta-lunga-almeno-trentadue-caratteri
+      ADMIN_USERNAME: prova
+      ADMIN_PASSWORD_HASH: "00:00"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --omit=dev
+      - name: Sintassi
+        run: |
+          for f in index.js db.js routes/*.js services/*.js services/providers/*.js scripts/*.js; do
+            node --check "$f"
+          done
+      - name: Prove
+        run: npm test
+      - name: Dipendenze con falle note
+        run: npm audit --omit=dev --audit-level=high
