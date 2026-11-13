@@ -126,9 +126,56 @@ const RICORDO_PERMESSI = 60 * 1000;
 
 const permessiRicordati = new Map();
 
+const attiviRicordati = new Map();
+
 function dimenticaPermessi(utenteId = null) {
-  if (utenteId == null) permessiRicordati.clear();
-  else permessiRicordati.delete(Number(utenteId));
+  if (utenteId == null) {
+    permessiRicordati.clear();
+    attiviRicordati.clear();
+  } else {
+    permessiRicordati.delete(Number(utenteId));
+    attiviRicordati.delete(Number(utenteId));
+  }
+}
+
+/**
+ * Questa persona può ancora entrare?
+ *
+ * Il token dura trenta giorni e dice solo «un mese fa eri dentro». Se
+ * nel frattempo il proprietario ha rifiutato quell'accesso, senza
+ * questa domanda la persona continuerebbe a scrivere in videoteca e al
+ * Cineforum fino alla scadenza. La biblioteca lo chiedeva già
+ * (`haBiblioteca`); questa è la stessa domanda per tutto il resto, con
+ * lo stesso ricordo di un minuto e lo stesso azzeramento a mano quando
+ * il proprietario decide.
+ *
+ * Prima della 009 la tabella non c'è: risponde SÌ, come si comportava
+ * il sito quando il lettore era uno.
+ */
+async function ancoraAttivo(utenteId) {
+  const id = Number(utenteId);
+
+  if (!Number.isInteger(id) || id <= 0) return true; // token di prima: solo il proprietario
+
+  const ricordo = attiviRicordati.get(id);
+
+  if (ricordo && Date.now() - ricordo.quando < RICORDO_PERMESSI) return ricordo.valore;
+
+  let valore;
+
+  try {
+    const { rows } = await pool.query(`SELECT 1 FROM utenti WHERE id = $1 AND stato = 'attivo'`, [id]);
+
+    valore = rows.length > 0;
+  } catch (err) {
+    if (err.code !== "42P01") throw err;
+
+    valore = true;
+  }
+
+  attiviRicordati.set(id, { valore, quando: Date.now() });
+
+  return valore;
 }
 
 /**
@@ -853,6 +900,7 @@ function pubblico(riga) {
 }
 
 module.exports = {
+  ancoraAttivo,
   MOTIVI,
   COLORI_LETTORE,
   PESO_FACCIA,

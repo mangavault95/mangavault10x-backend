@@ -104,7 +104,7 @@ async function traduciBlocco(blocco) {
   const params = new URLSearchParams({ q: blocco, langpair: "en|it" });
   if (EMAIL) params.set("de", EMAIL);
 
-  const res = await fetch(`${ENDPOINT}?${params}`);
+  const res = await fetch(`${ENDPOINT}?${params}`, { signal: AbortSignal.timeout(12000) });
 
   if (!res.ok) {
     throw new Error(`MyMemory HTTP ${res.status}`);

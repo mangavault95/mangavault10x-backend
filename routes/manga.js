@@ -5,6 +5,7 @@ const { richiediBiblioteca } = require("../services/biblioteca");
 const { utenteScrive } = require("../services/utenti");
 const { enrich } = require("../services/enrich");
 const { limiteFontiEsterne } = require("../services/limite");
+const { prossimoIdManga } = require("../services/idManga");
 const { eseguiRapportoVolumi } = require("../services/rapportoVolumi");
 
 // --------------------------------------------------
@@ -451,12 +452,8 @@ router.post("/", richiediBiblioteca, async (req, res) => {
     // sequenza collegata) — va calcolato a mano, o l'INSERT fallisce
     // con "null value in column ID". Stessa ricetta già usata in
     // wishlistActions.js per portare una serie dalla wishlist qui.
-    const { rows: prossimoId } = await pool.query(
-      `SELECT COALESCE(MAX("ID"), 0) + 1 AS next_id FROM "Manga"`
-    );
-
     const colonne = ['"ID"', '"Titolo"'];
-    const valori = [prossimoId[0].next_id, String(titolo).trim()];
+    const valori = [null, String(titolo).trim()];
 
     for (const [chiave, colonna] of Object.entries(CAMPI_AGGIORNABILI)) {
       if (chiave === "titolo" || req.body[chiave] === undefined) continue;
@@ -471,10 +468,30 @@ router.post("/", richiediBiblioteca, async (req, res) => {
 
     const segnaposto = colonne.map((_, i) => `$${i + 1}`).join(", ");
 
-    const { rows } = await pool.query(
-      `INSERT INTO "Manga" (${colonne.join(", ")}) VALUES (${segnaposto}) RETURNING *`,
-      valori
-    );
+    // Leggere il massimo e scrivere il successivo sono due passi: due
+    // creazioni nello stesso istante (dal sito e dal bot, o un doppio
+    // tocco) leggerebbero lo stesso numero. Il lucchetto mette in fila
+    // chi sta scegliendo un identificativo — vedi `prossimoIdManga`.
+    const cliente = await pool.connect();
+    let rows;
+
+    try {
+      await cliente.query("BEGIN");
+
+      valori[0] = await prossimoIdManga(cliente);
+
+      ({ rows } = await cliente.query(
+        `INSERT INTO "Manga" (${colonne.join(", ")}) VALUES (${segnaposto}) RETURNING *`,
+        valori
+      ));
+
+      await cliente.query("COMMIT");
+    } catch (errore) {
+      await cliente.query("ROLLBACK").catch(() => {});
+      throw errore;
+    } finally {
+      cliente.release();
+    }
 
     return res.status(201).json({ success: true, creato: rows[0] });
   } catch (err) {

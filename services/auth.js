@@ -149,8 +149,20 @@ function leggiToken(req) {
 // MIDDLEWARE
 // --------------------------------------------------
 
-/** Serve un accesso valido. */
-function requireAuth(req, res, next) {
+/**
+ * Serve un accesso valido — e valido ADESSO.
+ *
+ * La firma dice che il token l'abbiamo dato noi; non dice che lo
+ * daremmo ancora. Chi è stato rifiutato dopo averlo ricevuto ha in mano
+ * un token buono per un mese: per questo, oltre alla firma, si chiede
+ * al database se la persona è ancora dentro (`ancoraAttivo`, con un
+ * ricordo di un minuto). Il proprietario non si chiede: non può essere
+ * rifiutato, e non deve restare fuori da casa sua per una query lenta.
+ *
+ * 401 e non 403 quando l'accesso è stato tolto: è il segnale che il
+ * sito legge come «sessione finita» e a cui risponde uscendo.
+ */
+async function requireAuth(req, res, next) {
   const header = req.headers.authorization || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
 
@@ -160,10 +172,23 @@ function requireAuth(req, res, next) {
 
   try {
     req.user = jwt.verify(token, JWT_SECRET);
-    return next();
   } catch (err) {
     return res.status(403).json({ error: "Token non valido o scaduto" });
   }
+
+  if (!req.user.proprietario) {
+    try {
+      // Richiesto qui e non in cima: utenti.js richiede questo file.
+      if (!(await require("./utenti").ancoraAttivo(req.user.id))) {
+        return res.status(401).json({ error: "Questo accesso non è più attivo" });
+      }
+    } catch (err) {
+      console.error("❌ CONTROLLO ACCESSO:", err.message);
+      return res.status(503).json({ error: "Servizio momentaneamente non disponibile" });
+    }
+  }
+
+  return next();
 }
 
 /**

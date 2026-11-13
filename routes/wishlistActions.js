@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 const { richiediBiblioteca } = require("../services/biblioteca");
+const { prossimoIdManga } = require("../services/idManga");
  
 // POST /api/wishlist-actions/purchase/:id
 // Spostare un desiderio in collezione è a tutti gli effetti scrivere
@@ -88,12 +89,7 @@ router.post("/purchase/:id", richiediBiblioteca, async (req, res) => {
     }
 
     // ✅ genera ID numerico manuale
-    const nextIdResult = await client.query(`
-      SELECT COALESCE(MAX("ID"), 0) + 1 AS next_id
-      FROM "Manga"
-    `);
-
-    const nextId = nextIdResult.rows[0].next_id;
+    const nextId = await prossimoIdManga(client);
 
     // ✅ inserisci nella collezione
     const insertResult = await client.query(

@@ -16,6 +16,10 @@ const NodeCache = require("node-cache");
 const { sembraSerieCompleta, nominaEdizione } = require("../services/annunci");
 const { limiteFontiEsterne } = require("../services/limite");
 
+// Ogni chiamata a eBay con un tempo massimo: axios di suo aspetta per
+// sempre, e una scheda di serie non deve restare appesa a un prezzo.
+const ebay = axios.create({ timeout: 12000 });
+
 const cache = new NodeCache({ stdTTL: 60 * 60 * 6 });
 
 // I prezzi stanno in una memoria a parte e con un tetto. La chiave è
@@ -99,7 +103,7 @@ async function getEbayAppToken() {
 
   const auth = Buffer.from(`${EBAY_CLIENT_ID}:${EBAY_CLIENT_SECRET}`).toString("base64");
 
-  const resp = await axios.post(
+  const resp = await ebay.post(
     "https://api.ebay.com/identity/v1/oauth2/token",
     "grant_type=client_credentials&scope=https://api.ebay.com/oauth/api_scope",
     { headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/x-www-form-urlencoded" } }
@@ -131,14 +135,14 @@ async function getCategoriaManga() {
     const token = await getEbayAppToken();
     const headers = { Authorization: `Bearer ${token}` };
 
-    const albero = await axios.get(
+    const albero = await ebay.get(
       "https://api.ebay.com/commerce/taxonomy/v1/category_tree/get_default_category_tree_id?marketplace_id=EBAY_IT",
       { headers }
     );
 
     const categoryTreeId = albero.data.categoryTreeId;
 
-    const suggerimenti = await axios.get(
+    const suggerimenti = await ebay.get(
       `https://api.ebay.com/commerce/taxonomy/v1/category_tree/${categoryTreeId}/get_category_suggestions?q=manga`,
       { headers }
     );
@@ -188,7 +192,7 @@ async function cercaAnnunciAttivi(query, limite = 200) {
 
   const url = `https://api.ebay.com/buy/browse/v1/item_summary/search?${parametri.toString()}`;
 
-  const resp = await axios.get(url, {
+  const resp = await ebay.get(url, {
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",

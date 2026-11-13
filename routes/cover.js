@@ -20,7 +20,26 @@ const NodeCache = require("node-cache");
 
 // Le immagini sono piccole (50-150 KB): mille voci stanno in poche
 // decine di MB e coprono l'intera collezione.
-const cache = new NodeCache({ stdTTL: 60 * 60 * 24 * 7, maxKeys: 1000 });
+//
+// `useClones: false` perché node-cache di suo COPIA quello che gli si
+// dà, a ogni scrittura e a ogni lettura: per un Buffer vuol dire una
+// seconda immagine in memoria per ogni copertina servita. Qui i dati
+// non li modifica nessuno, la copia non protegge niente.
+const cache = new NodeCache({ stdTTL: 60 * 60 * 24 * 7, maxKeys: 1000, useClones: false });
+
+// «Piccole» è la regola, non una garanzia: il tetto per immagine è di
+// 10 MB (c'è una copertina vera da 6,5), e mille voci a quel peso sono
+// dieci giga su un server che ne ha mezzo. Il numero di voci quindi non
+// basta: si conta anche il peso, e oltre il tetto l'immagine si serve
+// lo stesso ma non si ricorda.
+const PESO_MASSIMO_CACHE = 96 * 1024 * 1024;
+
+let pesoInCache = 0;
+
+// `del` scatta sia per le cancellazioni sia per le voci scadute.
+cache.on("del", (chiave, voce) => {
+  pesoInCache = Math.max(0, pesoInCache - (voce?.dati?.length || 0));
+});
 
 // Un proxy aperto verrebbe usato per scaricare qualunque cosa a spese
 // tue, e per far sembrare che il traffico parta dal tuo server.
@@ -134,6 +153,14 @@ router.get("/", async (req, res) => {
     }
 
     const dichiarato = (risposta.headers.get("content-type") || "").split(";")[0].trim();
+
+    // Quando la fonte dice quanto pesa, si rifiuta PRIMA di scaricare:
+    // il controllo più sotto arriva a immagine già tutta in memoria.
+    if (Number(risposta.headers.get("content-length")) > DIMENSIONE_MASSIMA) {
+      await risposta.body?.cancel().catch(() => {});
+      return res.status(413).json({ error: "Immagine troppo grande" });
+    }
+
     const dati = Buffer.from(await risposta.arrayBuffer());
 
     // Un proxy che rimanda qualunque cosa diventa un modo per servire
@@ -169,7 +196,10 @@ router.get("/", async (req, res) => {
     // servire comunque l'immagine che fallire per un problema di
     // memoria interna.
     try {
-      cache.set(chiave, { dati, tipo });
+      if (pesoInCache + dati.length <= PESO_MASSIMO_CACHE && !cache.has(chiave)) {
+        cache.set(chiave, { dati, tipo });
+        pesoInCache += dati.length;
+      }
     } catch {
       /* cache piena: si prosegue senza memorizzare */
     }

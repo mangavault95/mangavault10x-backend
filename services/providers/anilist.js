@@ -121,7 +121,10 @@ async function search(title, author) {
   const res = await fetch(ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query: SEARCH_QUERY, variables: { search: title } })
+    body: JSON.stringify({ query: SEARCH_QUERY, variables: { search: title } }),
+    // Senza un tetto, una fonte che accetta la connessione e poi tace
+    // tiene appesa la richiesta — e in /enrich-bulk tutta la fila.
+    signal: AbortSignal.timeout(12000)
   });
 
   if (!res.ok) {

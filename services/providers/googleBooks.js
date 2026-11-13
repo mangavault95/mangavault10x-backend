@@ -134,7 +134,7 @@ async function fetchVolumes(query) {
     key: API_KEY
   });
 
-  const res = await fetch(`${ENDPOINT}?${params}`);
+  const res = await fetch(`${ENDPOINT}?${params}`, { signal: AbortSignal.timeout(12000) });
 
   if (res.status === 429) {
     throw new Error("Google Books: quota giornaliera esaurita");
