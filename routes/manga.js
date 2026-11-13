@@ -993,7 +993,7 @@ router.get("/statistiche", async (req, res) => {
         COUNT(*)::int                                   AS serie,
         COALESCE(SUM("VolumiPosseduti"), 0)::int        AS volumi,
         ROUND(COALESCE(SUM(spesa_stimata), 0), 2)       AS valore_collezione,
-        -- `prezzo_volume` è double precision nella vista, e ROUND(x, 2)
+        -- prezzo_volume è double precision nella vista, e ROUND(x, 2)
         -- esiste solo per numeric: senza il cast l'intera richiesta va in errore.
         ROUND(COALESCE(AVG(prezzo_volume), 0)::numeric, 2) AS prezzo_medio_volume,
         COUNT(*) FILTER (WHERE "StatoSerie" = 'conclusa')::int  AS serie_concluse,
