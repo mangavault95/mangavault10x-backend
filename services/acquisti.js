@@ -64,6 +64,40 @@ function oggiInItalia() {
 
 class AcquistoNonValido extends Error {}
 
+/**
+ * I numeri di un blocco che in casa c'erano già prima dell'acquisto.
+ *
+ * Si scrivono accanto all'acquisto (migrazione 027) perché l'annullo
+ * deve togliere solo quello che l'acquisto ha PORTATO: un doppione
+ * registrato apposta parla di un volume che c'era, e disfarlo non deve
+ * far sparire anche la copia di prima.
+ *
+ * ⚠️ gemella: `giaInCasa` in mangavault10x-bot/src/collezione.js.
+ */
+function giaInCasa(gruppo, avevo) {
+  const numeri = [];
+
+  for (let n = gruppo.da; n <= gruppo.a; n += 1) if (avevo.has(n)) numeri.push(n);
+
+  return numeri;
+}
+
+/**
+ * Toglie dai posseduti i numeri di un acquisto annullato, tranne quelli
+ * che c'erano già ($4). Per gli acquisti di prima della 027 la colonna
+ * è vuota e si toglie tutto l'intervallo, come si è sempre fatto.
+ *
+ * ⚠️ gemella: `TOGLI_NUMERI` in mangavault10x-bot/src/collezione.js.
+ */
+const TOGLI_NUMERI = `
+  UPDATE "Manga"
+     SET "NumeriPosseduti" = ARRAY(
+           SELECT n FROM unnest("NumeriPosseduti") AS n
+            WHERE NOT (n BETWEEN $1 AND $2 AND n <> ALL($4::int[]))
+            ORDER BY n
+         )
+   WHERE "ID" = $3`;
+
 /** Il primo numero che non c'è: in [1,2,3,4,5,11] è il 6, non il 12. */
 function primoMancante(posseduti) {
   const presenti = new Set(posseduti);
@@ -111,13 +145,14 @@ async function registraAcquisto(pool, { mangaId, volumi = null, prezzo = null, d
     const giorno = /^\d{4}-\d{2}-\d{2}$/.test(String(data || "")) ? data : oggiInItalia();
     const gruppi = ripartisci(totale, blocchi(numeri));
     const scritti = [];
+    const avevo = new Set(posseduti);
 
     for (const g of gruppi) {
       const { rows: riga } = await cliente.query(
-        `INSERT INTO acquisti (manga_id, volume_da, volume_a, prezzo, data_acquisto, condizione)
-         VALUES ($1, $2, $3, $4, $5, 'nuovo')
+        `INSERT INTO acquisti (manga_id, volume_da, volume_a, prezzo, data_acquisto, condizione, gia_posseduti)
+         VALUES ($1, $2, $3, $4, $5, 'nuovo', $6::int[])
          RETURNING id, volume_da, volume_a, prezzo, data_acquisto`,
-        [mangaId, g.da, g.a, g.prezzo, giorno]
+        [mangaId, g.da, g.a, g.prezzo, giorno, giaInCasa(g, avevo)]
       );
 
       scritti.push(riga[0]);
@@ -154,7 +189,7 @@ async function registraAcquisto(pool, { mangaId, volumi = null, prezzo = null, d
       mancano: buchi.length ? { da: buchi[0], a: buchi[buchi.length - 1], quanti: buchi.length } : null
     };
   } catch (errore) {
-    await cliente.query("ROLLBACK");
+    await cliente.query("ROLLBACK").catch(() => {});
     throw errore;
   } finally {
     cliente.release();
@@ -178,30 +213,32 @@ async function annullaAcquisti(pool, ids) {
     await cliente.query("BEGIN");
 
     const { rows } = await cliente.query(
-      `DELETE FROM acquisti WHERE id = ANY($1::bigint[]) RETURNING manga_id, volume_da, volume_a`,
+      `DELETE FROM acquisti WHERE id = ANY($1::bigint[]) RETURNING manga_id, volume_da, volume_a, gia_posseduti`,
       [numeri]
     );
 
     for (const r of rows) {
-      await cliente.query(
-        `UPDATE "Manga"
-            SET "NumeriPosseduti" = ARRAY(
-              SELECT n FROM unnest("NumeriPosseduti") AS n WHERE n NOT BETWEEN $1 AND $2 ORDER BY n
-            )
-          WHERE "ID" = $3`,
-        [r.volume_da, r.volume_a, r.manga_id]
-      );
+      await cliente.query(TOGLI_NUMERI, [r.volume_da, r.volume_a, r.manga_id, r.gia_posseduti || []]);
     }
 
     await cliente.query("COMMIT");
 
     return { annullati: rows.length };
   } catch (errore) {
-    await cliente.query("ROLLBACK");
+    await cliente.query("ROLLBACK").catch(() => {});
     throw errore;
   } finally {
     cliente.release();
   }
 }
 
-module.exports = { registraAcquisto, annullaAcquisti, blocchi, ripartisci, primoMancante, AcquistoNonValido };
+module.exports = {
+  registraAcquisto,
+  annullaAcquisti,
+  blocchi,
+  ripartisci,
+  primoMancante,
+  giaInCasa,
+  TOGLI_NUMERI,
+  AcquistoNonValido
+};

@@ -3,6 +3,27 @@ const router = express.Router();
 const { requireAuth, requireProprietario } = require("../services/auth");
 const utenti = require("../services/utenti");
 const immagini = require("../services/immagini");
+const { limite } = require("../services/limite");
+
+// Dieci password sbagliate in un quarto d'ora, poi si aspetta. Contano
+// solo i tentativi falliti: chi entra bene non si avvicina al blocco.
+// Il tetto globale è largo apposta — deve fermare una raffica, non
+// chiudere fuori chi ha solo dimenticato la password due volte.
+const limiteAccesso = limite({
+  finestraMs: 15 * 60 * 1000,
+  massimo: 10,
+  globale: 40,
+  soloFallite: true,
+  messaggio: "Troppi tentativi di accesso. Riprova fra qualche minuto."
+});
+
+// Chiedere di entrare è una cosa che una persona fa una volta.
+const limiteRegistrazione = limite({
+  finestraMs: 60 * 60 * 1000,
+  massimo: 5,
+  globale: 15,
+  messaggio: "Troppe richieste di registrazione. Riprova più tardi."
+});
 
 /**
  * Le persone.
@@ -56,7 +77,7 @@ async function gestisciLogin(req, res) {
   }
 }
 
-router.post("/login", gestisciLogin);
+router.post("/login", limiteAccesso, gestisciLogin);
 
 /* ==================================================
    CHIEDERE DI ENTRARE
@@ -67,7 +88,7 @@ router.post("/login", gestisciLogin);
 // l'indirizzo può riempire la schermata di Gestione di righe finte.
 const MASSIME_IN_ATTESA = 10;
 
-router.post("/registrazione", async (req, res) => {
+router.post("/registrazione", limiteRegistrazione, async (req, res) => {
   const { username, nickname, password } = req.body || {};
 
   try {
@@ -430,3 +451,4 @@ module.exports = router;
 // funzione invece di rimbalzare la richiesta da un router all'altro:
 // due strade per la stessa porta, una sola implementazione.
 module.exports.gestisciLogin = gestisciLogin;
+module.exports.limiteAccesso = limiteAccesso;

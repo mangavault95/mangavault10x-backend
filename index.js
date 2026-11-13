@@ -97,6 +97,20 @@ app.use((err, req, res, next) => {
   return res.status(500).json({ error: "Errore server" });
 });
 
+// --------------------------------------------------
+// ULTIMA RETE
+//
+// Da Node 15 una promessa rifiutata che nessuno raccoglie fa USCIRE il
+// processo. Con Express 4, che non aspetta le funzioni async, basta un
+// `await` fuori da un `try` in una rotta qualunque: il server cadrebbe
+// per tutti a causa della richiesta di uno. Qui si scrive cos'è
+// successo e si resta in piedi — l'errore va comunque corretto dove
+// nasce, questa è la rete, non la soluzione.
+// --------------------------------------------------
+process.on("unhandledRejection", (motivo) => {
+  console.error("❌ PROMESSA RIFIUTATA E NON RACCOLTA:", motivo);
+});
+
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
   console.log(`Origini autorizzate: ${allowedOrigins.join(", ") || "(nessuna!)"}`);

@@ -17,6 +17,7 @@ const express = require("express");
 const router = express.Router();
 const NodeCache = require("node-cache");
 const { trovaOpera, consigli } = require("../services/providers/animeclick");
+const { limiteFontiEsterne } = require("../services/limite");
 
 // Un giorno: i consigli sono scritti dagli utenti nel giro di anni, non
 // cambiano da un'ora all'altra. La chiave è la serie, non il titolo
@@ -29,7 +30,7 @@ const cache = new NodeCache({ stdTTL: 60 * 60 * 24, maxKeys: 500 });
 // serie appena uscita in Italia potrebbe comparire domani.
 const TTL_NIENTE = 60 * 60 * 6;
 
-router.get("/animeclick", async (req, res) => {
+router.get("/animeclick", limiteFontiEsterne, async (req, res) => {
   const titolo = (req.query.titolo || "").trim();
   const autore = (req.query.autore || "").trim() || null;
   const idDichiarato = Number(req.query.id) || null;

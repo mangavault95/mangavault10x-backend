@@ -3,7 +3,9 @@ const {
   credenzialiProprietario,
   firmaToken,
   hashPassword,
-  verifyPassword
+  creaHash,
+  verificaPassword,
+  PASSWORD_MASSIMA
 } = require("./auth");
 
 /**
@@ -373,7 +375,7 @@ async function accedi(username, password) {
 
   const utente = rows[0] || null;
 
-  const passwordGiusta = verifyPassword(
+  const passwordGiusta = await verificaPassword(
     String(password || ""),
     utente ? utente.password_hash : HASH_FINTO
   );
@@ -406,7 +408,7 @@ async function accedi(username, password) {
  * Il token che ne esce non ha identificativo, e `utenteScrive` lo
  * riconosce come proprietario proprio per questo.
  */
-function accessoDiRipiego(nome, password) {
+async function accessoDiRipiego(nome, password) {
   const { username, passwordHash, nickname } = credenzialiProprietario();
 
   const utente = {
@@ -418,7 +420,7 @@ function accessoDiRipiego(nome, password) {
     proprietario: true
   };
 
-  const giusta = verifyPassword(String(password || ""), passwordHash);
+  const giusta = await verificaPassword(String(password || ""), passwordHash);
 
   if (nome.toLowerCase() !== String(username).toLowerCase() || !giusta) {
     return { errore: MOTIVI.CREDENZIALI };
@@ -472,6 +474,10 @@ async function registra({ username, nickname, password }) {
     return { errore: `La password deve avere almeno ${REGOLE.passwordMin} caratteri.` };
   }
 
+  if (segreto.length > PASSWORD_MASSIMA) {
+    return { errore: `La password può avere al massimo ${PASSWORD_MASSIMA} caratteri.` };
+  }
+
   try {
     const { rows } = await pool.query(
       `
@@ -479,7 +485,7 @@ async function registra({ username, nickname, password }) {
       VALUES ($1, $2, $3, 'lettore', 'in_attesa', $4)
       RETURNING id, username, nickname, ruolo, stato, proprietario, creato_il
       `,
-      [nome, soprannome, hashPassword(segreto), await coloreLibero()]
+      [nome, soprannome, await creaHash(segreto), await coloreLibero()]
     );
 
     return { utente: pubblico(rows[0]) };

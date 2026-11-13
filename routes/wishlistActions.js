@@ -7,9 +7,13 @@ const { richiediBiblioteca } = require("../services/biblioteca");
 // Spostare un desiderio in collezione è a tutti gli effetti scrivere
 // in biblioteca: vale la regola di casa.
 router.post("/purchase/:id", richiediBiblioteca, async (req, res) => {
-  const client = await pool.connect();
+  let client;
 
   try {
+    // Dentro il `try`, o un database che non risponde lascia la
+    // richiesta appesa (Express 4 non raccoglie i rifiuti async).
+    client = await pool.connect();
+
     const { id } = req.params;
 
     // Quanti volumi hai preso, e di quale edizione. Il desiderio non lo
@@ -147,7 +151,7 @@ router.post("/purchase/:id", richiediBiblioteca, async (req, res) => {
 
   } catch (err) {
 
-    await client.query("ROLLBACK");
+    await client?.query("ROLLBACK").catch(() => {});
 
     console.error("PURCHASE WISHLIST ERROR:", err);
 
@@ -157,7 +161,7 @@ router.post("/purchase/:id", richiediBiblioteca, async (req, res) => {
     });
 
   } finally {
-    client.release();
+    client?.release();
   }
 });
 

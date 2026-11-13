@@ -4,12 +4,18 @@ const pool = require("../db");
 const { richiediBiblioteca } = require("../services/biblioteca");
 const { utenteScrive } = require("../services/utenti");
 const { enrich } = require("../services/enrich");
+const { limiteFontiEsterne } = require("../services/limite");
 const { eseguiRapportoVolumi } = require("../services/rapportoVolumi");
 
 // --------------------------------------------------
 // ENRICH — dati di una serie dalle fonti esterne
+//
+// Resta aperta — la usa anche il banco del bibliotecario, che risponde
+// pure a chi non è entrato — ma con un tetto: ogni chiamata ne fa tre
+// verso fuori (AniList, Google Books, il traduttore, che ha una quota
+// giornaliera), e senza tetto chi trova l'indirizzo le spende lui.
 // --------------------------------------------------
-router.post("/enrich", async (req, res) => {
+router.post("/enrich", limiteFontiEsterne, async (req, res) => {
   try {
     const { titolo, autore } = req.body;
 
@@ -232,7 +238,14 @@ router.post("/rapporto-volumi", richiedeSegretoCron, async (req, res) => {
 // l'indirizzo che il sito pubblicato chiama da mesi: un browser con la
 // vecchia versione in cache non deve trovarsi la porta murata.
 // --------------------------------------------------
-router.post("/login", (req, res) => require("./utenti").gestisciLogin(req, res));
+// Con lo stesso tetto ai tentativi dell'indirizzo nuovo, e proprio lo
+// stesso contatore: altrimenti questa sarebbe la porta di servizio da
+// cui provare password senza limiti.
+router.post(
+  "/login",
+  (req, res, next) => require("./utenti").limiteAccesso(req, res, next),
+  (req, res) => require("./utenti").gestisciLogin(req, res)
+);
 
 // --------------------------------------------------
 // UPDATE MANGA
@@ -412,7 +425,7 @@ async function aggiornaManga(id, body) {
 
     return { riga: rows[0], acquistiRegistrati: aggiunti };
   } catch (errore) {
-    await cliente.query("ROLLBACK");
+    await cliente.query("ROLLBACK").catch(() => {});
     throw errore;
   } finally {
     cliente.release();
@@ -519,9 +532,14 @@ router.post("/update", richiediBiblioteca, async (req, res) => {
 // esiste più.
 // --------------------------------------------------
 router.delete("/:id", richiediBiblioteca, async (req, res) => {
-  const cliente = await pool.connect();
+  let cliente;
 
   try {
+    // Dentro il `try`: se il database non dà una connessione, Express 4
+    // non raccoglie il rifiuto di una funzione async e la richiesta
+    // resterebbe appesa senza risposta.
+    cliente = await pool.connect();
+
     await cliente.query("BEGIN");
 
     const { rows: scheda } = await cliente.query(
@@ -558,11 +576,11 @@ router.delete("/:id", richiediBiblioteca, async (req, res) => {
       insieme: conteggi[0]
     });
   } catch (err) {
-    await cliente.query("ROLLBACK");
+    await cliente?.query("ROLLBACK").catch(() => {});
     console.error("❌ DELETE MANGA ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
   } finally {
-    cliente.release();
+    cliente?.release();
   }
 });
 

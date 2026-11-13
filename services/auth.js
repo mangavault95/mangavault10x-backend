@@ -72,6 +72,40 @@ function verifyPassword(password, stored) {
   return crypto.timingSafeEqual(derived, expectedBuffer);
 }
 
+// Le stesse due, senza fermare il server mentre contano.
+//
+// scrypt è lento apposta, ed è il suo mestiere. Ma `scryptSync` gira
+// sul filo unico di Node: per quel tempo non risponde NESSUN'ALTRA
+// richiesta, e chi manda tentativi di accesso a raffica si ritrova in
+// mano un modo di bloccare il sito a tutti. Le versioni qui sotto
+// fanno lo stesso conto nel gruppo di fili di libuv. Quelle sopra
+// restano per gli script da riga di comando, dove non c'è nessuno da
+// far aspettare.
+const scrypt = require("util").promisify(crypto.scrypt);
+
+// Una password più lunga di così non è una password, è un carico: il
+// conto di scrypt cresce con la lunghezza di quello che gli si dà.
+const PASSWORD_MASSIMA = 200;
+
+async function creaHash(password, salt = crypto.randomBytes(16).toString("hex")) {
+  const derived = await scrypt(password, salt, SCRYPT_KEYLEN);
+  return `${salt}:${derived.toString("hex")}`;
+}
+
+async function verificaPassword(password, stored) {
+  const [salt, expected] = String(stored || "").split(":");
+
+  if (!salt || !expected) return false;
+  if (String(password).length > PASSWORD_MASSIMA) return false;
+
+  const derived = await scrypt(password, salt, SCRYPT_KEYLEN);
+  const expectedBuffer = Buffer.from(expected, "hex");
+
+  if (derived.length !== expectedBuffer.length) return false;
+
+  return crypto.timingSafeEqual(derived, expectedBuffer);
+}
+
 // --------------------------------------------------
 // TOKEN
 //
@@ -166,6 +200,9 @@ module.exports = {
   credenzialiProprietario,
   hashPassword,
   verifyPassword,
+  creaHash,
+  verificaPassword,
+  PASSWORD_MASSIMA,
   firmaToken,
   requireAuth,
   requireProprietario,

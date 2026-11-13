@@ -16,12 +16,13 @@ const express = require("express");
 const router = express.Router();
 const NodeCache = require("node-cache");
 const { opereDiAutore, autoriDi } = require("../services/providers/animeclick");
+const { limiteFontiEsterne } = require("../services/limite");
 
 // Una settimana: la bibliografia di un autore cambia quando esce un
 // volume nuovo, non da un'ora all'altra.
 const cache = new NodeCache({ stdTTL: 60 * 60 * 24 * 7, maxKeys: 300 });
 
-router.get("/opere", async (req, res) => {
+router.get("/opere", limiteFontiEsterne, async (req, res) => {
   const nome = (req.query.nome || "").trim();
   // L'identificativo AnimeClick di una serie che sappiamo essere sua:
   // serve solo come piano B, per leggere il nome com'è scritto da loro.

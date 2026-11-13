@@ -14,8 +14,28 @@ const router = express.Router();
 const axios = require("axios");
 const NodeCache = require("node-cache");
 const { sembraSerieCompleta, nominaEdizione } = require("../services/annunci");
+const { limiteFontiEsterne } = require("../services/limite");
 
 const cache = new NodeCache({ stdTTL: 60 * 60 * 6 });
+
+// I prezzi stanno in una memoria a parte e con un tetto. La chiave è
+// fatta con quello che arriva nell'indirizzo, cioè con testo scelto da
+// chi chiama: senza tetto ogni ricerca inventata resta in memoria per
+// dodici ore, e la memoria di Render gratuito non è molta. Separata
+// dall'altra perché lì dentro c'è il token di eBay, che non deve mai
+// trovare il posto occupato.
+const cachePrezzi = new NodeCache({ stdTTL: 60 * 60 * 6, maxKeys: 500 });
+
+// node-cache, quando è piena, LANCIA invece di scartare: una risposta
+// già pronta non deve diventare un errore perché non c'era posto per
+// ricordarsela.
+function ricordaPrezzo(chiave, valore, ttl) {
+  try {
+    cachePrezzi.set(chiave, valore, ttl);
+  } catch {
+    /* piena: si risponde lo stesso, si ricalcolerà */
+  }
+}
 
 function median(values) {
   if (!values.length) return null;
@@ -206,7 +226,7 @@ async function cercaAnnunciAttivi(query, limite = 200) {
     .filter(Boolean);
 }
 
-router.get("/avg-price", async (req, res) => {
+router.get("/avg-price", limiteFontiEsterne, async (req, res) => {
   try {
     const { query, market = "ebay", edizione, altreEdizioni, volumiTotali } = req.query;
 
@@ -228,7 +248,7 @@ router.get("/avg-price", async (req, res) => {
     const totaliAttesi = volumiTotali ? Number(volumiTotali) : null;
 
     const cacheKey = `avgprice:${market}:${query}:${etichettaEdizione || ""}:${etichetteAltreEdizioni.join("|")}:${totaliAttesi ?? ""}`;
-    const cached = cache.get(cacheKey);
+    const cached = cachePrezzi.get(cacheKey);
 
     if (cached) return res.json({ ...cached, cached: true });
 
@@ -278,7 +298,7 @@ router.get("/avg-price", async (req, res) => {
         message: "Nessun annuncio trovato"
       };
 
-      cache.set(cacheKey, payload, 60 * 10);
+      ricordaPrezzo(cacheKey, payload, 60 * 10);
 
       return res.json(payload);
     }
@@ -298,7 +318,7 @@ router.get("/avg-price", async (req, res) => {
       source: market
     };
 
-    cache.set(cacheKey, payload, 60 * 60 * 12);
+    ricordaPrezzo(cacheKey, payload, 60 * 60 * 12);
 
     return res.json(payload);
   } catch (err) {

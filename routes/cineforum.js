@@ -224,9 +224,13 @@ router.put("/messaggi/:id", requireAuth, async (req, res) => {
  * appesi a un post che non c'è più.
  */
 router.delete("/messaggi/:id", requireAuth, async (req, res) => {
-  const cliente = await pool.connect();
+  let cliente;
 
   try {
+    // Dentro il `try`, o un database che non risponde lascia la
+    // richiesta appesa (Express 4 non raccoglie i rifiuti async).
+    cliente = await pool.connect();
+
     const id = Number(req.params.id);
 
     if (!Number.isInteger(id)) return res.status(400).json({ error: "Identificativo non valido" });
@@ -254,11 +258,11 @@ router.delete("/messaggi/:id", requireAuth, async (req, res) => {
 
     return res.json({ success: true });
   } catch (err) {
-    await cliente.query("ROLLBACK").catch(() => {});
+    await cliente?.query("ROLLBACK").catch(() => {});
     console.error("CINEFORUM ELIMINA ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
   } finally {
-    cliente.release();
+    cliente?.release();
   }
 });
 
