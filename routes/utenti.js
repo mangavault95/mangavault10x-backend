@@ -3,19 +3,34 @@ const router = express.Router();
 const { requireAuth, requireProprietario } = require("../services/auth");
 const utenti = require("../services/utenti");
 const immagini = require("../services/immagini");
-const { limite } = require("../services/limite");
+const { limite, tetto } = require("../services/limite");
 
-// Dieci password sbagliate in un quarto d'ora, poi si aspetta. Contano
-// solo i tentativi falliti: chi entra bene non si avvicina al blocco.
-// Il tetto globale è largo apposta — deve fermare una raffica, non
-// chiudere fuori chi ha solo dimenticato la password due volte.
+// Dieci password sbagliate in un quarto d'ora DA UN INDIRIZZO, poi quell'indirizzo aspetta. Contano
+// solo i tentativi falliti: chi entra bene non si avvicina al blocco. Si controlla PRIMA di verificare
+// la password, perché è a buon mercato e ferma chi sta provando a indovinarla.
 const limiteAccesso = limite({
   finestraMs: 15 * 60 * 1000,
   massimo: 10,
-  globale: 40,
   soloFallite: true,
   messaggio: "Troppi tentativi di accesso. Riprova fra qualche minuto."
 });
+
+// I due tetti globali. ⚠️ Prima ce n'era uno solo (40 password sbagliate in tutto il sito, da chiunque),
+// controllato prima di verificare la password: bastava a chiudere fuori anche il proprietario con la
+// password giusta, e da quattro indirizzi (provato il 14/11/2026). Adesso fanno due mestieri diversi:
+//
+//  - `sbagliate`: se in tutto il sito le password sbagliate sono troppe, una password SBAGLIATA riceve 429
+//    invece di 401. Una password GIUSTA passa sempre: si controlla dopo averla verificata.
+//  - `raffica`: tutti i tentativi, giusti e sbagliati. Non serve a indovinare password (per quello c'è
+//    il tetto per indirizzo): serve a difendere la CPU, perché ogni tentativo costa una verifica scrypt
+//    anche sul piano gratuito di Render. È largo apposta (duemila in un quarto d'ora): per superarlo
+//    ci vuole un'ondata da centinaia di indirizzi, e allora nessun trucco dell'applicazione basta.
+//
+// Restano in memoria e si azzerano a ogni riavvio, come il resto di `limite`.
+const tettiAccesso = {
+  sbagliate: tetto({ finestraMs: 15 * 60 * 1000, massimo: 300 }),
+  raffica: tetto({ finestraMs: 15 * 60 * 1000, massimo: 2000 })
+};
 
 // Chiedere di entrare è una cosa che una persona fa una volta.
 const limiteRegistrazione = limite({
@@ -46,6 +61,16 @@ const limiteRegistrazione = limite({
 async function gestisciLogin(req, res) {
   const { username, password } = req.body || {};
 
+  const { sbagliate, raffica } = tettiAccesso;
+
+  // La difesa della CPU: prima di verificare qualunque password.
+  if (raffica.registra()) {
+    console.warn(`login: raffica 429 ip=${req.ip} xff=${req.headers?.["x-forwarded-for"] || "-"}`);
+    res.set("Retry-After", String(raffica.attesaSecondi()));
+
+    return res.status(429).json({ error: "Troppi tentativi di accesso. Riprova fra qualche minuto." });
+  }
+
   try {
     const esito = await utenti.accedi(username, password);
 
@@ -67,6 +92,15 @@ async function gestisciLogin(req, res) {
     }
 
     if (esito.errore) {
+      // Troppe password sbagliate in tutto il sito: questa, sbagliata anch'essa, non riceve nemmeno
+      // la risposta ordinaria. (Una giusta sarebbe passata: siamo arrivati qui perché non lo era.)
+      if (sbagliate.registra()) {
+        console.warn(`login: troppe password sbagliate in tutto il sito, 429 ip=${req.ip} xff=${req.headers?.["x-forwarded-for"] || "-"}`);
+        res.set("Retry-After", String(sbagliate.attesaSecondi()));
+
+        return res.status(429).json({ error: "Troppi tentativi di accesso. Riprova fra qualche minuto." });
+      }
+
       return res.status(401).json({ error: "Credenziali errate" });
     }
 
@@ -473,3 +507,4 @@ module.exports = router;
 // due strade per la stessa porta, una sola implementazione.
 module.exports.gestisciLogin = gestisciLogin;
 module.exports.limiteAccesso = limiteAccesso;
+module.exports.tettiAccesso = tettiAccesso;

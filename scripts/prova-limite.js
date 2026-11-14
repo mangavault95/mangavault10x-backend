@@ -3,7 +3,7 @@
 //
 //   node scripts/prova-limite.js
 
-const { limite } = require("../services/limite");
+const { limite, tetto } = require("../services/limite");
 const { blocchi, ripartisci, primoMancante, giaInCasa } = require("../services/acquisti");
 
 let falliti = 0;
@@ -53,6 +53,18 @@ console.log("\nIl tetto per indirizzo");
   prova("le prime tre passano", [1, 2, 3].every(() => passa(c)));
   prova("la quarta no", !passa(c));
   prova("un altro indirizzo passa ancora", passa(c, { ip: "2.2.2.2" }));
+}
+
+console.log("\nIl contatore globale che non ferma nessuno da sé (tetto)");
+{
+  const t = tetto({ finestraMs: 1000, massimo: 3 });
+  const o = 1_000_000;
+
+  prova("fino a tre non è superato", [1, 2, 3].every((i) => t.registra(o + i) === false));
+  prova("il quarto lo supera", t.registra(o + 4) === true && t.superato(o + 5) === true);
+  prova("dice quanto aspettare, almeno un secondo", t.attesaSecondi(o + 5) >= 1);
+  prova("passata la finestra si ricomincia", t.superato(o + 5000) === false && t.registra(o + 5001) === false);
+  prova("il massimo si può abbassare (serve alle prove)", (() => { t.massimo = 0; return t.registra(o + 5002); })());
 }
 
 console.log("\nIl tetto globale");

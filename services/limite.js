@@ -107,4 +107,44 @@ const limiteFontiEsterne = limite({
   messaggio: "Troppe ricerche in poco tempo. Riprova fra un minuto."
 });
 
-module.exports = { limite, limiteFontiEsterne };
+/**
+ * Un contatore globale che NON ferma nessuno da sé: conta, e dice se il tetto è superato.
+ *
+ * Serve al login. Il tetto globale dentro `limite()` si controlla PRIMA di sapere se la password è
+ * giusta, quindi chiude la porta a tutti — compreso chi ha la password giusta: 40 password sbagliate
+ * da chiunque, in un quarto d'ora, e il proprietario restava fuori (provato il 14/11/2026). Qui chi
+ * decide è chi chiama, dopo aver verificato la password: i tentativi sbagliati si fermano, quelli
+ * giusti no.
+ */
+function tetto({ finestraMs, massimo }) {
+  let n = 0;
+  let scade = 0;
+
+  const rinnova = (adesso) => {
+    if (scade <= adesso) {
+      n = 0;
+      scade = adesso + finestraMs;
+    }
+  };
+
+  return {
+    // Mutabile di proposito: le prove lo abbassano per non dover mandare centinaia di richieste.
+    massimo,
+    registra(adesso = Date.now()) {
+      rinnova(adesso);
+      n += 1;
+
+      return n > this.massimo;
+    },
+    superato(adesso = Date.now()) {
+      rinnova(adesso);
+
+      return n > this.massimo;
+    },
+    attesaSecondi(adesso = Date.now()) {
+      return Math.max(1, Math.ceil((scade - adesso) / 1000));
+    }
+  };
+}
+
+module.exports = { limite, limiteFontiEsterne, tetto };
