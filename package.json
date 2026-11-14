@@ -7,11 +7,13 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "test": "node scripts/prova-limite.js && node scripts/prova-parser.js && node scripts/verifica-filtro-annunci.js && node scripts/prova-rotte-cineforum.js",
+    "test": "node scripts/prova-limite.js && node scripts/prova-parser.js && node scripts/prova-migra.js && node scripts/verifica-filtro-annunci.js && node scripts/prova-rotte-cineforum.js",
     "hash": "node scripts/hash-password.js",
     "categorie": "node scripts/categorie.js",
     "prova-tornei": "node scripts/prova-tornei.js",
-    "prova-parser": "node scripts/prova-parser.js"
+    "prova-parser": "node scripts/prova-parser.js",
+    "migra": "node scripts/migra.js",
+    "prova-migra": "node scripts/prova-migra.js"
   },
   "keywords": [],
   "author": "",

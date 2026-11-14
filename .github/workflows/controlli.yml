@@ -14,7 +14,23 @@ on:
 jobs:
   controlli:
     runs-on: ubuntu-latest
+    # Un Postgres vero e vuoto, solo per scripts/prova-migra.js: lavora in
+    # uno schema suo creato e buttato via. Non è il database del sito e
+    # non ci sono segreti: la password è quella del contenitore.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
+      PROVA_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       # Valori finti: servono solo a far partire il codice, che senza
       # si ferma apposta all'avvio.
       JWT_SECRET: una-chiave-finta-lunga-almeno-trentadue-caratteri
