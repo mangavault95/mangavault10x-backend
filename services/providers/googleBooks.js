@@ -195,7 +195,40 @@ async function search(title, author) {
   };
 }
 
+/**
+ * Un volume dal suo codice a barre. Serve alla scansione (`services/isbn.js`):
+ * qui non si sceglie il «migliore» fra tanti, si risponde a una domanda precisa.
+ * Restituisce null se Google non conosce il codice (o la chiave manca).
+ */
+async function perIsbn(isbn13) {
+  if (!isEnabled()) return null;
+
+  const params = new URLSearchParams({ q: `isbn:${isbn13}`, maxResults: "5", key: API_KEY });
+  const res = await fetch(`${ENDPOINT}?${params}`, { signal: AbortSignal.timeout(12000) });
+
+  if (res.status === 429) throw new Error("Google Books: quota giornaliera esaurita");
+  if (!res.ok) throw new Error(`Google Books HTTP ${res.status}`);
+
+  const item = ((await res.json())?.items || [])[0];
+
+  if (!item) return null;
+
+  const info = item.volumeInfo || {};
+  const sale = item.saleInfo || {};
+
+  return {
+    titolo: info.title || null,
+    serie: stripVolume(info.title) || null,
+    numero: volumeNumber(info.title),
+    editore: info.publisher || null,
+    lingua: info.language || null,
+    autori: info.authors || [],
+    copertina: (info.imageLinks?.thumbnail || "").replace(/^http:/, "https:") || null,
+    prezzoCopertina: sale.listPrice?.amount ?? null
+  };
+}
+
 // `normalize`, `stripVolume` e `volumeNumber` servono anche a
 // services/volumiItaliani.js, che conta i volumi usciti in Italia:
 // meglio esporli che tenerne due copie che col tempo divergono.
-module.exports = { search, isEnabled, normalize, stripVolume, volumeNumber };
+module.exports = { search, perIsbn, isEnabled, normalize, stripVolume, volumeNumber };

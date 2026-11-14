@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "test": "node scripts/prova-limite.js && node scripts/prova-protezione.js && node scripts/prova-login-tetti.js && node scripts/prova-esportazione.js && node scripts/prova-calendario-ics.js && node scripts/prova-rassegna.js && node scripts/prova-mese.js && node scripts/prova-rifiuto-animeclick.js && node scripts/prova-pagine-animeclick.js && node scripts/prova-scarica-pagine.mjs && node scripts/prova-fonti.js && node scripts/prova-copertine.js && node scripts/prova-regole.js && node scripts/prova-parser.js && node scripts/prova-migra.js && node scripts/prova-acquisti.js && node scripts/verifica-filtro-annunci.js && node scripts/prova-rotte-cineforum.js",
+    "test": "node scripts/prova-limite.js && node scripts/prova-protezione.js && node scripts/prova-login-tetti.js && node scripts/prova-esportazione.js && node scripts/prova-calendario-ics.js && node scripts/prova-rassegna.js && node scripts/prova-mese.js && node scripts/prova-isbn.js && node scripts/prova-rifiuto-animeclick.js && node scripts/prova-pagine-animeclick.js && node scripts/prova-scarica-pagine.mjs && node scripts/prova-fonti.js && node scripts/prova-copertine.js && node scripts/prova-regole.js && node scripts/prova-parser.js && node scripts/prova-migra.js && node scripts/prova-acquisti.js && node scripts/verifica-filtro-annunci.js && node scripts/prova-rotte-cineforum.js",
     "hash": "node scripts/hash-password.js",
     "categorie": "node scripts/categorie.js",
     "prova-tornei": "node scripts/prova-tornei.js",
@@ -21,6 +21,7 @@
     "prova-calendario-ics": "node scripts/prova-calendario-ics.js",
     "prova-rassegna": "node scripts/prova-rassegna.js",
     "prova-mese": "node scripts/prova-mese.js",
+    "prova-isbn": "node scripts/prova-isbn.js",
     "prova-rifiuto-animeclick": "node scripts/prova-rifiuto-animeclick.js",
     "prova-pagine-animeclick": "node scripts/prova-pagine-animeclick.js",
     "prova-scarica-pagine": "node scripts/prova-scarica-pagine.mjs",
