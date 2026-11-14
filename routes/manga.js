@@ -919,6 +919,101 @@ router.post("/uscite/aggiorna", richiedeSegretoCron, async (req, res) => {
 });
 
 /**
+ * GET /api/manga/copertine-volumi — la copertina di ogni volume, per chi
+ * guarda: `{ base, copertine: { [idSerie]: { [numero]: percorso } } }`.
+ * Pubblica come la collezione; cambia di rado, quindi il browser la tiene un'ora.
+ */
+router.get("/copertine-volumi", async (req, res) => {
+  try {
+    const esito = await require("../services/copertineVolumi").tutte(pool);
+
+    res.set("Cache-Control", "public, max-age=3600");
+
+    return res.json(esito);
+  } catch (err) {
+    console.error("MANGA COPERTINE VOLUMI ERROR:", err);
+
+    // Senza, il sito mostra la copertina della serie: non è un guasto da mostrare.
+    return res.json({ base: "", copertine: {} });
+  }
+});
+
+/**
+ * GET /api/manga/copertine/da-leggere?quanti=20 — le prossime serie di cui
+ * leggere la pagina delle edizioni (vedi `services/copertineVolumi.js`).
+ * Risponde anche se AnimeClick è in pausa: in quel caso l'elenco è vuoto.
+ * Protetta dal segreto del cron.
+ */
+router.get("/copertine/da-leggere", richiedeSegretoCron, async (req, res) => {
+  try {
+    const fonti = require("../services/fontiStato");
+
+    if (!fonti.puoiTentare(await fonti.leggi(pool, "animeclick"))) {
+      return res.json({ serie: [], in_pausa: true });
+    }
+
+    const serie = await require("../services/copertineVolumi").daLeggere(pool, { quanti: req.query.quanti });
+
+    return res.json({ serie, in_pausa: false });
+  } catch (err) {
+    console.error("MANGA COPERTINE DA LEGGERE ERROR:", err);
+
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/manga/copertine/pagina — riceve la pagina delle edizioni di UNA
+ * serie, scaricata dal giro di GitHub, e scrive le copertine dei volumi.
+ *
+ *   {"manga_id": 12, "html": "…", "prova": false}
+ *   {"manga_id": 12, "fallito": true, "motivo": "HTTP 404"}
+ *
+ * Una pagina che non si legge si segna (così il giro passa alla serie dopo
+ * invece di riprovare la stessa ogni giorno) e si risponde 200 con `letta: false`.
+ * Protetta dal segreto del cron.
+ */
+router.post("/copertine/pagina", richiedeSegretoCron, async (req, res) => {
+  const copertine = require("../services/copertineVolumi");
+  const mangaId = Number(req.body?.manga_id);
+  const scrivi = req.body?.prova !== true;
+
+  if (!Number.isInteger(mangaId) || mangaId <= 0) return res.status(400).json({ error: "manga_id mancante" });
+
+  try {
+    let motivo = req.body?.fallito === true ? String(req.body?.motivo || "fallito") : null;
+    let esito = null;
+
+    if (!motivo && typeof req.body?.html !== "string") motivo = "pagina mancante";
+
+    if (!motivo) {
+      try {
+        esito = await copertine.registraPagina(pool, mangaId, req.body.html, { scrivi });
+      } catch (err) {
+        if (err.message === "serie non trovata") return res.status(404).json({ error: err.message });
+
+        motivo = err.message;
+      }
+    }
+
+    if (motivo) {
+      if (scrivi) await copertine.segnaGiro(pool, mangaId, motivo, 0);
+
+      return res.json({ success: true, letta: false, motivo });
+    }
+
+    return res.json({ success: true, letta: true, ...esito });
+  } catch (err) {
+    // Una serie cancellata fra l'elenco e la scrittura: non è un errore del giro.
+    if (err.code === "23503") return res.status(404).json({ error: "serie non trovata" });
+
+    console.error("MANGA COPERTINE PAGINA ERROR:", err);
+
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /api/manga/uscite/animeclick/stato — si può provare AnimeClick oggi?
  *
  * Lo chiede il giro quotidiano di GitHub Actions prima di scaricare le

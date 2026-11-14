@@ -210,6 +210,69 @@ async function volumiUsciti(animeClickId, { edizione = null, oggi = new Date(), 
   };
 }
 
+/**
+ * La copertina di OGNI volume, letta dalla stessa pagina delle edizioni.
+ *
+ * Ogni riga della tabella ha la sua miniatura (verificato il 14/11/2026 su
+ * una pagina vera, letta da GitHub: `<img class="anteprima-img"
+ * data-img="/images/Manga_Cover/HunterxHunter1.jpg">` accanto a «Hunter x
+ * Hunter 1»). Qui si riceve l'HTML già scaricato — le pagine le prende il
+ * giro di GitHub, vedi `.github/workflows/copertine-volumi.yml` — e si
+ * restituisce `[{ numero, copertina }]`, un volume una volta sola.
+ *
+ * L'edizione si sceglie come in `volumiUsciti`: con un'etichetta si tiene chi
+ * la nomina, senza si scartano le edizioni speciali. Le ristampe valgono solo
+ * se di quel numero non c'è altro (la copertina di una ristampa è meglio di
+ * quella del volume 1). I volumi annunciati contano: la copertina c'è già.
+ */
+function copertineVolumi(html, { edizione = null } = {}) {
+  const tbody = (String(html || "").match(/<tbody[\s\S]*?<\/tbody>/i) || [])[0];
+
+  if (!tbody) throw new Error("AnimeClick: tabella delle edizioni non trovata");
+
+  const etichetta = edizione ? String(edizione).trim() : null;
+  const prime = new Map();
+  const ristampe = new Map();
+
+  for (const tr of tbody.match(/<tr[\s\S]*?<\/tr>/gi) || []) {
+    const r = leggiRiga(tr);
+
+    if (!r || !r.titolo) continue;
+
+    const nomeEdizione = r.titolo.replace(/\s*\d{1,3}\s*$/, "").trim();
+    const suaEdizione = etichetta
+      ? nomeEdizione.toLowerCase().includes(etichetta.toLowerCase())
+      : !MARCHI_EDIZIONE.test(nomeEdizione);
+
+    if (!suaEdizione) continue;
+
+    const n = volumeNumber(r.titolo);
+    // `data-img` è l'immagine vera; `src` può essere un segnaposto finché la riga non si vede.
+    const immagine = tr.match(/data-img="([^"]+)"/i) || tr.match(/<img[^>]*class="anteprima-img"[^>]*src="([^"]+)"/i);
+
+    if (!n || !immagine) continue;
+
+    let indirizzo;
+
+    try {
+      indirizzo = new URL(immagine[1], "https://www.animeclick.it").href;
+    } catch {
+      continue;
+    }
+
+    // Solo immagini di AnimeClick: quello che si scrive in tabella finisce in un <img> del sito.
+    if (!/^https:\/\/www\.animeclick\.it\//.test(indirizzo)) continue;
+
+    const dove = RISTAMPA.test(r.riga) ? ristampe : prime;
+
+    if (!dove.has(n)) dove.set(n, indirizzo);
+  }
+
+  for (const [n, indirizzo] of ristampe) if (!prime.has(n)) prime.set(n, indirizzo);
+
+  return [...prime.entries()].sort((a, b) => a[0] - b[0]).map(([numero, copertina]) => ({ numero, copertina }));
+}
+
 /* ==================================================
    CONSIGLI
    ==================================================
@@ -835,6 +898,7 @@ async function statoItalianoDi(animeClickId, { fetchImpl = fetch } = {}) {
 
 module.exports = {
   volumiUsciti,
+  copertineVolumi,
   leggiStatoItaliano,
   statoItalianoDi,
   urlEdizioni,

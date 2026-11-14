@@ -1,0 +1,114 @@
+name: Copertine dei volumi
+
+# Legge da AnimeClick la copertina di ogni volume, poche serie al giorno.
+#
+# La pagina delle edizioni di una serie ha la miniatura di ogni volume. Il
+# backend dice quali serie leggere (mai lette per prime, poi quelle in corso
+# una volta al mese: vedi services/copertineVolumi.js), questo lavoro scarica
+# le pagine e gliele manda, una alla volta.
+#
+# PERCHÉ QUI: come il giro delle uscite (giro-animeclick.yml), da Render
+# AnimeClick risponde 403 e da GitHub no. Stessa firma dichiarata del progetto.
+#
+# LA CORTESIA, che è la condizione per farlo:
+#   - venti serie al giorno al massimo, una richiesta ogni otto secondi: la
+#     collezione intera (circa duecento serie) si legge in una decina di giorni,
+#     poi restano le serie in corso, una volta al mese;
+#   - se AnimeClick è in pausa (services/fontiStato.js) non si chiede niente;
+#   - al primo 403 o 429 ci si ferma subito, senza provare le altre.
+#
+# Alle 6:45 UTC, mezz'ora dopo il giro delle uscite: stesso sito, non insieme.
+# A mano: «Run workflow», con «prova» attivo legge e conta senza scrivere.
+on:
+  schedule:
+    - cron: "45 6 * * *"
+  workflow_dispatch:
+    inputs:
+      prova:
+        description: "Attivo: legge e conta, ma non scrive"
+        type: boolean
+        default: false
+      quanti:
+        description: "Quante serie (al massimo 40)"
+        type: string
+        default: "20"
+
+jobs:
+  copertine:
+    runs-on: ubuntu-latest
+    env:
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      PROVA: ${{ inputs.prova || false }}
+      QUANTI: ${{ inputs.quanti || '20' }}
+    steps:
+      - name: Giro
+        run: |
+          set -u
+          API="https://mangavault10x-api.onrender.com/api/manga/copertine"
+          UA="MangaVault/1.0 (collezione personale; +https://mangavault10x-frontend.vercel.app)"
+
+          case "$QUANTI" in ''|*[!0-9]*) QUANTI=20;; esac
+
+          # L'elenco: ritenta, perché la prima chiamata sveglia Render.
+          codice=000
+          for tentativo in 1 2 3; do
+            codice=$(curl -sS -o elenco.json -w "%{http_code}" --max-time 150 \
+              -H "X-Cron-Secret: $CRON_SECRET" "$API/da-leggere?quanti=$QUANTI") || codice=000
+            [ "$codice" = "200" ] && break
+            sleep 10
+          done
+
+          if [ "$codice" != "200" ]; then
+            echo "Il backend non ha dato l'elenco: HTTP $codice" >&2
+            cat elenco.json >&2 2>/dev/null || true
+            exit 1
+          fi
+
+          if [ "$(jq -r '.in_pausa' elenco.json)" = "true" ]; then
+            echo "AnimeClick è in pausa: oggi niente copertine."
+            exit 0
+          fi
+
+          totale=$(jq '.serie | length' elenco.json)
+          echo "Serie da leggere oggi: $totale"
+
+          lette=0; trovate=0; scritte=0; saltate=0
+
+          for riga in $(jq -r '.serie[] | "\(.manga_id):\(.animeclick_id)"' elenco.json); do
+            id="${riga%%:*}"; ac="${riga##*:}"
+
+            codice=$(curl -sSL -o pagina.html -w "%{http_code}" --max-time 40 -A "$UA" \
+              -H "Accept-Language: it-IT,it;q=0.9" "https://www.animeclick.it/manga/$ac/-/edizioni") || codice=000
+
+            if [ "$codice" = "403" ] || [ "$codice" = "429" ]; then
+              echo "AnimeClick ha risposto HTTP $codice alla serie $id: mi fermo qui, senza provare le altre."
+              break
+            fi
+
+            if [ "$codice" = "200" ]; then
+              jq -n --argjson id "$id" --rawfile h pagina.html --argjson prova "$PROVA" '{manga_id: $id, html: $h, prova: $prova}' > corpo.json
+            else
+              jq -n --argjson id "$id" --arg m "HTTP $codice" --argjson prova "$PROVA" '{manga_id: $id, fallito: true, motivo: $m, prova: $prova}' > corpo.json
+            fi
+
+            risposta=$(curl -sS -o risposta.json -w "%{http_code}" --max-time 60 -X POST \
+              -H "X-Cron-Secret: $CRON_SECRET" -H "Content-Type: application/json" \
+              --data-binary @corpo.json "$API/pagina") || risposta=000
+
+            if [ "$risposta" = "200" ] && [ "$(jq -r '.letta' risposta.json)" = "true" ]; then
+              lette=$((lette+1))
+              trovate=$((trovate + $(jq -r '.trovate' risposta.json)))
+              scritte=$((scritte + $(jq -r '.scritte' risposta.json)))
+              echo "Serie $id: $(jq -r '.trovate' risposta.json) copertine"
+            else
+              saltate=$((saltate+1))
+              echo "Serie $id: non letta (pagina HTTP $codice, backend HTTP $risposta) $(jq -r '.motivo // .error // ""' risposta.json 2>/dev/null | cut -c1-120)"
+            fi
+
+            sleep 8
+          done
+
+          echo "Fatto: $lette serie lette su $totale, $trovate copertine trovate, $scritte nuove o cambiate, $saltate non lette."
+
+          # Un elenco non vuoto in cui non si è letta nemmeno una serie è un guasto da vedere.
+          if [ "$totale" -gt 0 ] && [ "$lette" = "0" ]; then exit 1; fi
