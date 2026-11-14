@@ -1,0 +1,26 @@
+-- ============================================================
+-- 028 — «GP Manga» diventa «GP»
+--
+-- COME ESEGUIRLO:
+--   Supabase → SQL Editor → New query → incolla → Run
+--   (da telefono: la pagina «Pulizia dei dati» ha il testo già pronto,
+--   con la riga del registro delle migrazioni)
+--
+-- È SICURO: cambia il nome di un editore in una sola serie. Si può
+-- rieseguire: la seconda volta non trova niente da cambiare.
+--
+-- ------------------------------------------------------------
+-- PERCHÉ
+--
+-- L'elenco degli editori (14/11/2026) aveva «GP» su 2 serie e «GP Manga»
+-- su 1: lo stesso editore scritto in due modi. Il file del logo nel
+-- frontend si chiama `gp.jpg` (src/assets/editori: il nome del file è la
+-- chiave), quindi per l'app l'editore è «GP», e la serie scritta «GP Manga»
+-- era l'unica senza logo e in una voce a parte del filtro.
+--
+-- Da questa migrazione in poi la variante non rientra più: l'editore si
+-- normalizza alla scrittura (services/editori.js nel backend, src/editori.js
+-- nel bot), e «gp manga» → «GP» è una delle regole.
+-- ============================================================
+
+UPDATE "Manga" SET "Editore" = 'GP' WHERE "Editore" = 'GP Manga';

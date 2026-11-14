@@ -536,6 +536,32 @@ ON CONFLICT (id) DO NOTHING;
 SELECT count(*) AS segnate FROM schema_migrations;`;
 }
 
+/**
+ * Una migrazione come SQL da incollare nel SQL Editor: il suo testo e, nella
+ * STESSA transazione, la riga nel registro. O passa tutto e risulta applicata,
+ * o non cambia niente. Con la riga del registro `ON CONFLICT DO NOTHING`, si
+ * può rilanciare senza doppioni (la migrazione stessa dev'essere ripetibile).
+ *
+ * Per chi non ha un terminale: `migra applica --si` fa lo stesso da riga di
+ * comando. Il `BEGIN`/`COMMIT` esplicito non fa male se l'editor ne apre già
+ * uno (Postgres avvisa e va avanti), e tiene insieme le istruzioni se l'editor
+ * le manda una per una.
+ */
+function sqlMigrazione(migrazione) {
+  return `BEGIN;
+
+${migrazione.sql.trim()}
+
+INSERT INTO schema_migrations (id, checksum, origine)
+VALUES (${quota(migrazione.id)}, ${quota(migrazione.checksum)}, 'applicata')
+ON CONFLICT (id) DO NOTHING;
+
+COMMIT;
+
+-- Deve dire ${migrazione.id}, applicata.
+SELECT id, origine, eseguita_il FROM schema_migrations WHERE id = ${quota(migrazione.id)};`;
+}
+
 /* ==================================================
    APPLICARE QUELLE CHE MANCANO
    ================================================== */
@@ -630,5 +656,6 @@ module.exports = {
   haIlRegistro,
   sqlControllo,
   sqlBaseline,
+  sqlMigrazione,
   CHECKSUM_IGNOTO
 };

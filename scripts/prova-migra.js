@@ -248,6 +248,49 @@ const nomi = (lista) => lista.map((o) => (o.tabella ? `${o.tabella}.${o.nome}` :
       }
 
       prova("un registro VUOTO non è «niente da fare»: rifiuta, invece di rieseguire tutto", true, /registro è vuoto/.test(vuoto || ""));
+
+      console.log("\nSul database: una migrazione nuova come SQL da incollare");
+
+      // La baseline di nuovo, poi una migrazione di soli dati («028»): il SQL che si incolla da telefono.
+      await cliente.query(m.sqlBaseline(lette, 3));
+      await q("DELETE FROM a; INSERT INTO a (id, b) VALUES (1, 0), (2, 0)");
+
+      const dir4 = cartellaDi({
+        "001_base.sql": "CREATE TABLE a (id int);",
+        "002_colonna.sql": "ALTER TABLE a ADD COLUMN IF NOT EXISTS b int; INSERT INTO a (id, b) VALUES (1, 42);",
+        "003_tabella.sql": "CREATE TABLE c (x int);",
+        "004_dati.sql": "-- un commento con un apostrofo: l'importante\nUPDATE a SET b = 7 WHERE id = 1;"
+      });
+
+      const nuova = m.elenco(dir4).find((x) => x.id === "004_dati");
+      const incollato = m.sqlMigrazione(nuova);
+
+      await cliente.query(incollato);
+
+      prova("il dato è cambiato", [7, 0], (await q("SELECT b FROM a ORDER BY id")).map((r) => r.b));
+      prova("e la migrazione è nel registro come «applicata», col suo checksum", ["004_dati:applicata", nuova.checksum], [(await ledger()).pop(), (await q("SELECT checksum FROM schema_migrations WHERE id = '004_dati'"))[0]?.checksum]);
+
+      const st = await m.stato(cliente, dir4);
+
+      prova("lo stato non la dice «modificata» e non resta niente da applicare", [true, false, []], [st.righe[3].registrata, st.righe[3].modificata, (await m.applica(cliente, { si: true, cartella: dir4 })).eseguite]);
+
+      await q("UPDATE a SET b = 1 WHERE id = 1");
+      await cliente.query(incollato);
+
+      prova("incollata una seconda volta: il registro non ha doppioni", 1, (await q("SELECT count(*)::int AS n FROM schema_migrations WHERE id = '004_dati'"))[0].n);
+
+      const rotta = m.sqlMigrazione({ ...nuova, id: "005_rotta", sql: "UPDATE a SET b = 99; SELECT 1/0;" });
+      let erroreRotta = null;
+
+      try {
+        await cliente.query(rotta);
+      } catch (e) {
+        erroreRotta = e.message;
+      }
+
+      await cliente.query("ROLLBACK").catch(() => {});
+
+      prova("una migrazione che si rompe non lascia niente: né il dato né la riga del registro", [true, [7, 0], 0], [/division by zero/.test(erroreRotta || ""), (await q("SELECT b FROM a ORDER BY id")).map((r) => r.b), (await q("SELECT count(*)::int AS n FROM schema_migrations WHERE id = '005_rotta'"))[0].n]);
     } finally {
       await cliente.query("SET search_path TO public").catch(() => {});
       await cliente.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});
