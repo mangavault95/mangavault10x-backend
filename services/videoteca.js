@@ -22,6 +22,7 @@
 //                         già raggruppata sotto una copertina.
 
 const ac = require("./providers/animeclickAnime");
+const { RifiutoFonte } = require("./providers/animeclick");
 const anilist = require("./providers/anilistAnime");
 const franchise = require("./franchise");
 
@@ -268,7 +269,7 @@ async function aggiornaSerie(pool, { giorni = 7, quante = 20, giorniConcluse = 1
     [String(giorni), quante, String(giorniConcluse)]
   );
 
-  const esito = { lette: 0, errori: [] };
+  const esito = { lette: 0, errori: [], fermato: false };
 
   for (const serie of rows) {
     try {
@@ -276,6 +277,12 @@ async function aggiornaSerie(pool, { giorni = 7, quante = 20, giorniConcluse = 1
       esito.lette++;
     } catch (e) {
       esito.errori.push({ id: serie.id, errore: e.message });
+
+      // AnimeClick ha detto di no: ci si ferma qui, non si prova la scheda dopo.
+      if (e instanceof RifiutoFonte) {
+        esito.fermato = true;
+        break;
+      }
     }
 
     // Una pausa fra una scheda e l'altra: è il passo di una persona

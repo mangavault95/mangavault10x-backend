@@ -1569,6 +1569,18 @@ function richiedeSegretoCron(req, res, next) {
  * passa vince. Le pagine più fresche vanno per ultime.
  */
 router.post("/calendario/aggiorna", richiedeSegretoCron, async (req, res) => {
+  const fonteRender = require("../services/fonteRender");
+  const { RifiutoFonte } = require("../services/providers/animeclick");
+
+  // Se AnimeClick è in pausa (rifiuti di fila da Render) non si fa nessuna richiesta.
+  const giro = await fonteRender.inizia(pool);
+
+  if (giro.inPausa) {
+    console.log(`📺 Calendario: AnimeClick (da Render) in pausa fino al ${giro.fino.toISOString()}, niente richieste`);
+
+    return res.json({ success: true, in_pausa: true, in_pausa_fino: giro.fino, lette: 0, riconosciute: 0, scritte: 0 });
+  }
+
   try {
     const scrivi = req.body?.scrivi !== false;
 
@@ -1580,11 +1592,14 @@ router.post("/calendario/aggiorna", richiedeSegretoCron, async (req, res) => {
     //
     // Un intoppo qui non deve costare le date di oggi, che sono la
     // ragione per cui il giro esiste: si annota e si tira dritto.
+    // TRANNE un rifiuto (403/429): lì ci si ferma, non si chiedono le altre due pagine.
     let prima = { lette: 0, riconosciute: 0, scritte: 0 };
 
     try {
       prima = await videoteca.aggiornaCalendario(pool, { quando: "prev-month", scrivi });
     } catch (err) {
+      if (err instanceof RifiutoFonte) throw err;
+
       console.warn("📺 Calendario: il mese scorso non si è letto —", err.message);
     }
 
@@ -1610,27 +1625,50 @@ router.post("/calendario/aggiorna", richiedeSegretoCron, async (req, res) => {
         `(${esito.lette} lette da AnimeClick)`
     );
 
+    await fonteRender.concludi(pool, giro);
+
     return res.json({ success: true, ...esito });
   } catch (err) {
+    const stato = await fonteRender.concludi(pool, giro);
+
     console.error("ANIME CALENDARIO CRON ERROR:", err);
-    return res.status(502).json({ error: err.message });
+
+    return res.status(502).json({ error: err.message, rifiuto: stato.rifiuto });
   }
 });
 
 /** POST /api/anime/serie/aggiorna — rilegge le schede che possono cambiare. */
 router.post("/serie/aggiorna", richiedeSegretoCron, async (req, res) => {
+  const fonteRender = require("../services/fonteRender");
+
+  const giro = await fonteRender.inizia(pool);
+
+  if (giro.inPausa) {
+    console.log(`📺 Schede: AnimeClick (da Render) in pausa fino al ${giro.fino.toISOString()}, niente richieste`);
+
+    return res.json({ success: true, in_pausa: true, in_pausa_fino: giro.fino, lette: 0, errori: [] });
+  }
+
   try {
     const esito = await videoteca.aggiornaSerie(pool, {
       giorni: Number(req.body?.giorni) || 7,
       quante: Number(req.body?.quante) || 20
     });
 
-    console.log(`📺 Schede rilette: ${esito.lette}, errori: ${esito.errori.length}`);
+    console.log(`📺 Schede rilette: ${esito.lette}, errori: ${esito.errori.length}${esito.fermato ? " — fermato dopo un rifiuto" : ""}`);
+
+    const stato = await fonteRender.concludi(pool, giro);
+
+    // Un rifiuto non è un successo: il giro risulta fallito, così GitHub lo segnala.
+    if (esito.fermato) return res.status(502).json({ success: false, rifiuto: stato.rifiuto, ...esito });
 
     return res.json({ success: true, ...esito });
   } catch (err) {
+    const stato = await fonteRender.concludi(pool, giro);
+
     console.error("ANIME SERIE CRON ERROR:", err);
-    return res.status(502).json({ error: err.message });
+
+    return res.status(502).json({ error: err.message, rifiuto: stato.rifiuto });
   }
 });
 

@@ -299,7 +299,91 @@ const INTESTAZIONI = {
   "Accept-Language": "it-IT,it;q=0.9"
 };
 
+// --------------------------------------------------
+// IL RIFIUTO
+//
+// Se AnimeClick risponde 403 (verifica anti-bot) o 429 (troppe richieste), ci si FERMA:
+// è la regola del sito, decisa il 14/11/2026, e vale per ogni cosa che chiama `prendi`.
+// Prima valeva solo per il giro delle uscite che scarica da GitHub: i lavori che passano
+// da Render continuavano a chiedere pagina dopo pagina, ciascuna rifiutata (34 richieste
+// di fila il 3/11, 10 l'11/11, 3 ogni giorno per il calendario degli anime).
+//
+// Dopo un rifiuto `prendi` non fa PIÙ nessuna richiesta, per almeno un'ora (o per quanto
+// dice `Retry-After`, fino a un giorno): lancia subito `RifiutoFonte`. Il freno sta in
+// memoria, e Render dorme e si risveglia: lo stato che sopravvive (quanti giri di fila sono
+// stati rifiutati, e la pausa di due settimane) sta in `fonte_stato`, vedi `services/fonteRender.js`.
+//
+// ⚠️ NON si cambia indirizzo, firma o strada per aggirare un rifiuto: se dice di no, ci si ferma.
+// --------------------------------------------------
+
+const FRENO_MINIMO_MS = 60 * 60 * 1000;
+const FRENO_MASSIMO_MS = 24 * 60 * 60 * 1000;
+
+class RifiutoFonte extends Error {
+  constructor(status, url, { senzaRichiesta = false } = {}) {
+    super(
+      senzaRichiesta
+        ? `AnimeClick in pausa dopo un rifiuto (HTTP ${status}): nessuna richiesta fatta`
+        : `AnimeClick HTTP ${status} su ${url}`
+    );
+    this.name = "RifiutoFonte";
+    this.status = status;
+    this.senzaRichiesta = senzaRichiesta;
+  }
+}
+
+const freno = { fino: 0, status: null, rifiutatoIl: 0, rispostoIl: 0 };
+
+/** Quanto aspettare dopo un rifiuto: `Retry-After` se c'è (secondi o data), almeno un'ora, al massimo un giorno. */
+function attesaDopoRifiuto(risposta) {
+  const grezzo = risposta.headers?.get?.("retry-after");
+  let ms = 0;
+
+  if (grezzo) {
+    const secondi = Number(grezzo);
+
+    ms = Number.isFinite(secondi) ? secondi * 1000 : Math.max(0, new Date(grezzo).getTime() - Date.now()) || 0;
+  }
+
+  return Math.min(FRENO_MASSIMO_MS, Math.max(FRENO_MINIMO_MS, ms));
+}
+
+/** C'è un freno acceso? Dice perché e fino a quando, altrimenti `null`. */
+function frenoAcceso(adesso = Date.now()) {
+  return freno.fino > adesso ? { status: freno.status, fino: new Date(freno.fino) } : null;
+}
+
+/** Un rifiuto arrivato da `da` in poi (un giro lo chiede con l'ora di partenza). */
+function rifiutatoDa(da) {
+  return freno.rifiutatoIl >= da ? { status: freno.status, quando: new Date(freno.rifiutatoIl) } : null;
+}
+
+/** AnimeClick ha risposto bene da `da` in poi? */
+function rispostoDa(da) {
+  return freno.rispostoIl >= da;
+}
+
+/** Accende il freno da fuori: la pausa di due settimane che sta nel database. */
+function sospendiFinoA(data) {
+  const fino = new Date(data).getTime();
+
+  if (Number.isFinite(fino) && fino > freno.fino) {
+    freno.fino = fino;
+    freno.status = freno.status || "pausa";
+  }
+}
+
+/** Spegne tutto: serve alle prove, che simulano un risveglio di Render. */
+function azzeraFreno() {
+  freno.fino = 0;
+  freno.status = null;
+  freno.rifiutatoIl = 0;
+  freno.rispostoIl = 0;
+}
+
 async function prendi(url, opzioni = {}, fetchImpl = fetch) {
+  if (freno.fino > Date.now()) throw new RifiutoFonte(freno.status, url, { senzaRichiesta: true });
+
   // Un tentativo in più, una volta sola: AnimeClick ogni tanto risponde
   // 520 o 502 per qualche secondo, e su un giro lungo quel singolo
   // inciampo diventava "serie non trovata" — una bugia, scritta in
@@ -312,7 +396,19 @@ async function prendi(url, opzioni = {}, fetchImpl = fetch) {
       signal: AbortSignal.timeout(20000)
     });
 
-    if (risposta.ok) return risposta;
+    if (risposta.ok) {
+      freno.rispostoIl = Date.now();
+      return risposta;
+    }
+
+    // Un rifiuto non si riprova, né ora né dopo tre secondi.
+    if (risposta.status === 403 || risposta.status === 429) {
+      freno.fino = Date.now() + attesaDopoRifiuto(risposta);
+      freno.status = risposta.status;
+      freno.rifiutatoIl = Date.now();
+
+      throw new RifiutoFonte(risposta.status, url);
+    }
 
     if (risposta.status < 500 || tentativo >= 1) {
       throw new Error(`AnimeClick HTTP ${risposta.status} su ${url}`);
@@ -910,6 +1006,12 @@ module.exports = {
   // accanto un secondo modo di leggere l'HTML significherebbe doverli
   // correggere tutti e due il giorno che AnimeClick cambia.
   prendi,
+  RifiutoFonte,
+  frenoAcceso,
+  rifiutatoDa,
+  rispostoDa,
+  sospendiFinoA,
+  azzeraFreno,
   testoDi,
   tabellaScheda,
   somiglianza,

@@ -9,7 +9,7 @@
 
 const { controllaSerie, decidiStato, decidiAggiornamento } = require("./volumiItaliani");
 const { riempiArchivio, ultimoVolumeUscito, SCARTO_MASSIMO } = require("./volumiDaUscite");
-const { statoItalianoDi } = require("./providers/animeclick");
+const { statoItalianoDi, frenoAcceso } = require("./providers/animeclick");
 const { concludeSecondoAniList } = require("./concludeDaAniList");
 
 const PAUSA_MS_DEFAULT = 1500; // gentile con AnimeClick: non è un'API pensata per questo
@@ -185,7 +185,9 @@ async function eseguiRapportoVolumi(
       }
     }
 
-    await new Promise((x) => setTimeout(x, pausaMs));
+    // Con un rifiuto in corso (o la pausa) AnimeClick non viene più chiamato: aspettare fra una
+    // serie e l'altra sarebbe solo tempo perso, con 34 serie sono quasi un minuto.
+    if (!frenoAcceso()) await new Promise((x) => setTimeout(x, pausaMs));
   }
 
   return {

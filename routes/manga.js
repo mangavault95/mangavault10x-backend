@@ -215,6 +215,11 @@ function richiedeSegretoCron(req, res, next) {
 
 router.post("/rapporto-volumi", richiedeSegretoCron, async (req, res) => {
   const scrivi = req.body?.scrivi !== false; // il job schedulato scrive di default
+  const fonteRender = require("../services/fonteRender");
+
+  // Se AnimeClick (da Render) è in pausa, o dice di no durante il giro, non si insiste:
+  // `prendi` smette di chiedere e il giro prosegue con la riserva (l'archivio di Fumettologica).
+  const giro = await fonteRender.inizia(pool);
 
   try {
     const controllaStato = req.body?.controllaStato === true; // solo il giro mensile
@@ -225,8 +230,15 @@ router.post("/rapporto-volumi", richiedeSegretoCron, async (req, res) => {
         `(${scrivi ? "scrittura" : "prova a vuoto"})`
     );
 
-    return res.json(risultato);
+    const stato = await fonteRender.concludi(pool, giro);
+
+    return res.json({
+      ...risultato,
+      animeclick: { in_pausa: giro.inPausa, rifiutato: stato.rifiuto === true }
+    });
   } catch (err) {
+    await fonteRender.concludi(pool, giro);
+
     console.error("❌ RAPPORTO VOLUMI ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
   }
@@ -1039,21 +1051,7 @@ router.get("/uscite/animeclick/stato", richiedeSegretoCron, async (req, res) => 
 });
 
 /** Un messaggio Telegram al proprietario, se ha collegato la chat. Non fa mai fallire chi lo chiama. */
-async function avvisaProprietario(testo) {
-  try {
-    const telegram = require("../services/telegram");
-
-    if (!telegram.configurato?.()) return;
-
-    const { rows } = await pool.query(
-      `SELECT telegram_chat_id FROM utenti WHERE proprietario AND stato = 'attivo' AND telegram_chat_id IS NOT NULL LIMIT 1`
-    );
-
-    if (rows[0]) await telegram.invia(rows[0].telegram_chat_id, testo);
-  } catch (err) {
-    console.warn("Avviso al proprietario non inviato:", err.message);
-  }
-}
+const avvisaProprietario = (testo) => require("../services/avvisoProprietario").avvisaProprietario(pool, testo);
 
 /**
  * POST /api/manga/uscite/animeclick — il giro quotidiano, parte «ricevo».
