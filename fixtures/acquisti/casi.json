@@ -1,0 +1,386 @@
+{
+ "_nota": "Casi condivisi fra mangavault10x-backend e mangavault10x-bot: stesso file in tutti e due, con la stessa impronta in scripts/prova-regole.js. Le regole di acquisto sono copiate a mano in due posti; questi casi sono quello che le tiene d'accordo.",
+ "blocchi": [
+  {
+   "in": [],
+   "out": []
+  },
+  {
+   "in": [
+    7
+   ],
+   "out": [
+    {
+     "da": 7,
+     "a": 7
+    }
+   ]
+  },
+  {
+   "in": [
+    42,
+    43,
+    44,
+    46
+   ],
+   "out": [
+    {
+     "da": 42,
+     "a": 44
+    },
+    {
+     "da": 46,
+     "a": 46
+    }
+   ]
+  },
+  {
+   "in": [
+    46,
+    44,
+    43,
+    42
+   ],
+   "out": [
+    {
+     "da": 42,
+     "a": 44
+    },
+    {
+     "da": 46,
+     "a": 46
+    }
+   ]
+  },
+  {
+   "in": [
+    42,
+    42,
+    43
+   ],
+   "out": [
+    {
+     "da": 42,
+     "a": 43
+    }
+   ]
+  },
+  {
+   "in": [
+    1,
+    2,
+    3,
+    5,
+    6,
+    9
+   ],
+   "out": [
+    {
+     "da": 1,
+     "a": 3
+    },
+    {
+     "da": 5,
+     "a": 6
+    },
+    {
+     "da": 9,
+     "a": 9
+    }
+   ]
+  },
+  {
+   "in": [
+    10,
+    11,
+    12,
+    13
+   ],
+   "out": [
+    {
+     "da": 10,
+     "a": 13
+    }
+   ]
+  },
+  {
+   "in": [
+    3,
+    1,
+    2
+   ],
+   "out": [
+    {
+     "da": 1,
+     "a": 3
+    }
+   ]
+  }
+ ],
+ "ripartisci": [
+  {
+   "totale": 19.8,
+   "gruppi": [
+    {
+     "da": 105,
+     "a": 107
+    }
+   ],
+   "out": [
+    {
+     "da": 105,
+     "a": 107,
+     "prezzo": 19.8
+    }
+   ]
+  },
+  {
+   "totale": 20,
+   "gruppi": [
+    {
+     "da": 1,
+     "a": 3
+    },
+    {
+     "da": 7,
+     "a": 7
+    }
+   ],
+   "out": [
+    {
+     "da": 1,
+     "a": 3,
+     "prezzo": 15
+    },
+    {
+     "da": 7,
+     "a": 7,
+     "prezzo": 5
+    }
+   ]
+  },
+  {
+   "totale": 10,
+   "gruppi": [
+    {
+     "da": 1,
+     "a": 1
+    },
+    {
+     "da": 3,
+     "a": 3
+    },
+    {
+     "da": 5,
+     "a": 5
+    }
+   ],
+   "out": [
+    {
+     "da": 1,
+     "a": 1,
+     "prezzo": 3.33
+    },
+    {
+     "da": 3,
+     "a": 3,
+     "prezzo": 3.33
+    },
+    {
+     "da": 5,
+     "a": 5,
+     "prezzo": 3.34
+    }
+   ]
+  },
+  {
+   "totale": 7.5,
+   "gruppi": [
+    {
+     "da": 1,
+     "a": 1
+    }
+   ],
+   "out": [
+    {
+     "da": 1,
+     "a": 1,
+     "prezzo": 7.5
+    }
+   ]
+  },
+  {
+   "totale": 0,
+   "gruppi": [
+    {
+     "da": 1,
+     "a": 2
+    }
+   ],
+   "out": [
+    {
+     "da": 1,
+     "a": 2,
+     "prezzo": 0
+    }
+   ]
+  },
+  {
+   "totale": 0.01,
+   "gruppi": [
+    {
+     "da": 1,
+     "a": 1
+    },
+    {
+     "da": 3,
+     "a": 3
+    }
+   ],
+   "out": [
+    {
+     "da": 1,
+     "a": 1,
+     "prezzo": 0.01
+    },
+    {
+     "da": 3,
+     "a": 3,
+     "prezzo": 0
+    }
+   ]
+  },
+  {
+   "totale": 23.7,
+   "gruppi": [
+    {
+     "da": 42,
+     "a": 44
+    },
+    {
+     "da": 46,
+     "a": 46
+    }
+   ],
+   "out": [
+    {
+     "da": 42,
+     "a": 44,
+     "prezzo": 17.78
+    },
+    {
+     "da": 46,
+     "a": 46,
+     "prezzo": 5.92
+    }
+   ]
+  }
+ ],
+ "primoMancante": [
+  {
+   "in": [],
+   "out": 1
+  },
+  {
+   "in": [
+    1,
+    2,
+    3
+   ],
+   "out": 4
+  },
+  {
+   "in": [
+    2,
+    3
+   ],
+   "out": 1
+  },
+  {
+   "in": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    11
+   ],
+   "out": 6
+  },
+  {
+   "in": [
+    1,
+    1,
+    2
+   ],
+   "out": 3
+  },
+  {
+   "in": [
+    3,
+    1,
+    2
+   ],
+   "out": 4
+  }
+ ],
+ "giaInCasa": [
+  {
+   "gruppo": {
+    "da": 5,
+    "a": 7
+   },
+   "avevo": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "out": [
+    5
+   ]
+  },
+  {
+   "gruppo": {
+    "da": 5,
+    "a": 7
+   },
+   "avevo": [],
+   "out": []
+  },
+  {
+   "gruppo": {
+    "da": 1,
+    "a": 3
+   },
+   "avevo": [
+    1,
+    2,
+    3
+   ],
+   "out": [
+    1,
+    2,
+    3
+   ]
+  },
+  {
+   "gruppo": {
+    "da": 3,
+    "a": 9
+   },
+   "avevo": [
+    1,
+    2,
+    3,
+    9
+   ],
+   "out": [
+    3,
+    9
+   ]
+  }
+ ],
+ "togliNumeri": "UPDATE \"Manga\" SET \"NumeriPosseduti\" = ARRAY( SELECT n FROM unnest(\"NumeriPosseduti\") AS n WHERE NOT (n BETWEEN $1 AND $2 AND n <> ALL($4::int[])) ORDER BY n ) WHERE \"ID\" = $3"
+}

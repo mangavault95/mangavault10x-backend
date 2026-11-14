@@ -12,7 +12,7 @@
  *     buco in mezzo in acquisti separati: la tabella ragiona per
  *     intervalli e non saprebbe rappresentare un salto;
  *   - il prezzo scritto è il TOTALE della riga, diviso fra i blocchi in
- *     proporzione ai volumi, con i centesimi che avanzano sul primo;
+ *     proporzione ai volumi, con i centesimi che avanzano sull'ultimo;
  *   - il volume comprato entra nell'ELENCO dei posseduti (dal 02/11/2026,
  *     migrazione 022): chi ha 1-41 e compra il 45 ha 1-41 e 45, e il
  *     buco 42-44 va detto (lo dice chi chiama, con `mancano`), non

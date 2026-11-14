@@ -3,8 +3,17 @@ const crypto = require("crypto");
 const NodeCache = require("node-cache");
 const router = express.Router();
 const pool = require("../db");
-const { requireAuth } = require("../services/auth");
+const { requireAuth, identificaUtente } = require("../services/auth");
 const { utenteLetto, utenteScrive } = require("../services/utenti");
+
+// Chi sei, se lo dici: su tutto il router, come in cineforum e nelle letture.
+// Non blocca nessuno. Le letture pubbliche di questo file scelgono di chi
+// rispondere con `utenteLetto(req)`, che guarda `?utente=` e poi il token:
+// senza questa riga il token non c'era mai, e una richiesta senza `?utente=`
+// riceveva la videoteca del proprietario anche da chi era entrato. Il sito manda
+// sempre `?utente=` quando sa chi sei, quindi nell'uso normale non si vedeva;
+// con un'identità ricordata persa, sì.
+router.use(identificaUtente);
 const ac = require("../services/providers/animeclickAnime");
 const videoteca = require("../services/videoteca");
 const franchise = require("../services/franchise");
