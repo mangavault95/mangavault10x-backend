@@ -12,10 +12,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          codice=$(curl -sS -o ed.html -m 40 -w "%{http_code}" \
+          codice=$(curl -sSL -o ed.html -m 40 -w "%{http_code}" \
             -A "MangaVault/1.0 (collezione personale; +https://mangavault10x-frontend.vercel.app)" \
             "https://www.animeclick.it/manga/9553/-/edizioni") || codice=000
-          echo "HTTP $codice, $(wc -c < ed.html) byte"
+          echo "HTTP $codice, $(wc -c < ed.html) byte (seguendo i reindirizzamenti)"
           echo "--- righe della tabella: $(grep -o '<tr' ed.html | wc -l)"
           echo "--- tag <img> dentro il tbody (primi 6):"
           sed -n '/<tbody/,/<\/tbody>/p' ed.html | grep -o '<img[^>]*>' | head -6 | cut -c1-260
