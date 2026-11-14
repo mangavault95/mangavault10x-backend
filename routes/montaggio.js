@@ -24,6 +24,7 @@ module.exports = [
   ["/api/anime", require("./anime")],
   ["/api/mese", require("./mese")],
   ["/api/esporta", require("./esporta")],
+  ["/api/calendario", require("./calendario")],
   ["/api/animeclick", require("./animeclick")],
   // La piazza della videoteca: quello che hanno fatto tutti, i messaggi
   // scritti a mano, e le pagine personali che si cercano per soprannome.
