@@ -204,6 +204,14 @@ const sqlDi = (nome) => fs.readFileSync(path.join(__dirname, "..", "sql", nome),
           prova("la creazione dal sito risponde 201", 201, dalSito.status);
           prova("e scrive il giorno in cui è entrata in collezione", oggi, (await riga("Serie dal sito"))?.data);
 
+          await chiama("/api/manga", { titolo: "Con editore societario", editore: " Panini S.p.A. " });
+          await chiama("/api/manga", { titolo: "Con editore in minuscolo", editore: "star comics" });
+          await chiama("/api/manga", { titolo: "Con editore vuoto", editore: "   " });
+
+          prova("l'editore «Panini S.p.A.» entra come «Panini»", "Panini", (await riga("Con editore societario"))?.editore);
+          prova("«star comics» entra come «Star Comics»", "Star Comics", (await riga("Con editore in minuscolo"))?.editore);
+          prova("un editore di soli spazi entra come NULL", null, (await riga("Con editore vuoto"))?.editore ?? null);
+
           const dallaWishlist = await chiama("/api/wishlist-actions/purchase/1", {});
 
           prova("il passaggio dalla wishlist risponde 200", 200, dallaWishlist.status);

@@ -19,6 +19,7 @@ process.env.ADMIN_USERNAME = process.env.ADMIN_USERNAME || "prova";
 process.env.ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH || "00:00";
 
 const { blocchi, ripartisci, primoMancante, giaInCasa, TOGLI_NUMERI } = require("../services/acquisti");
+const { editoreCanonico } = require("../services/editori");
 
 const file = path.join(__dirname, "..", "fixtures", "acquisti", "casi.json");
 
@@ -63,6 +64,22 @@ for (const c of casi.giaInCasa) prova(`${c.gruppo.da}-${c.gruppo.a} avendo ${JSO
 
 console.log("\nLa query che toglie i numeri all'annullo");
 prova("è la stessa del bot", casi.togliNumeri, TOGLI_NUMERI.replace(/\s+/g, " ").trim());
+
+console.log("\nI nomi degli editori");
+{
+  // Come per le regole di acquisto: stesso file nel bot, stessa impronta. La funzione è scritta due volte
+  // (services/editori.js qui, src/editori.js nel bot) e questo è quello che le tiene d'accordo.
+  const testoEditori = fs.readFileSync(path.join(__dirname, "..", "fixtures", "editori", "casi.json"), "utf8");
+  const casiEditori = JSON.parse(testoEditori);
+
+  prova("il file è lo stesso del bot (impronta)", "4db225e05f4b7591", crypto.createHash("sha256").update(testoEditori).digest("hex").slice(0, 16));
+
+  for (const c of casiEditori.editori) {
+    const ingresso = c.in === "__undefined__" ? undefined : c.in;
+
+    prova(`${JSON.stringify(ingresso) ?? "undefined"} → ${JSON.stringify(c.out)}`, c.out, editoreCanonico(ingresso));
+  }
+}
 
 console.log("\nLe rotte dell'anime");
 {

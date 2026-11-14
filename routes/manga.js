@@ -6,6 +6,7 @@ const { utenteScrive } = require("../services/utenti");
 const { enrich } = require("../services/enrich");
 const { limiteFontiEsterne } = require("../services/limite");
 const { prossimoIdManga } = require("../services/idManga");
+const { editoreCanonico } = require("../services/editori");
 const { eseguiRapportoVolumi } = require("../services/rapportoVolumi");
 
 // --------------------------------------------------
@@ -311,6 +312,11 @@ function valoreDi(chiave, valore) {
 
     return { valore: valore ? new Date() : null };
   }
+
+  // L'editore si scrive sempre allo stesso modo, qualunque cosa mandi il
+  // browser (services/editori.js): una variante diventerebbe una voce nuova
+  // nel filtro e una serie senza logo. Vuoto o solo spazi → NULL.
+  if (chiave === "editore") return { valore: editoreCanonico(valore) };
 
   if (chiave !== "numeriposseduti") return { valore: valore === "" ? null : valore };
 

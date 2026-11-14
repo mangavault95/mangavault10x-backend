@@ -13,6 +13,7 @@
 const anilist = require("./providers/anilist");
 const googleBooks = require("./providers/googleBooks");
 const translate = require("./providers/translate");
+const { editoreCanonico } = require("./editori");
 
 /**
  * Sceglie il primo valore utile fra quelli passati.
@@ -103,7 +104,9 @@ async function enrich(titolo, autore, opzioni = {}) {
     volumitotali: al?.volumitotali ?? null,
     statoSerie: al?.statoSerie ?? null,
 
-    editore: gb?.editore ?? null,
+    // Google Books scrive «Panini S.p.A.»: scritto così diventerebbe un editore
+    // diverso da «Panini». Si normalizza qui, dove entra (services/editori.js).
+    editore: editoreCanonico(gb?.editore),
     isbn: gb?.isbn ?? null,
     prezzoCopertina: gb?.prezzoCopertina ?? null,
 

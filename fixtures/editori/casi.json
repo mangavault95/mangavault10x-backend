@@ -1,0 +1,137 @@
+{
+ "_nota": "Casi condivisi fra mangavault10x-backend e mangavault10x-bot: stesso file in tutti e due, con la stessa impronta in scripts/prova-regole.js.",
+ "editori": [
+  {
+   "in": "Panini",
+   "out": "Panini"
+  },
+  {
+   "in": "Panini S.p.A.",
+   "out": "Panini"
+  },
+  {
+   "in": "panini s.p.a",
+   "out": "Panini"
+  },
+  {
+   "in": "Panini SpA",
+   "out": "Panini"
+  },
+  {
+   "in": "Panini spa",
+   "out": "Panini"
+  },
+  {
+   "in": " Edizioni BD S.r.l. ",
+   "out": "Edizioni BD"
+  },
+  {
+   "in": "Edizioni BD srl",
+   "out": "Edizioni BD"
+  },
+  {
+   "in": "Edizioni BD",
+   "out": "Edizioni BD"
+  },
+  {
+   "in": "Star Comics",
+   "out": "Star Comics"
+  },
+  {
+   "in": "Star  Comics",
+   "out": "Star Comics"
+  },
+  {
+   "in": "  Star Comics  ",
+   "out": "Star Comics"
+  },
+  {
+   "in": "star comics",
+   "out": "Star Comics"
+  },
+  {
+   "in": "J-POP",
+   "out": "J-POP"
+  },
+  {
+   "in": "j-pop",
+   "out": "J-POP"
+  },
+  {
+   "in": "J-Pop",
+   "out": "J-POP"
+  },
+  {
+   "in": "PANINI",
+   "out": "Panini"
+  },
+  {
+   "in": "toshokan",
+   "out": "Toshokan"
+  },
+  {
+   "in": "Nuovo Editore",
+   "out": "Nuovo Editore"
+  },
+  {
+   "in": "nuovo editore",
+   "out": "nuovo editore"
+  },
+  {
+   "in": "constructor",
+   "out": "constructor"
+  },
+  {
+   "in": "toString",
+   "out": "toString"
+  },
+  {
+   "in": "GP",
+   "out": "GP"
+  },
+  {
+   "in": "GP Manga",
+   "out": "GP"
+  },
+  {
+   "in": "gp manga",
+   "out": "GP"
+  },
+  {
+   "in": "GP Manga S.r.l.",
+   "out": "GP"
+  },
+  {
+   "in": "Coconino Press",
+   "out": "Coconino Press"
+  },
+  {
+   "in": "Panini Comics",
+   "out": "Panini Comics"
+  },
+  {
+   "in": "S.p.A.",
+   "out": "S.p.A."
+  },
+  {
+   "in": "",
+   "out": null
+  },
+  {
+   "in": "   ",
+   "out": null
+  },
+  {
+   "in": null,
+   "out": null
+  },
+  {
+   "in": "__undefined__",
+   "out": null
+  },
+  {
+   "in": 42,
+   "out": null
+  }
+ ]
+}
