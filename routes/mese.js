@@ -154,8 +154,8 @@ router.get("/", async (req, res) => {
       pool.query(
         `SELECT u.id, u.nickname, u.colore, COUNT(*)::int AS volumi
            FROM reading_history r JOIN utenti u ON u.id = r.utente_id
-          WHERE r.read_at >= ($1::date AT TIME ZONE 'Europe/Rome')
-            AND r.read_at < (($1::date + INTERVAL '1 month') AT TIME ZONE 'Europe/Rome')
+          WHERE r.read_at >= ($1::date::timestamp AT TIME ZONE 'Europe/Rome')
+            AND r.read_at < (($1::date + INTERVAL '1 month')::timestamp AT TIME ZONE 'Europe/Rome')
           GROUP BY u.id, u.nickname, u.colore
           ORDER BY volumi DESC`,
         finestra
@@ -163,8 +163,8 @@ router.get("/", async (req, res) => {
       pool.query(
         `SELECT u.id, u.nickname, u.colore, COUNT(*)::int AS puntate
            FROM episodi_visti e JOIN utenti u ON u.id = e.utente_id
-          WHERE e.visto_il >= ($1::date AT TIME ZONE 'Europe/Rome')
-            AND e.visto_il < (($1::date + INTERVAL '1 month') AT TIME ZONE 'Europe/Rome')
+          WHERE e.visto_il >= ($1::date::timestamp AT TIME ZONE 'Europe/Rome')
+            AND e.visto_il < (($1::date + INTERVAL '1 month')::timestamp AT TIME ZONE 'Europe/Rome')
           GROUP BY u.id, u.nickname, u.colore
           ORDER BY puntate DESC`,
         finestra
@@ -172,8 +172,8 @@ router.get("/", async (req, res) => {
       pool.query(
         `SELECT a.id, a.titolo, a.cover_url AS copertina, COUNT(*)::int AS puntate
            FROM episodi_visti e JOIN anime a ON a.id = e.anime_id
-          WHERE e.visto_il >= ($1::date AT TIME ZONE 'Europe/Rome')
-            AND e.visto_il < (($1::date + INTERVAL '1 month') AT TIME ZONE 'Europe/Rome')
+          WHERE e.visto_il >= ($1::date::timestamp AT TIME ZONE 'Europe/Rome')
+            AND e.visto_il < (($1::date + INTERVAL '1 month')::timestamp AT TIME ZONE 'Europe/Rome')
           GROUP BY a.id, a.titolo, a.cover_url
           ORDER BY puntate DESC
           LIMIT 1`,
