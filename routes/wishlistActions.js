@@ -3,6 +3,7 @@ const router = express.Router();
 const pool = require("../db");
 const { richiediBiblioteca } = require("../services/biblioteca");
 const { prossimoIdManga } = require("../services/idManga");
+const { oggiInItalia } = require("../services/usciteManga");
  
 // POST /api/wishlist-actions/purchase/:id
 // Spostare un desiderio in collezione è a tutti gli effetti scrivere
@@ -105,9 +106,10 @@ router.post("/purchase/:id", richiediBiblioteca, async (req, res) => {
         "VolumiPosseduti",
         "Costo",
         "Editore",
-        "Edizione"
+        "Edizione",
+        "DataAggiunta"
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
       RETURNING *
       `,
       [
@@ -120,11 +122,18 @@ router.post("/purchase/:id", richiediBiblioteca, async (req, res) => {
         intero(req.body?.volumiTotali, item.volumitotali ? Number(item.volumitotali) : 0),
         intero(req.body?.volumiPosseduti, 0),
         0,
-        "",
+        // NULL e non "": una stringa vuota non è «mancante» per il resto del
+        // codice. `"Editore" IS NULL` (il filtro delle schede incomplete) non la
+        // vede, e `COALESCE("Editore", $x)` (l'arricchimento automatico) non la
+        // riempie: le serie arrivate da qui restavano senza editore per sempre.
+        null,
         // Niente voto qui: da quando i lettori sono due il voto non è più
         // una colonna della serie ma una riga di `voti`, ed è di chi lo
         // dà. Una serie appena comprata non è ancora piaciuta a nessuno.
-        edizione
+        edizione,
+        // Il giorno in cui è entrata in collezione. Prima restava vuoto: lo
+        // scrivevano solo le serie create dal bot.
+        oggiInItalia()
       ]
     );
 

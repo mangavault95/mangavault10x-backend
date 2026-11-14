@@ -165,6 +165,57 @@ const sqlDi = (nome) => fs.readFileSync(path.join(__dirname, "..", "sql", nome),
         prova("il proprietario non si chiede mai al database", "passa", await provaAccesso({ id: 1, username: "a", nickname: "N", proprietario: true }));
         prova("un utente che non esiste: 401", 401, await provaAccesso({ id: 99, username: "z", nickname: "Z" }));
       }
+
+      console.log("\nLe serie nuove: data di aggiunta ed editore");
+      {
+        // Le rotte vere (creazione dal sito, wishlist → collezione), con un proprietario e il database di prova.
+        // Il pool di `db.js` è già quello di prova (sostituito nel blocco qui sopra).
+        await pool.query(`
+          ALTER TABLE utenti ADD COLUMN proprietario boolean NOT NULL DEFAULT false, ADD COLUMN biblioteca boolean NOT NULL DEFAULT false;
+          UPDATE utenti SET proprietario = true, stato = 'attivo' WHERE id = 1;
+          ALTER TABLE "Manga" ADD COLUMN "Autore" text, ADD COLUMN "CoverURL" text, ADD COLUMN "Trama" text, ADD COLUMN "Genere" text,
+            ADD COLUMN "Editore" text, ADD COLUMN "DataAggiunta" date;
+          CREATE TABLE wishlist_custom (id int PRIMARY KEY, titolo text, autori text, coverurl text, trama text, generi text, volumitotali text);
+          INSERT INTO wishlist_custom VALUES (1, 'Dalla wishlist', 'Autore', '', '', '', '3');`);
+
+        const express = require("express");
+        const auth = require("../services/auth");
+        const { oggiInItalia } = require("../services/usciteManga");
+
+        const app = express();
+
+        app.use(express.json());
+        app.use("/api/manga", require("../routes/manga"));
+        app.use("/api/wishlist-actions", require("../routes/wishlistActions"));
+
+        const server = app.listen(0);
+        const base = `http://127.0.0.1:${server.address().port}`;
+        const token = auth.firmaToken({ id: 1, username: "a", nickname: "N", ruolo: "admin", proprietario: true });
+        const chiama = (percorso, corpo) =>
+          fetch(base + percorso, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify(corpo) });
+        const riga = async (titolo) =>
+          (await pool.query(`SELECT "DataAggiunta"::text AS data, "Editore" AS editore FROM "Manga" WHERE "Titolo" = $1`, [titolo])).rows[0];
+
+        try {
+          const oggi = oggiInItalia();
+
+          const dalSito = await chiama("/api/manga", { titolo: "Serie dal sito" });
+
+          prova("la creazione dal sito risponde 201", 201, dalSito.status);
+          prova("e scrive il giorno in cui è entrata in collezione", oggi, (await riga("Serie dal sito"))?.data);
+
+          const dallaWishlist = await chiama("/api/wishlist-actions/purchase/1", {});
+
+          prova("il passaggio dalla wishlist risponde 200", 200, dallaWishlist.status);
+
+          const arrivata = await riga("Dalla wishlist");
+
+          prova("e scrive il giorno anche lì", oggi, arrivata?.data);
+          prova("e l'editore è vuoto davvero (NULL), non una stringa vuota", null, arrivata?.editore ?? null);
+        } finally {
+          server.close();
+        }
+      }
     } finally {
       await pool.end().catch(() => {});
       await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});

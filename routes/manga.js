@@ -466,6 +466,12 @@ router.post("/", richiediBiblioteca, async (req, res) => {
       colonne.push(`"${colonna}"`);
     }
 
+    // Il giorno in cui la serie entra in collezione. Non è fra i campi
+    // modificabili (CAMPI_AGGIORNABILI): lo decide il server, una volta, alla
+    // creazione. Prima restava vuoto per tutte le serie nate dal sito.
+    colonne.push('"DataAggiunta"');
+    valori.push(require("../services/usciteManga").oggiInItalia());
+
     const segnaposto = colonne.map((_, i) => `$${i + 1}`).join(", ");
 
     // Leggere il massimo e scrivere il successivo sono due passi: due
