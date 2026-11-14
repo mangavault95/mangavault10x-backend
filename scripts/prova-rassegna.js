@@ -5,7 +5,7 @@
 // Senza PROVA_DATABASE_URL girano solo le prove pure (giorni di fila, mesi). Con il database
 // crea uno schema a parte con dati finti (anche a cavallo del 1° gennaio, in ora italiana) e lo butta.
 
-const { rassegna, giorniDiFila, perMese, meseTop } = require("../services/rassegna");
+const { rassegna, giorniDiFila, perMese, meseTop, disponibile, giornoApertura } = require("../services/rassegna");
 
 let falliti = 0;
 function prova(nome, atteso, ottenuto) {
@@ -13,6 +13,14 @@ function prova(nome, atteso, ottenuto) {
   console.log(`  ${bene ? "ok  " : "NO  "} ${nome}`);
   if (!bene) { falliti += 1; console.log(`       atteso:   ${JSON.stringify(atteso)}\n       ottenuto: ${JSON.stringify(ottenuto)}`); }
 }
+
+console.log("\nQuando si apre");
+prova("il giorno di apertura è il 31 dicembre", "2026-12-31", giornoApertura(2026));
+prova("il 30 dicembre è ancora chiusa", false, disponibile(2026, "2026-12-30"));
+prova("il 31 dicembre è aperta", true, disponibile(2026, "2026-12-31"));
+prova("il 1 gennaio dopo è aperta", true, disponibile(2026, "2027-01-01"));
+prova("un anno futuro è chiuso", false, disponibile(2027, "2026-12-31"));
+prova("un anno passato è aperto", true, disponibile(2025, "2026-03-01"));
 
 console.log("\nConti senza database");
 prova("giorni di fila: niente", 0, giorniDiFila([]));

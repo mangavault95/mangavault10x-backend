@@ -25,6 +25,16 @@ const VOLUMI_ACQUISTO = `
   CASE WHEN volume_da IS NULL AND volume_a IS NULL THEN 1
        ELSE COALESCE(volume_a, volume_da) - COALESCE(volume_da, volume_a) + 1 END`;
 
+/**
+ * La rassegna di un anno si apre il 31 dicembre di quell'anno, alle 00:00 ora italiana, e da
+ * lì resta aperta per sempre. Prima di allora no, nemmeno per chi conosce l'indirizzo: l'anno
+ * non è finito e i numeri sarebbero a metà (e rovinerebbero la sorpresa).
+ * `oggi` è "AAAA-MM-GG" in ora italiana; "AAAA-12-31" <= oggi si confronta come testo.
+ */
+const giornoApertura = (anno) => `${anno}-12-31`;
+const disponibile = (anno, oggi) => String(oggi) >= giornoApertura(anno);
+const oggiInItalia = () => new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Rome" }).format(new Date());
+
 /** Il giorno più lungo di giorni consecutivi, da un elenco di "AAAA-MM-GG" (anche ripetuti, anche disordinati). */
 function giorniDiFila(giorni) {
   const unici = [...new Set(giorni)].sort();
@@ -209,4 +219,4 @@ async function rassegna(pool, { anno, utenteId }) {
   });
 }
 
-module.exports = { rassegna, costruisci, giorniDiFila, perMese, meseTop };
+module.exports = { rassegna, costruisci, giorniDiFila, perMese, meseTop, disponibile, giornoApertura, oggiInItalia };

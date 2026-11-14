@@ -1,0 +1,52 @@
+name: Anno in rassegna
+# Il 31 dicembre a mezzanotte (ora italiana), su Telegram: «il tuo anno in rassegna è pronto».
+#
+# Il sito apre la rassegna da solo a quell'ora (`services/rassegna.js`); questo giro manda
+# soltanto il messaggio, non silenzioso, a chi ha collegato la chat col bot delle uscite.
+#
+# 23:00 UTC del 30 dicembre = 00:00 del 31 in Italia (ora solare, che a dicembre c'è sempre).
+# GitHub non rispetta l'orario al minuto e può ritardare anche di ore: il messaggio arriva
+# comunque il 31. Se il giro partisse prima delle 00:00 italiane il backend risponde 409 e
+# non manda niente.
+#
+# Ricorda: GitHub spegne i lavori programmati di un repository senza attività da 60 giorni.
+# Un push qualunque li riaccende.
+on:
+  schedule:
+    - cron: "0 23 30 12 *"
+  workflow_dispatch:
+    inputs:
+      prova:
+        description: "A vuoto: dice a chi scriverebbe senza mandare niente"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  annuncia:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chiama il backend
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PROVA: ${{ inputs.prova || false }}
+        run: |
+          risposta=$(curl -sS -w "\n%{http_code}" -X POST \
+            --max-time 120 \
+            -H "X-Cron-Secret: ${CRON_SECRET}" \
+            -H "Content-Type: application/json" \
+            -d "{\"prova\": ${PROVA}}" \
+            "https://mangavault10x-api.onrender.com/api/rassegna/annuncia")
+
+          corpo=$(echo "$risposta" | head -n -1)
+          codice=$(echo "$risposta" | tail -n 1)
+
+          # Solo l'esito, non i nomi: i registri di un repository pubblico li legge chiunque.
+          echo "$corpo" | jq -c '{success, prova, inviati, falliti, error}'
+
+          if [ "$codice" != "200" ]; then
+            echo "HTTP $codice"
+            exit 1
+          fi
