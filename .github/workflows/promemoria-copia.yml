@@ -1,0 +1,54 @@
+name: Promemoria copia di sicurezza
+# Il primo di ogni mese, su Telegram: «scarica la copia dei dati».
+#
+# Il piano gratuito di Supabase non ha backup: la copia vera la scarica il
+# proprietario dalla Gestione del sito (`/gestione?sezione=copia`) e la tiene sul
+# telefono. Questo giro non copia niente: manda soltanto il messaggio che lo ricorda,
+# non silenzioso, così compare sullo schermo come una notifica.
+#
+# Se il proprietario non ha la chat collegata il backend risponde 409 e questo giro
+# FALLISCE apposta: GitHub avvisa chi ha il repository, e un promemoria che non
+# arriva a nessuno non deve passare per riuscito.
+#
+# Ricorda: GitHub spegne i lavori programmati di un repository senza attività da 60
+# giorni. Un push qualunque li riaccende.
+on:
+  schedule:
+    - cron: "40 7 1 * *"
+  workflow_dispatch:
+    inputs:
+      prova:
+        description: "A vuoto: dice cosa manderebbe senza mandarlo"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  promemoria:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chiama il backend
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PROVA: ${{ inputs.prova || false }}
+        run: |
+          risposta=$(curl -sS -w "\n%{http_code}" -X POST \
+            --max-time 120 \
+            -H "X-Cron-Secret: ${CRON_SECRET}" \
+            -H "Content-Type: application/json" \
+            -d "{\"prova\": ${PROVA}}" \
+            "https://mangavault10x-api.onrender.com/api/esporta/promemoria")
+
+          corpo=$(echo "$risposta" | head -n -1)
+          codice=$(echo "$risposta" | tail -n 1)
+
+          # Solo l'esito, non il testo del messaggio: i registri di un repository pubblico
+          # li legge chiunque.
+          echo "$corpo" | jq -c '{success, prova, inviati, error}'
+
+          if [ "$codice" != "200" ]; then
+            echo "HTTP $codice"
+            exit 1
+          fi

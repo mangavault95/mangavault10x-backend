@@ -23,6 +23,7 @@ module.exports = [
   ["/api/autore", require("./autore")],
   ["/api/anime", require("./anime")],
   ["/api/mese", require("./mese")],
+  ["/api/esporta", require("./esporta")],
   // La piazza della videoteca: quello che hanno fatto tutti, i messaggi
   // scritti a mano, e le pagine personali che si cercano per soprannome.
   ["/api/cineforum", require("./cineforum")]
