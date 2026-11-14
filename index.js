@@ -74,24 +74,9 @@ app.use(express.json());
 // --------------------------------------------------
 // ROUTES
 // --------------------------------------------------
-app.use("/api/utenti", require("./routes/utenti"));
-app.use("/api/manga", require("./routes/manga"));
-app.use("/api/wishlist", require("./routes/wishlist"));
-app.use("/api/wishlist-actions", require("./routes/wishlistActions"));
-app.use("/api/reading-history", require("./routes/readingHistory"));
-app.use("/api/reading-sessions", require("./routes/readingSessions"));
-app.use("/api/letture-droppate", require("./routes/droppate"));
-app.use("/api/note", require("./routes/note"));
-app.use("/api/marketplace", require("./routes/marketplace"));
-app.use("/api/cover", require("./routes/cover"));
-app.use("/api/simili", require("./routes/simili"));
-app.use("/api/tornei", require("./routes/tornei"));
-app.use("/api/autore", require("./routes/autore"));
-app.use("/api/anime", require("./routes/anime"));
-app.use("/api/mese", require("./routes/mese"));
-// La piazza della videoteca: quello che hanno fatto tutti, i messaggi
-// scritti a mano, e le pagine personali che si cercano per soprannome.
-app.use("/api/cineforum", require("./routes/cineforum"));
+// L'elenco sta in routes/montaggio.js: lo legge anche il controllo che ogni rotta
+// che scrive abbia una guardia (scripts/prova-protezione.js).
+for (const [indirizzo, rotte] of require("./routes/montaggio")) app.use(indirizzo, rotte);
 
 app.get("/", (req, res) => {
   res.send("MangaVault API attiva 🚀");

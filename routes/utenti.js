@@ -88,7 +88,28 @@ router.post("/login", limiteAccesso, gestisciLogin);
 // l'indirizzo può riempire la schermata di Gestione di righe finte.
 const MASSIME_IN_ATTESA = 10;
 
-router.post("/registrazione", limiteRegistrazione, async (req, res) => {
+/**
+ * Le registrazioni sono CHIUSE, a meno che non si riaprano apposta.
+ *
+ * Questo è un sito per due persone (14/11/2026), e la regola è che nessuno senza
+ * un accesso può aggiungere, togliere o modificare qualcosa. Una richiesta di
+ * accesso è una riga in più nella tabella degli utenti, scritta da un estraneo:
+ * quindi per default non si accetta. Quando serve davvero (arriva una terza
+ * persona) si imposta `REGISTRAZIONI_APERTE=1` su Render, si fa la cosa, e si
+ * toglie.
+ *
+ * Il sito mostra il messaggio che arriva da qui, così com'è.
+ */
+function registrazioniChiuse(req, res, next) {
+  if (["1", "true", "si"].includes(String(process.env.REGISTRAZIONI_APERTE || "").toLowerCase())) return next();
+
+  return res.status(403).json({
+    error: "Le registrazioni sono chiuse. Se devi entrare, chiedi al proprietario.",
+    motivo: "registrazioni_chiuse"
+  });
+}
+
+router.post("/registrazione", registrazioniChiuse, limiteRegistrazione, async (req, res) => {
   const { username, nickname, password } = req.body || {};
 
   try {
