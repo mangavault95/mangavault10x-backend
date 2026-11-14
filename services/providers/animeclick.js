@@ -67,10 +67,21 @@ const ENTITA = {
   "&ugrave;": "ù"
 };
 
+// Un'entità numerica diventa il suo carattere; fuori dall'intervallo
+// di Unicode (o 0) diventa uno spazio invece di far lanciare
+// `fromCodePoint` nel mezzo di un giro lungo.
+function entitaNumerica(codice) {
+  return Number.isInteger(codice) && codice > 0 && codice <= 0x10ffff ? String.fromCodePoint(codice) : " ";
+}
+
 function testoDi(html) {
   return String(html || "")
     .replace(/<[^>]*>/g, " ")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    // Decimali (`&#039;`) ed esadecimali (`&#x27;`): lo stesso apostrofo
+    // si scrive in tutti e due i modi, e il secondo restava lì
+    // letterale dentro il titolo.
+    .replace(/&#(\d+);/g, (_, n) => entitaNumerica(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => entitaNumerica(parseInt(n, 16)))
     .replace(/&[a-z]+;/gi, (e) => ENTITA[e.toLowerCase()] ?? " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -126,12 +137,11 @@ function dataItaliana(gg_mm_aaaa) {
 async function volumiUsciti(animeClickId, { edizione = null, oggi = new Date(), fetchImpl = fetch } = {}) {
   const url = urlEdizioni(animeClickId);
 
-  const risposta = await fetchImpl(url, {
-    headers: { "User-Agent": USER_AGENT, "Accept-Language": "it-IT,it;q=0.9" },
-    signal: AbortSignal.timeout(20000)
-  });
-
-  if (!risposta.ok) throw new Error(`AnimeClick HTTP ${risposta.status} su ${url}`);
+  // Da `prendi`, come tutte le altre chiamate a AnimeClick: un 502 o un
+  // 520 di qualche secondo si ritenta una volta. Questa era l'unica che
+  // non lo faceva, ed è proprio quella del controllo mensile: un
+  // inciampo del sito bastava a far saltare la serie per quel mese.
+  const risposta = await prendi(url, {}, fetchImpl);
 
   const html = await risposta.text();
   const tbody = (html.match(/<tbody[\s\S]*?<\/tbody>/i) || [])[0];
