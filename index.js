@@ -3,6 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const { assertConfig } = require("./services/auth");
+const { saltiFidati } = require("./services/rete");
 
 // Fallisco subito se le credenziali non sono configurate,
 // invece di scoprirlo al primo tentativo di login.
@@ -10,6 +11,22 @@ assertConfig();
 
 const app = express();
 const port = process.env.PORT || 3000;
+
+// Quanti proxy stanno davanti al server (Render ne mette almeno uno).
+// Senza questa riga `req.ip` è l'indirizzo del proxy, uguale per tutti:
+// i tetti alle richieste (services/limite.js) diventerebbero un tetto
+// unico per l'intero sito, e dieci password sbagliate di un estraneo
+// chiuderebbero fuori anche il proprietario.
+//
+// Il valore è il NUMERO di passaggi fidati, non «true»: con `true` si
+// crede all'indirizzo più a sinistra di X-Forwarded-For, che chiunque
+// può scriversi da solo e così aggirare ogni tetto. Con N si prende
+// quello messo dall'N-esimo proxy da destra, che non si può falsificare.
+// Un N troppo BASSO ricade nel difetto di prima (indirizzo del proxy);
+// uno troppo alto è la falla. Per questo il predefinito è 1 e si cambia
+// con la variabile TRUST_PROXY (0 = nessun proxy), dopo aver guardato
+// nei log di Render la riga «limite: 429 ip=… xff=…».
+app.set("trust proxy", saltiFidati(process.env.TRUST_PROXY));
 
 // --------------------------------------------------
 // CORS — solo le origini dichiarate.

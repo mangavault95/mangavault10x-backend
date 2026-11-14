@@ -47,6 +47,10 @@ const DOPPIONI_AMMESSI = new Set([6]);
 // `LUCCHETTO_ID_MANGA` (services/idManga.js).
 const LUCCHETTO = 7226502;
 
+// Il checksum di una riga di baseline scritta da SQL (vedi `sqlBaseline`):
+// da SQL non si leggono i file, quindi non c'è niente da registrare.
+const CHECKSUM_IGNOTO = "-";
+
 const checksum = (testo) => crypto.createHash("sha256").update(testo).digest("hex").slice(0, 16);
 
 /* ==================================================
@@ -377,7 +381,9 @@ async function stato(cliente, cartella = CARTELLA_SQL) {
       numero: m.numero,
       registrata: Boolean(voce),
       origine: voce?.origine ?? null,
-      modificata: Boolean(voce) && voce.checksum !== m.checksum,
+      // Una baseline fatta a mano da SQL (checksum «-») non ha un
+      // checksum da confrontare: non si può dire «modificata».
+      modificata: Boolean(voce) && voce.checksum !== CHECKSUM_IGNOTO && voce.checksum !== m.checksum,
       testimoni: { totali: testi[i].testimoni.length, mancanti: t.mancanti.map(descrivi) }
     });
   }
@@ -455,6 +461,81 @@ async function baseline(cliente, { fino, si = false, forza = false, cartella = C
 }
 
 /* ==================================================
+   LA BASELINE SENZA TERMINALE
+   ================================================== */
+
+const quota = (testo) => `'${String(testo).replace(/'/g, "''")}'`;
+
+/**
+ * Lo stesso controllo della baseline, come un SELECT da incollare nel
+ * SQL Editor di Supabase. Restituisce le righe dei testimoni che
+ * MANCANO: nessuna riga vuol dire che si può procedere.
+ *
+ * Serve a chi non ha un terminale (un telefono): il comando
+ * `migra baseline` fa le stesse cose da riga di comando.
+ */
+function sqlControllo(migrazioni, fino) {
+  const testi = testimoni(migrazioni);
+  const righe = [];
+
+  migrazioni.forEach((mig, i) => {
+    if (mig.numero > fino) return;
+
+    for (const o of testi[i].testimoni) {
+      righe.push(`(${quota(mig.id)}, ${quota(o.tipo)}, ${quota(o.tabella ? `${o.tabella}.${o.nome}` : o.nome)})`);
+    }
+  });
+
+  return `-- Controllo prima della baseline.
+-- Deve restituire ZERO righe: ogni riga è un oggetto che una migrazione
+-- avrebbe dovuto creare e non c'è. Se ne esce qualcuna, FERMATI.
+SELECT m.id AS migrazione, m.tipo, m.oggetto AS manca
+FROM (VALUES
+  ${righe.join(",\n  ")}
+) AS m(id, tipo, oggetto)
+WHERE NOT CASE m.tipo
+  WHEN 'tabella' THEN EXISTS (SELECT 1 FROM information_schema.tables
+    WHERE table_schema = current_schema() AND table_name = m.oggetto)
+  WHEN 'colonna' THEN EXISTS (SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = split_part(m.oggetto, '.', 1)
+      AND column_name = split_part(m.oggetto, '.', 2))
+  WHEN 'sequenza' THEN EXISTS (SELECT 1 FROM information_schema.sequences
+    WHERE sequence_schema = current_schema() AND sequence_name = m.oggetto)
+  ELSE EXISTS (SELECT 1 FROM pg_indexes
+    WHERE schemaname = current_schema() AND indexname = m.oggetto)
+END;`;
+}
+
+/**
+ * La baseline come SQL da incollare: crea il registro e segna le
+ * migrazioni fino a `fino` come già eseguite. NON esegue nessuna di
+ * quelle migrazioni, e si può rilanciare senza danni.
+ */
+function sqlBaseline(migrazioni, fino) {
+  const ids = migrazioni.filter((m) => m.numero <= fino).map((m) => quota(m.id));
+
+  return `-- Baseline: segna come GIÀ ESEGUITE le migrazioni fino alla ${String(fino).padStart(3, "0")}.
+-- Non esegue nessuna migrazione: scrive solo il registro. Si può rilanciare.
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id          TEXT PRIMARY KEY,
+  checksum    TEXT NOT NULL,
+  eseguita_il TIMESTAMPTZ NOT NULL DEFAULT now(),
+  origine     TEXT NOT NULL DEFAULT 'applicata' CHECK (origine IN ('baseline', 'applicata'))
+);
+
+INSERT INTO schema_migrations (id, checksum, origine)
+SELECT id, '${CHECKSUM_IGNOTO}', 'baseline'
+FROM unnest(ARRAY[
+  ${ids.join(",\n  ")}
+]) AS id
+ON CONFLICT (id) DO NOTHING;
+
+-- Deve dire ${ids.length}.
+SELECT count(*) AS segnate FROM schema_migrations;`;
+}
+
+/* ==================================================
    APPLICARE QUELLE CHE MANCANO
    ================================================== */
 
@@ -474,6 +555,14 @@ async function applica(cliente, { si = false, forza = false, cartella = CARTELLA
 
   if (!registro) {
     throw new Error("Il registro non esiste. Prima la baseline: `node scripts/migra.js baseline --fino N --si`.");
+  }
+
+  // Un registro vuoto non è «niente da fare»: è una baseline mai fatta
+  // (o una tabella che questo utente non riesce a leggere), e applicare
+  // da qui vorrebbe dire rieseguire TUTTE le migrazioni, comprese
+  // quelle che riscrivono dati.
+  if (registro.size === 0) {
+    throw new Error("Il registro è vuoto: la baseline non è stata fatta. Eseguirla prima di applicare.");
   }
 
   const daFare = migrazioni.filter((m) => !registro.has(m.id));
@@ -537,5 +626,8 @@ module.exports = {
   stato,
   baseline,
   applica,
-  haIlRegistro
+  haIlRegistro,
+  sqlControllo,
+  sqlBaseline,
+  CHECKSUM_IGNOTO
 };

@@ -207,6 +207,47 @@ const nomi = (lista) => lista.map((o) => (o.tabella ? `${o.tabella}.${o.nome}` :
       }
 
       prova("un file più vecchio dell'ultimo applicato è rifiutato", true, /più vecchie dell'ultima già applicata/.test(rifiuto || ""));
+
+      console.log("\nSul database: la baseline da SQL (senza terminale)");
+
+      await q("DROP TABLE schema_migrations");
+
+      const lette = m.elenco(dir);
+      const controllo = m.sqlControllo(lette, 3);
+
+      prova("il controllo con tutto a posto non restituisce righe", 0, (await cliente.query(controllo)).rowCount);
+
+      await q("DROP TABLE c");
+
+      const manca = await cliente.query(controllo);
+
+      prova("e se un oggetto manca dice quale", [["003_tabella", "tabella", "c"]], manca.rows.map((r) => [r.migrazione, r.tipo, r.manca]));
+
+      await q("CREATE TABLE c (x int)");
+
+      const esiti = await cliente.query(m.sqlBaseline(lette, 3));
+      const ultimo = Array.isArray(esiti) ? esiti[esiti.length - 1] : esiti;
+
+      prova("la baseline da SQL segna tutte e dice quante", 3, Number(ultimo.rows[0].segnate));
+      await cliente.query(m.sqlBaseline(lette, 3));
+      prova("rilanciata non raddoppia", 3, (await q("SELECT count(*)::int AS n FROM schema_migrations"))[0].n);
+
+      const dopo = await m.stato(cliente, dir);
+
+      prova("lo stato la vede e non dice «modificata» (non c'è un checksum da confrontare)", [[true, false], [true, false], [true, false]], dopo.righe.map((r) => [r.registrata, r.modificata]));
+      prova("e non c'è niente da applicare", [], (await m.applica(cliente, { si: true, cartella: dir })).eseguite);
+
+      await q("DELETE FROM schema_migrations");
+
+      let vuoto = null;
+
+      try {
+        await m.applica(cliente, { si: true, cartella: dir });
+      } catch (e) {
+        vuoto = e.message;
+      }
+
+      prova("un registro VUOTO non è «niente da fare»: rifiuta, invece di rieseguire tutto", true, /registro è vuoto/.test(vuoto || ""));
     } finally {
       await cliente.query("SET search_path TO public").catch(() => {});
       await cliente.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});

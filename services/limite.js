@@ -66,6 +66,11 @@ function limite({ finestraMs, massimo, globale = null, messaggio, soloFallite = 
     if (c.n >= massimo || (globale !== null && tutti.n >= globale)) {
       const attesa = Math.max(1, Math.ceil((Math.max(c.scade, tutti.scade) - adesso) / 1000));
 
+      // Una riga sola per blocco, e solo per i blocchi: serve a vedere nei
+      // log di Render quale indirizzo il server crede di vedere (`ip`) e
+      // cosa ha mandato il proxy (`xff`), per regolare TRUST_PROXY.
+      console.warn(`limite: 429 ip=${req.ip} xff=${req.headers?.["x-forwarded-for"] || "-"} ${req.method} ${req.path}`);
+
       res.set("Retry-After", String(attesa));
       return res.status(429).json({ error: errore });
     }
