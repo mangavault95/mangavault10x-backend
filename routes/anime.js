@@ -1569,106 +1569,86 @@ function richiedeSegretoCron(req, res, next) {
  * passa vince. Le pagine più fresche vanno per ultime.
  */
 router.post("/calendario/aggiorna", richiedeSegretoCron, async (req, res) => {
-  const fonteRender = require("../services/fonteRender");
-  const { RifiutoFonte } = require("../services/providers/animeclick");
+  const pagine = require("../services/pagineAnimeClick");
 
-  // Se AnimeClick è in pausa (rifiuti di fila da Render) non si fa nessuna richiesta.
-  const giro = await fonteRender.inizia(pool);
-
-  if (giro.inPausa) {
-    console.log(`📺 Calendario: AnimeClick (da Render) in pausa fino al ${giro.fino.toISOString()}, niente richieste`);
-
-    return res.json({ success: true, in_pausa: true, in_pausa_fino: giro.fino, lette: 0, riconosciute: 0, scritte: 0 });
-  }
+  // ⚠️ Da Render AnimeClick risponde 403, quindi le pagine non si chiedono qui: le scarica
+  // GitHub Actions (`calendario-anime.yml`) e le lascia in tabella (`services/pagineAnimeClick.js`).
+  // Questo lavoro le legge da lì e NON apre mai la rete verso AnimeClick.
+  const fetchImpl = pagine.fetchDaPagine(pool);
 
   try {
     const scrivi = req.body?.scrivi !== false;
 
-    // ⚠️ Verificato il 23/08/2026: la pagina del mese corrente parte
-    // da OGGI, non dal primo del mese. I giorni già passati di questo
-    // mese si recuperano solo quando `prev-month` diventa questo mese,
-    // cioè il primo del mese prossimo. Non è un buco che si può
-    // chiudere: AnimeClick non ha un indirizzo per quei giorni.
+    // Tre pagine, in quest'ordine. ⚠️ Verificato il 23/08/2026: la pagina del mese corrente
+    // parte da OGGI, non dal primo del mese. I giorni già passati di questo mese si recuperano
+    // solo quando `prev-month` diventa questo mese, cioè il primo del mese prossimo. Non è un
+    // buco che si può chiudere: AnimeClick non ha un indirizzo per quei giorni.
     //
-    // Un intoppo qui non deve costare le date di oggi, che sono la
-    // ragione per cui il giro esiste: si annota e si tira dritto.
-    // TRANNE un rifiuto (403/429): lì ci si ferma, non si chiedono le altre due pagine.
-    let prima = { lette: 0, riconosciute: 0, scritte: 0 };
+    // Un intoppo su una pagina non deve costare le altre (le date di oggi sono la ragione per
+    // cui il giro esiste): si annota e si tira dritto. GitHub si ferma al primo rifiuto, quindi
+    // può mandarne meno di tre; il giro fallisce solo se non se ne legge nessuna.
+    //
+    // L'ordine non è casuale: la scrittura è un UPSERT e l'ultimo che passa vince. Le pagine più
+    // fresche vanno per ultime. `next-month` e non `next-week`: verificato il 21/08/2026 che
+    // `?paging=next-week` risponde 500 sul loro server (stessa storia per `prev-week`, 23/08/2026).
+    const esito = { lette: 0, riconosciute: 0, scritte: 0 };
+    let paginePassate = 0;
+    let ultimoErrore = null;
 
-    try {
-      prima = await videoteca.aggiornaCalendario(pool, { quando: "prev-month", scrivi });
-    } catch (err) {
-      if (err instanceof RifiutoFonte) throw err;
+    for (const quando of ["prev-month", null, "next-month"]) {
+      try {
+        const r = await videoteca.aggiornaCalendario(pool, { quando, scrivi, fetchImpl });
 
-      console.warn("📺 Calendario: il mese scorso non si è letto —", err.message);
+        esito.lette += r.lette;
+        esito.riconosciute += r.riconosciute;
+        esito.scritte += r.scritte;
+        paginePassate += 1;
+      } catch (err) {
+        ultimoErrore = err;
+        console.warn(`📺 Calendario: la pagina ${quando || "corrente"} non si è letta —`, err.message);
+      }
     }
 
-    const oggi = await videoteca.aggiornaCalendario(pool, { scrivi });
-
-    // La pagina di apertura copre da oggi a fine mese (una decina di
-    // giorni), il mese dopo la allunga fino a sei settimane.
-    //
-    // `next-month` e non `next-week`: verificato il 21/08/2026 che
-    // `?paging=next-week` risponde 500 sul loro server, sia da browser
-    // sia da qui. Non è colpa nostra e non c'è niente da riprovare.
-    // (Stessa storia per `prev-week`, riprovato il 23/08/2026: 500.)
-    const dopo = await videoteca.aggiornaCalendario(pool, { quando: "next-month", scrivi });
-
-    const esito = {
-      lette: prima.lette + oggi.lette + dopo.lette,
-      riconosciute: prima.riconosciute + oggi.riconosciute + dopo.riconosciute,
-      scritte: prima.scritte + oggi.scritte + dopo.scritte
-    };
+    if (paginePassate === 0) throw ultimoErrore || new Error("nessuna pagina del calendario");
 
     console.log(
       `📺 Calendario: ${esito.scritte} uscite scritte su ${esito.riconosciute} riconosciute ` +
-        `(${esito.lette} lette da AnimeClick)`
+        `(${esito.lette} lette da AnimeClick, ${paginePassate} pagine su 3)`
     );
 
-    await fonteRender.concludi(pool, giro);
-
-    return res.json({ success: true, ...esito });
+    return res.json({ success: true, ...esito, pagine: paginePassate });
   } catch (err) {
-    const stato = await fonteRender.concludi(pool, giro);
-
     console.error("ANIME CALENDARIO CRON ERROR:", err);
 
-    return res.status(502).json({ error: err.message, rifiuto: stato.rifiuto });
+    return res.status(502).json({ error: err.message });
+  } finally {
+    await pagine.pulisci(pool, pagine.urlsCalendario());
   }
 });
 
-/** POST /api/anime/serie/aggiorna — rilegge le schede che possono cambiare. */
+/** POST /api/anime/serie/aggiorna — rilegge le schede che possono cambiare (pagine scaricate da GitHub). */
 router.post("/serie/aggiorna", richiedeSegretoCron, async (req, res) => {
-  const fonteRender = require("../services/fonteRender");
-
-  const giro = await fonteRender.inizia(pool);
-
-  if (giro.inPausa) {
-    console.log(`📺 Schede: AnimeClick (da Render) in pausa fino al ${giro.fino.toISOString()}, niente richieste`);
-
-    return res.json({ success: true, in_pausa: true, in_pausa_fino: giro.fino, lette: 0, errori: [] });
-  }
+  const pagine = require("../services/pagineAnimeClick");
+  const fetchImpl = pagine.fetchDaPagine(pool);
+  const opzioni = { giorni: Number(req.body?.giorni) || 7, quante: Number(req.body?.quante) || 20 };
+  let urls = [];
 
   try {
-    const esito = await videoteca.aggiornaSerie(pool, {
-      giorni: Number(req.body?.giorni) || 7,
-      quante: Number(req.body?.quante) || 20
-    });
+    urls = (await videoteca.serieDaAggiornare(pool, opzioni))
+      .filter((s) => s.animeclick_id)
+      .flatMap((s) => pagine.urlsScheda(s.animeclick_id));
 
-    console.log(`📺 Schede rilette: ${esito.lette}, errori: ${esito.errori.length}${esito.fermato ? " — fermato dopo un rifiuto" : ""}`);
+    const esito = await videoteca.aggiornaSerie(pool, { ...opzioni, fetchImpl });
 
-    const stato = await fonteRender.concludi(pool, giro);
-
-    // Un rifiuto non è un successo: il giro risulta fallito, così GitHub lo segnala.
-    if (esito.fermato) return res.status(502).json({ success: false, rifiuto: stato.rifiuto, ...esito });
+    console.log(`📺 Schede rilette: ${esito.lette}, errori: ${esito.errori.length}`);
 
     return res.json({ success: true, ...esito });
   } catch (err) {
-    const stato = await fonteRender.concludi(pool, giro);
-
     console.error("ANIME SERIE CRON ERROR:", err);
 
-    return res.status(502).json({ error: err.message, rifiuto: stato.rifiuto });
+    return res.status(502).json({ error: err.message });
+  } finally {
+    await pagine.pulisci(pool, urls);
   }
 });
 

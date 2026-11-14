@@ -161,14 +161,14 @@ async function salvaEpisodi(pool, animeId, puntate) {
  * 2 MB, 1197 righe): è il motivo per cui questo si fa una volta, a
  * mano, e non a ogni apertura della scheda.
  */
-async function agganciaSerie(pool, animeclickId, { conEpisodi = true } = {}) {
-  const scheda = await ac.scheda(animeclickId);
+async function agganciaSerie(pool, animeclickId, { conEpisodi = true, fetchImpl } = {}) {
+  const scheda = await ac.scheda(animeclickId, { fetchImpl });
   const riga = await salvaScheda(pool, scheda);
 
   let episodi = 0;
 
   if (conEpisodi) {
-    const puntate = await ac.episodi(animeclickId);
+    const puntate = await ac.episodi(animeclickId, { fetchImpl });
     episodi = await salvaEpisodi(pool, riga.id, puntate);
   }
 
@@ -233,22 +233,8 @@ async function calcolaTagli(pool, animeId) {
   }
 }
 
-/**
- * Rilegge le serie che possono ancora cambiare.
- *
- * Le concluse VECCHIE non si rileggono: quello che dicono oggi lo
- * diranno anche fra un anno, e ogni richiesta risparmiata è cortesia
- * verso un sito che ci lascia leggere senza chiederci niente.
- *
- * ⚠️ Le concluse RECENTI sì, ogni due settimane. «Conclusa» su
- * AnimeClick vuol dire «finita la parte di adesso»: le serie a due
- * cour la scrivono a metà e poi tornano. Verificato il 04/10/2026 su
- * The Ramparts of Ice — letta il 21/08 come conclusa a 14 puntate,
- * tornata «in corso» in autunno con la 15 — e per questo la
- * Videoteca non la mostrava più aggiornata: una conclusa non entrava
- * mai nel giro, e la puntata nuova non arrivava.
- */
-async function aggiornaSerie(pool, { giorni = 7, quante = 20, giorniConcluse = 14 } = {}) {
+/** Le serie che aggiornaSerie rileggerebbe adesso. Una funzione sola, perché GitHub deve sapere QUALI schede scaricare. */
+async function serieDaAggiornare(pool, { giorni = 7, quante = 20, giorniConcluse = 14 } = {}) {
   const { rows } = await pool.query(
     `
     SELECT id, animeclick_id
@@ -269,11 +255,32 @@ async function aggiornaSerie(pool, { giorni = 7, quante = 20, giorniConcluse = 1
     [String(giorni), quante, String(giorniConcluse)]
   );
 
+  return rows;
+}
+
+/**
+ * Rilegge le serie che possono ancora cambiare.
+ *
+ * Le concluse VECCHIE non si rileggono: quello che dicono oggi lo
+ * diranno anche fra un anno, e ogni richiesta risparmiata è cortesia
+ * verso un sito che ci lascia leggere senza chiederci niente.
+ *
+ * ⚠️ Le concluse RECENTI sì, ogni due settimane. «Conclusa» su
+ * AnimeClick vuol dire «finita la parte di adesso»: le serie a due
+ * cour la scrivono a metà e poi tornano. Verificato il 04/10/2026 su
+ * The Ramparts of Ice — letta il 21/08 come conclusa a 14 puntate,
+ * tornata «in corso» in autunno con la 15 — e per questo la
+ * Videoteca non la mostrava più aggiornata: una conclusa non entrava
+ * mai nel giro, e la puntata nuova non arrivava.
+ */
+async function aggiornaSerie(pool, { giorni = 7, quante = 20, giorniConcluse = 14, fetchImpl } = {}) {
+  const rows = await serieDaAggiornare(pool, { giorni, quante, giorniConcluse });
+
   const esito = { lette: 0, errori: [], fermato: false };
 
   for (const serie of rows) {
     try {
-      await agganciaSerie(pool, serie.animeclick_id);
+      await agganciaSerie(pool, serie.animeclick_id, { fetchImpl });
       esito.lette++;
     } catch (e) {
       esito.errori.push({ id: serie.id, errore: e.message });
@@ -286,8 +293,8 @@ async function aggiornaSerie(pool, { giorni = 7, quante = 20, giorniConcluse = 1
     }
 
     // Una pausa fra una scheda e l'altra: è il passo di una persona
-    // che sfoglia, non di uno scraper.
-    await new Promise((r) => setTimeout(r, 1500));
+    // che sfoglia, non di uno scraper. Con le pagine già scaricate da GitHub non serve.
+    if (!fetchImpl?.daPagine) await new Promise((r) => setTimeout(r, 1500));
   }
 
   return esito;
@@ -920,8 +927,8 @@ function normalizza(testo) {
  * aprirle: è quello che tiene il lavoro a una manciata di richieste
  * invece di centotrenta.
  */
-async function aggiornaCalendario(pool, { quando = null, scrivi = true } = {}) {
-  const uscite = await ac.calendario({ quando });
+async function aggiornaCalendario(pool, { quando = null, scrivi = true, fetchImpl } = {}) {
+  const uscite = await ac.calendario({ quando, fetchImpl });
 
   const { rows: serie } = await pool.query(
     `SELECT id, titolo, titolo_originale, titolo_inglese FROM anime`
@@ -978,6 +985,7 @@ async function aggiornaCalendario(pool, { quando = null, scrivi = true } = {}) {
 module.exports = {
   agganciaSerie,
   aggiornaSerie,
+  serieDaAggiornare,
   aggiornaCalendario,
   salvaScheda,
   salvaEpisodi,

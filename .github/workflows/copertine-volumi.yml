@@ -33,6 +33,13 @@ on:
         type: string
         default: "20"
 
+permissions:
+  contents: read
+
+concurrency:
+  group: animeclick
+  cancel-in-progress: false
+
 jobs:
   copertine:
     runs-on: ubuntu-latest

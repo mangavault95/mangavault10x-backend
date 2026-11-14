@@ -1,44 +1,68 @@
 name: Calendario anime
 
-# Il giro quotidiano che tiene aggiornate le uscite della Videoteca:
-# legge il calendario italiano di AnimeClick (giorno, ora, piattaforma,
-# titolo della puntata) e scrive le date sugli episodi delle serie che
-# abbiamo in tabella.
+# Il giro quotidiano che tiene aggiornate le uscite della Videoteca: legge il calendario italiano di
+# AnimeClick (giorno, ora, piattaforma, titolo della puntata) e scrive le date sugli episodi delle
+# serie che abbiamo in tabella.
 #
-# Gira qui e non in un cron dentro il processo per la stessa ragione
-# del rapporto volumi: Render (piano gratuito) addormenta il servizio
-# dopo un quarto d'ora di inattività, e un cron nello stesso processo
-# non si sveglierebbe mai da solo. Questa richiesta arriva da fuori e
-# lo sveglia, pagando solo l'attesa del primo giro.
+# PERCHÉ LE PAGINE LE SCARICA GITHUB E NON RENDER
+# Da Render AnimeClick risponde 403 (verifica anti-bot, dal 03/11/2026): il calendario non si
+# aggiornava più. Da GitHub Actions, con la firma dichiarata del progetto (MangaVault/1.0), risponde
+# 200: come per il giro delle uscite manga (giro-animeclick.yml), le pagine le scarica questo lavoro,
+# le manda al backend (sql/032) e il backend le legge come prima.
 #
-# Alle 6 UTC, cioè le 8 italiane d'estate e le 7 d'inverno: le uscite
-# del giorno sono già pubblicate, e chi apre il sito a colazione le
-# trova. Il calendario copre comunque fino a sei settimane avanti,
-# quindi un giro saltato non fa perdere niente.
+# LA CORTESIA, che è la condizione per farlo (vedi .github/scripts/scarica-pagine.sh):
+#   - tre pagine, una ogni otto secondi;
+#   - se AnimeClick è in pausa (sette giri rifiutati di fila → due settimane) non si chiede niente;
+#   - al primo 403 o 429 ci si ferma subito e il giro risulta FALLITO (GitHub manda la mail).
+#
+# Alle 6:00 UTC, cioè le 8 italiane d'estate e le 7 d'inverno: le uscite del giorno sono già
+# pubblicate. Il calendario copre comunque fino a sei settimane avanti, quindi un giro saltato non
+# fa perdere niente. Il giro delle uscite manga è alle 6:15: i due non partono insieme (`concurrency`).
+#
+# A mano: «Run workflow», con «prova» attivo scarica e legge ma non scrive.
 on:
   schedule:
     - cron: "0 6 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      prova:
+        description: "Attivo: legge e conta, ma non scrive"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: animeclick
+  cancel-in-progress: false
 
 jobs:
   calendario:
     runs-on: ubuntu-latest
+    env:
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      PROVA: ${{ inputs.prova || false }}
     steps:
-      - name: Chiama il backend
+      - uses: actions/checkout@v4
+
+      - name: Scarica le pagine
+        id: pagine
+        run: bash .github/scripts/scarica-pagine.sh calendario
+
+      - name: Il backend le legge
+        if: steps.pagine.outputs.scaricate != '0'
         run: |
-          risposta=$(curl -sS -w "\n%{http_code}" -X POST \
-            --max-time 180 \
-            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
-            -H "Content-Type: application/json" \
-            -d '{"scrivi": true}' \
+          codice=$(curl -sS -o risposta.json -w "%{http_code}" -X POST --max-time 180 \
+            -H "X-Cron-Secret: ${CRON_SECRET}" -H "Content-Type: application/json" \
+            -d "{\"scrivi\": $([ "$PROVA" = "true" ] && echo false || echo true)}" \
             "https://mangavault10x-api.onrender.com/api/anime/calendario/aggiorna")
+          jq -c . risposta.json
+          [ "$codice" = "200" ] || { echo "HTTP $codice"; exit 1; }
 
-          corpo=$(echo "$risposta" | head -n -1)
-          codice=$(echo "$risposta" | tail -n 1)
-
-          echo "$corpo"
-
-          if [ "$codice" != "200" ]; then
-            echo "HTTP $codice"
-            exit 1
-          fi
+      # Dopo aver fatto tutto il possibile: un rifiuto fa risultare il giro fallito.
+      - name: AnimeClick ha rifiutato?
+        if: steps.pagine.outputs.rifiutato == '1'
+        run: |
+          echo "AnimeClick ha rifiutato questo giro (vedi i messaggi sopra)." >&2
+          exit 1

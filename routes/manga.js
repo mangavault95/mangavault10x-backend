@@ -215,32 +215,33 @@ function richiedeSegretoCron(req, res, next) {
 
 router.post("/rapporto-volumi", richiedeSegretoCron, async (req, res) => {
   const scrivi = req.body?.scrivi !== false; // il job schedulato scrive di default
-  const fonteRender = require("../services/fonteRender");
+  const pagine = require("../services/pagineAnimeClick");
+  const { serieDaControllare } = require("../services/rapportoVolumi");
 
-  // Se AnimeClick (da Render) è in pausa, o dice di no durante il giro, non si insiste:
-  // `prendi` smette di chiedere e il giro prosegue con la riserva (l'archivio di Fumettologica).
-  const giro = await fonteRender.inizia(pool);
+  // ⚠️ Da Render AnimeClick risponde 403: le pagine le scarica GitHub Actions
+  // (`rapporto-volumi.yml`) e le lascia in tabella; qui si leggono da lì e non si apre mai la rete
+  // verso AnimeClick. Una serie la cui pagina non è arrivata (GitHub si ferma al primo rifiuto)
+  // risulta «errore» e il giro prosegue con la riserva, l'archivio di Fumettologica.
+  const fetchImpl = pagine.fetchDaPagine(pool);
+  const controllaStato = req.body?.controllaStato === true; // solo il giro mensile
+  let urls = [];
 
   try {
-    const controllaStato = req.body?.controllaStato === true; // solo il giro mensile
-    const risultato = await eseguiRapportoVolumi(pool, { scrivi, controllaStato });
+    urls = (await serieDaControllare(pool)).flatMap((s) => pagine.urlsRapportoSerie(s, { controllaStato }));
+
+    const risultato = await eseguiRapportoVolumi(pool, { scrivi, controllaStato, fetchImpl });
 
     console.log(
       `📚 Rapporto volumi: ${risultato.scritte} aggiornate su ${risultato.mappate} mappate, ${risultato.concluse.length} passate a conclusa ` +
         `(${scrivi ? "scrittura" : "prova a vuoto"})`
     );
 
-    const stato = await fonteRender.concludi(pool, giro);
-
-    return res.json({
-      ...risultato,
-      animeclick: { in_pausa: giro.inPausa, rifiutato: stato.rifiuto === true }
-    });
+    return res.json(risultato);
   } catch (err) {
-    await fonteRender.concludi(pool, giro);
-
     console.error("❌ RAPPORTO VOLUMI ERROR:", err);
     return res.status(500).json({ error: "Errore server" });
+  } finally {
+    await pagine.pulisci(pool, urls);
   }
 });
 

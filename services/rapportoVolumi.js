@@ -23,10 +23,8 @@ const PAUSA_MS_DEFAULT = 1500; // gentile con AnimeClick: non è un'API pensata 
  *                      passano a «conclusa»
  * @param log           chiamata una riga alla volta, per chi vuole seguirlo dal vivo
  */
-async function eseguiRapportoVolumi(
-  pool,
-  { scrivi = false, pausaMs = PAUSA_MS_DEFAULT, controllaStato = false, log = () => {} } = {}
-) {
+/** Le serie che il rapporto controlla. Una funzione sola: GitHub deve sapere QUALI pagine scaricare. */
+async function serieDaControllare(pool) {
   const { rows } = await pool.query(`
     SELECT "ID", "Titolo", "Autore", "Edizione", "Editore", "VolumiPosseduti",
            "VolumiItalia", "VolumiTotali", "StatoSerie", "AnimeClickID"
@@ -35,6 +33,18 @@ async function eseguiRapportoVolumi(
         OR ("AnimeClickID" IS NOT NULL
             AND COALESCE("VolumiTotali", 0) > COALESCE("VolumiPosseduti", 0))
      ORDER BY "AnimeClickID" IS NULL, "Titolo"`);
+
+  return rows;
+}
+
+async function eseguiRapportoVolumi(
+  pool,
+  { scrivi = false, pausaMs = PAUSA_MS_DEFAULT, controllaStato = false, log = () => {}, fetchImpl } = {}
+) {
+  const rows = await serieDaControllare(pool);
+
+  // Con le pagine già scaricate da GitHub non c'è nessun sito a cui essere gentili.
+  const attesa = (ms) => (fetchImpl?.daPagine ? Promise.resolve() : new Promise((x) => setTimeout(x, ms)));
 
   const mappate = rows.filter((r) => r.AnimeClickID).length;
 
@@ -57,7 +67,7 @@ async function eseguiRapportoVolumi(
   let riempimento = null;
 
   for (const r of rows) {
-    let { esito, decisione } = await controllaSerie(r);
+    let { esito, decisione } = await controllaSerie(r, { fetchImpl });
 
     if (decisione.azione === "errore") {
       try {
@@ -130,7 +140,7 @@ async function eseguiRapportoVolumi(
 
         // Se la scheda AnimeClick non ha risposto nemmeno per i volumi, inutile riprovare per lo stato.
         if (esito && !esito.riserva) {
-          letto = await statoItalianoDi(r.AnimeClickID);
+          letto = await statoItalianoDi(r.AnimeClickID, { fetchImpl });
 
           for (const e of letto.etichette) etichetteViste.add(e);
         }
@@ -179,7 +189,7 @@ async function eseguiRapportoVolumi(
           statoNonLetto.push(`${String(r.Titolo).trim()} (${motivoAniList || "stato non letto"})`);
         }
 
-        await new Promise((x) => setTimeout(x, Math.max(pausaMs, 1500)));
+        await attesa(Math.max(pausaMs, 1500));
       } catch (e) {
         statoNonLetto.push(`${String(r.Titolo).trim()} (${e.message})`);
       }
@@ -187,7 +197,7 @@ async function eseguiRapportoVolumi(
 
     // Con un rifiuto in corso (o la pausa) AnimeClick non viene più chiamato: aspettare fra una
     // serie e l'altra sarebbe solo tempo perso, con 34 serie sono quasi un minuto.
-    if (!frenoAcceso()) await new Promise((x) => setTimeout(x, pausaMs));
+    if (!frenoAcceso()) await attesa(pausaMs);
   }
 
   return {
@@ -211,4 +221,4 @@ async function eseguiRapportoVolumi(
   };
 }
 
-module.exports = { eseguiRapportoVolumi };
+module.exports = { eseguiRapportoVolumi, serieDaControllare };

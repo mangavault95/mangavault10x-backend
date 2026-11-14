@@ -226,6 +226,13 @@ async function chiama(metodo, percorso, { token, corpo, segreto } = {}) {
     const elenco = await chiama("GET", "/api/anime");
     esito("l'elenco contiene la serie", Array.isArray(elenco.dati) && elenco.dati.some((a) => Number(a.id) === Number(animeId)));
 
+    // Da Render AnimeClick risponde 403: il giro del calendario legge la pagina che GitHub ha lasciato in
+    // tabella (sql/032), non la chiede. Qui se ne lascia una vuota di eventi, solo per far girare il giro.
+    await chiama("POST", "/api/animeclick/pagina", {
+      segreto: process.env.CRON_SECRET,
+      corpo: { url: "https://www.animeclick.it/calendario-anime", html: '<div class="calendario-mese"><h2>Novembre 2026</h2></div>' }
+    });
+
     const cal = await chiama("POST", "/api/anime/calendario/aggiorna", {
       segreto: process.env.CRON_SECRET,
       corpo: { scrivi: false }

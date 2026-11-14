@@ -1,53 +1,68 @@
 name: Schede anime
 
-# La rilettura delle schede che possono ancora cambiare: quelle in
-# corso, in pausa o non ancora uscite, più le concluse RECENTI (di
-# quest'anno e dell'anno scorso) ogni due settimane. Le concluse vecchie
-# non si rileggono mai — quello che dicono oggi lo diranno anche fra un
-# anno — ed è questo che tiene il lavoro a poche richieste.
+# La rilettura delle schede che possono ancora cambiare: quelle in corso, in pausa o non ancora uscite,
+# più le concluse RECENTI (di quest'anno e dell'anno scorso) ogni due settimane. Le concluse vecchie non
+# si rileggono mai — quello che dicono oggi lo diranno anche fra un anno — ed è questo che tiene il
+# lavoro a poche richieste.
 #
-# Serve perché una serie in corso guadagna episodi (con i loro titoli
-# italiani), cambia stato quando finisce, e cambia "Stato in Italia"
-# quando arrivano i sottotitoli o il doppiaggio.
+# Serve perché una serie in corso guadagna episodi (con i loro titoli italiani), cambia stato quando
+# finisce, e cambia "Stato in Italia" quando arrivano i sottotitoli o il doppiaggio.
 #
-# Due volte a settimana, domenica e mercoledì presto: un anime esce a
-# settimana, quindi controllare più spesso vorrebbe dire leggere le
-# stesse pagine per niente. Il mercoledì è nato il 04/10/2026, quando
-# al giro sono state aggiunte le concluse recenti (le serie a due cour
-# tornano): la coda è cresciuta e dieci a settimana non bastavano.
+# Due volte a settimana, domenica e mercoledì presto: un anime esce a settimana, quindi controllare più
+# spesso vorrebbe dire leggere le stesse pagine per niente. Il calendario, che è la cosa che cambia ogni
+# giorno, ha il suo giro quotidiano a parte.
 #
-# Il calendario, che è la cosa che cambia ogni giorno, ha il suo giro
-# quotidiano a parte.
+# PERCHÉ LE PAGINE LE SCARICA GITHUB E NON RENDER: da Render AnimeClick risponde 403, da GitHub no (vedi
+# calendario-anime.yml e sql/032). Dieci serie per volta, due pagine l'una (la scheda e gli episodi), una
+# pagina ogni otto secondi: circa due minuti e mezzo. Le serie che restano indietro le prende il giro
+# dopo: l'ordine mette per prime quelle lette più tempo fa.
 #
-# Dieci serie per volta, non venti: ogni scheda costa due pagine più
-# una pausa di cortesia, e una richiesta che dura troppo rischia di
-# trovare chiuso dall'altra parte. Le serie che restano indietro le
-# prende il giro dopo — l'ordine mette per prime quelle
-# lette più tempo fa.
+# Al primo 403 o 429 ci si ferma e il giro risulta fallito; in pausa non si chiede niente.
 on:
   schedule:
     - cron: "0 5 * * 0,3"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      quante:
+        description: "Quante serie (al massimo 40)"
+        type: string
+        default: "10"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: animeclick
+  cancel-in-progress: false
 
 jobs:
   schede:
     runs-on: ubuntu-latest
+    env:
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      QUANTE: ${{ inputs.quante || '10' }}
     steps:
-      - name: Chiama il backend
+      - uses: actions/checkout@v4
+
+      - name: Scarica le pagine
+        id: pagine
         run: |
-          risposta=$(curl -sS -w "\n%{http_code}" -X POST \
-            --max-time 300 \
-            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
-            -H "Content-Type: application/json" \
-            -d '{"giorni": 7, "quante": 10}' \
+          case "$QUANTE" in ''|*[!0-9]*) QUANTE=10;; esac
+          bash .github/scripts/scarica-pagine.sh schede "&quante=$QUANTE"
+
+      - name: Il backend le legge
+        if: steps.pagine.outputs.scaricate != '0'
+        run: |
+          case "$QUANTE" in ''|*[!0-9]*) QUANTE=10;; esac
+          codice=$(curl -sS -o risposta.json -w "%{http_code}" -X POST --max-time 300 \
+            -H "X-Cron-Secret: ${CRON_SECRET}" -H "Content-Type: application/json" \
+            -d "{\"giorni\": 7, \"quante\": ${QUANTE}}" \
             "https://mangavault10x-api.onrender.com/api/anime/serie/aggiorna")
+          jq -c '{success, lette, errori: (.errori | length)}' risposta.json
+          [ "$codice" = "200" ] || { echo "HTTP $codice"; exit 1; }
 
-          corpo=$(echo "$risposta" | head -n -1)
-          codice=$(echo "$risposta" | tail -n 1)
-
-          echo "$corpo"
-
-          if [ "$codice" != "200" ]; then
-            echo "HTTP $codice"
-            exit 1
-          fi
+      - name: AnimeClick ha rifiutato?
+        if: steps.pagine.outputs.rifiutato == '1'
+        run: |
+          echo "AnimeClick ha rifiutato questo giro (vedi i messaggi sopra)." >&2
+          exit 1

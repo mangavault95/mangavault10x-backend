@@ -311,7 +311,7 @@ const INTESTAZIONI = {
 // Dopo un rifiuto `prendi` non fa PIÙ nessuna richiesta, per almeno un'ora (o per quanto
 // dice `Retry-After`, fino a un giorno): lancia subito `RifiutoFonte`. Il freno sta in
 // memoria, e Render dorme e si risveglia: lo stato che sopravvive (quanti giri di fila sono
-// stati rifiutati, e la pausa di due settimane) sta in `fonte_stato`, vedi `services/fonteRender.js`.
+// stati rifiutati, e la pausa di due settimane) sta in `fonte_stato`, vedi `routes/animeclick.js`.
 //
 // ⚠️ NON si cambia indirizzo, firma o strada per aggirare un rifiuto: se dice di no, ci si ferma.
 // --------------------------------------------------
@@ -382,7 +382,11 @@ function azzeraFreno() {
 }
 
 async function prendi(url, opzioni = {}, fetchImpl = fetch) {
-  if (freno.fino > Date.now()) throw new RifiutoFonte(freno.status, url, { senzaRichiesta: true });
+  // Un `fetchImpl` che legge le pagine scaricate da GitHub (`services/pagineAnimeClick.js`) non
+  // apre la rete: il freno, che protegge AnimeClick, qui non ha niente da proteggere.
+  const senzaRete = fetchImpl?.daPagine === true;
+
+  if (!senzaRete && freno.fino > Date.now()) throw new RifiutoFonte(freno.status, url, { senzaRichiesta: true });
 
   // Un tentativo in più, una volta sola: AnimeClick ogni tanto risponde
   // 520 o 502 per qualche secondo, e su un giro lungo quel singolo
