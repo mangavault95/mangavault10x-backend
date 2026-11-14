@@ -65,7 +65,7 @@ jobs:
           [ "$codice" = "200" ] || { echo "HTTP $codice"; exit 1; }
 
       - name: AnimeClick ha rifiutato?
-        if: steps.pagine.outputs.rifiutato == '1'
+        if: steps.pagine.outputs.rifiutato == '1' || steps.pagine.outputs.non_accettate != '0'
         run: |
-          echo "AnimeClick ha rifiutato questo giro (vedi i messaggi sopra): il rapporto è andato avanti con la riserva." >&2
+          echo "Il giro non è riuscito: AnimeClick ha rifiutato, o il backend non ha accettato le pagine (vedi i messaggi sopra). Il rapporto è andato avanti con la riserva." >&2
           exit 1

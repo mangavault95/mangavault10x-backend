@@ -45,6 +45,7 @@ const server = http.createServer((req, res) => {
     eventi.push({ tipo: "api", metodo: req.method, url: req.url, json, quando });
     res.setHeader("content-type", "application/json");
     if (req.url.startsWith("/api/animeclick/da-scaricare")) return res.end(JSON.stringify(scenario.elenco(PORT)));
+    if (scenario.paginaStato && req.url === "/api/animeclick/pagina") { res.statusCode = scenario.paginaStato; return res.end('{"error":"Errore server"}'); }
     return res.end(JSON.stringify({ success: true }));
   });
 });
@@ -75,7 +76,7 @@ const api = (r, metodo, inizio) => r.eventi.filter((e) => e.tipo === "api" && e.
 
 console.log("\nTutto va bene");
 let r = await esegui("ok", { elenco: elenco3, ac: () => ({ status: 200 }) });
-prova("tre pagine scaricate e mandate", [0, "3", "0", 3], [r.codice, r.output.scaricate, r.output.rifiutato, api(r, "POST", "/api/animeclick/pagina").length]);
+prova("tre pagine scaricate e mandate", [0, "3", "0", "0", 3], [r.codice, r.output.scaricate, r.output.rifiutato, r.output.non_accettate, api(r, "POST", "/api/animeclick/pagina").length]);
 prova("ogni pagina arriva con il suo indirizzo e l'HTML", true, api(r, "POST", "/api/animeclick/pagina").every((e, i) => e.json.url.endsWith(`/ac/pagina${i + 1}`) && e.json.html.includes("AnimeClick pagina")));
 prova("l'esito dice riuscito, una volta", [{ riuscito: true, lavoro: "calendario", prova: false }], api(r, "POST", "/api/animeclick/esito").map((e) => e.json));
 prova("firma dichiarata e lingua, su ogni richiesta", [true, true], [ac(r).every((e) => /^MangaVault\/1\.0 /.test(e.ua)), ac(r).every((e) => e.lingua === "it-IT,it;q=0.9")]);
@@ -109,6 +110,10 @@ prova("un redirect non si segue: è un errore, non una richiesta in più", [3, t
 
 r = await esegui("404", { elenco: elenco3, ac: (n) => ({ status: n === 1 ? 404 : 200 }) });
 prova("un 404 (serie tolta) si salta senza fermarsi", [3, "2", "0"], [ac(r).length, r.output.scaricate, r.output.rifiutato]);
+
+console.log("\nIl backend non accetta le pagine (per esempio la tabella non c'è)");
+r = await esegui("pagine-rifiutate", { elenco: elenco3, ac: () => ({ status: 200 }), paginaStato: 500 });
+prova("le pagine si scaricano ma il giro NON risulta riuscito: scaricate 0, non accettate 3", [0, "0", "3", 0], [r.codice, r.output.scaricate, r.output.non_accettate, api(r, "POST", "/api/animeclick/esito").length]);
 
 console.log("\nIn pausa");
 r = await esegui("pausa-db", { elenco: () => ({ tentare: false, in_pausa_fino: "2026-12-01T00:00:00Z", urls: [] }), ac: () => ({ status: 200 }) });

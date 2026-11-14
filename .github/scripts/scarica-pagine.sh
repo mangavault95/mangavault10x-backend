@@ -21,7 +21,8 @@
 #   - niente redirect seguiti, niente pagine oltre i 3,5 MB.
 # NON si cambia indirizzo, firma o strada per aggirare un rifiuto.
 #
-# Scrive su $GITHUB_OUTPUT: scaricate=<quante>, rifiutato=0|1, in_pausa=0|1.
+# Scrive su $GITHUB_OUTPUT: scaricate=<quante>, rifiutato=0|1, in_pausa=0|1, non_accettate=<quante>
+# (le pagine scaricate che il backend non ha accettato: un giro così NON è riuscito, anche se AnimeClick ha risposto).
 # Esce 0 anche se AnimeClick ha rifiutato (lo dicono gli output: sta al workflow farlo risultare
 # fallito DOPO aver fatto il resto); esce 1 solo se il backend non risponde.
 
@@ -58,18 +59,18 @@ backend() {
 }
 
 fine() {
-  { echo "scaricate=$1"; echo "rifiutato=$2"; echo "in_pausa=$3"; } >> "$USCITA"
+  { echo "scaricate=$1"; echo "rifiutato=$2"; echo "in_pausa=$3"; echo "non_accettate=${4:-0}"; } >> "$USCITA"
 }
 
 # 1. Che cosa scaricare, e se si può.
 if ! backend GET "/da-scaricare?lavoro=$LAVORO$QUERY"; then
-  fine 0 0 0
+  fine 0 0 0 0
   exit 1
 fi
 
 if [ "$(jq -r '.tentare' risposta.json)" != "true" ]; then
   echo "AnimeClick è in pausa fino al $(jq -r '.in_pausa_fino' risposta.json): non chiedo niente."
-  fine 0 0 1
+  fine 0 0 1 0
   exit 0
 fi
 
@@ -78,6 +79,7 @@ totale=$(wc -l < indirizzi.txt | tr -d ' ')
 echo "Da scaricare: $totale pagine ($LAVORO), una ogni $PAUSA secondi."
 
 scaricate=0
+non_accettate=0
 rifiutato=0
 motivo=""
 errori_di_fila=0
@@ -110,6 +112,7 @@ while IFS= read -r url; do
           scaricate=$((scaricate+1))
           echo "[$n/$totale] ok: ${url#"$PREFISSO"}"
         else
+          non_accettate=$((non_accettate+1))
           echo "[$n/$totale] la pagina non è stata accettata dal backend: ${url#"$PREFISSO"}"
         fi
       else
@@ -146,6 +149,6 @@ elif [ "$scaricate" -gt 0 ]; then
   backend POST /esito corpo.json || echo "L'esito non è stato registrato." >&2
 fi
 
-echo "Scaricate e mandate: $scaricate su $totale."
-fine "$scaricate" "$rifiutato" 0
+echo "Scaricate e mandate: $scaricate su $totale (non accettate dal backend: $non_accettate)."
+fine "$scaricate" "$rifiutato" 0 "$non_accettate"
 exit 0
