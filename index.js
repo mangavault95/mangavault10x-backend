@@ -69,6 +69,10 @@ app.use(
 // su ogni rotta del sito per comodo di due.
 app.use(["/api/utenti/io/faccia", "/api/utenti/io/striscione"], express.json({ limit: "4mb" }));
 
+// Il giro di AnimeClick manda qui tre pagine HTML intere (circa 270 kB l'una):
+// stesso discorso, tetto largo solo su quell'indirizzo e prima del lettore normale.
+app.use("/api/manga/uscite/animeclick", express.json({ limit: "4mb" }));
+
 app.use(express.json());
 
 // --------------------------------------------------

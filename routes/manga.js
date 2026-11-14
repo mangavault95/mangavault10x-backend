@@ -919,6 +919,134 @@ router.post("/uscite/aggiorna", richiedeSegretoCron, async (req, res) => {
 });
 
 /**
+ * GET /api/manga/uscite/animeclick/stato — si può provare AnimeClick oggi?
+ *
+ * Lo chiede il giro quotidiano di GitHub Actions prima di scaricare le
+ * pagine: se la fonte è in pausa (sette giorni di fila senza riuscirci) non
+ * si bussa. Protetta dal segreto del cron.
+ */
+router.get("/uscite/animeclick/stato", richiedeSegretoCron, async (req, res) => {
+  try {
+    const fonti = require("../services/fontiStato");
+    const stato = await fonti.leggi(pool, "animeclick");
+
+    return res.json({
+      tentare: fonti.puoiTentare(stato),
+      in_pausa_fino: stato?.in_pausa_fino || null,
+      fallimenti_di_fila: Number(stato?.fallimenti_di_fila || 0)
+    });
+  } catch (err) {
+    console.error("MANGA USCITE ANIMECLICK STATO ERROR:", err);
+
+    // Nel dubbio si prova: una pausa che non si legge non deve fermare il giro.
+    return res.json({ tentare: true, in_pausa_fino: null, fallimenti_di_fila: 0 });
+  }
+});
+
+/** Un messaggio Telegram al proprietario, se ha collegato la chat. Non fa mai fallire chi lo chiama. */
+async function avvisaProprietario(testo) {
+  try {
+    const telegram = require("../services/telegram");
+
+    if (!telegram.configurato?.()) return;
+
+    const { rows } = await pool.query(
+      `SELECT telegram_chat_id FROM utenti WHERE proprietario AND stato = 'attivo' AND telegram_chat_id IS NOT NULL LIMIT 1`
+    );
+
+    if (rows[0]) await telegram.invia(rows[0].telegram_chat_id, testo);
+  } catch (err) {
+    console.warn("Avviso al proprietario non inviato:", err.message);
+  }
+}
+
+/**
+ * POST /api/manga/uscite/animeclick — il giro quotidiano, parte «ricevo».
+ *
+ * Le pagine di AnimeClick le scarica GitHub Actions (da Render rispondeva
+ * 403) e le manda qui; si leggono con lo stesso lettore di sempre e si
+ * scrivono in `uscite_manga`. Due forme:
+ *
+ *   {"pagine": [{"quando": null | "next-month" | "prev-month", "html": "…"}], "prova": false}
+ *   {"fallito": true, "motivo": "HTTP 403"}    il giro non è riuscito a scaricare
+ *
+ * Risponde `fallback: true` quando AnimeClick non ha dato niente di
+ * utilizzabile: chi chiama allora lancia la ricerca di Fumettologica.
+ * Sette fallimenti di fila mettono la fonte in pausa per due settimane (e
+ * mandano un messaggio Telegram al proprietario); un tentativo riuscito
+ * azzera il conto. Protetta dal segreto del cron.
+ */
+router.post("/uscite/animeclick", richiedeSegretoCron, async (req, res) => {
+  const fonti = require("../services/fontiStato");
+  const scrivi = req.body?.prova !== true;
+  const pagine = Array.isArray(req.body?.pagine) ? req.body.pagine : [];
+
+  try {
+    let motivo = req.body?.fallito === true ? String(req.body?.motivo || "fallito") : null;
+    let esito = null;
+
+    // Una pagina senza il separatore dei giorni non è il calendario: è la pagina
+    // della verifica anti-bot, o un errore con faccia di pagina.
+    const valide = pagine.filter(
+      (p) => typeof p?.html === "string" && p.html.includes("date-separator") && [null, "next-month", "prev-month"].includes(p.quando ?? null)
+    );
+
+    if (!motivo && !valide.some((p) => (p.quando ?? null) === null)) {
+      motivo = "la pagina del mese non è il calendario";
+    }
+
+    if (!motivo) {
+      try {
+        esito = await require("../services/usciteManga").registraDaPagine(
+          pool,
+          valide.map((p) => ({ quando: p.quando ?? null, html: p.html })),
+          { scrivi }
+        );
+
+        if (esito.lette === 0) motivo = "nessuna uscita letta dalle pagine";
+      } catch (err) {
+        motivo = `lettura fallita: ${err.message}`;
+      }
+    }
+
+    if (motivo) {
+      const stato = scrivi ? await fonti.segnaFallito(pool, "animeclick", motivo) : null;
+
+      if (stato?.appenaInPausa) {
+        await avvisaProprietario(
+          `⚠️ AnimeClick non si riesce a leggere da ${stato.fallimenti_di_fila} giorni di fila. ` +
+            `Smetto di provare per ${fonti.PAUSA_GIORNI} giorni e uso solo Fumettologica; poi riprovo. ` +
+            `Ultimo errore: ${motivo}`
+        );
+      }
+
+      console.log(`📚 Calendario manga: AnimeClick non letto (${motivo}) — si ripiega su Fumettologica`);
+
+      return res.json({
+        success: false,
+        fallback: true,
+        motivo,
+        fallimenti_di_fila: stato?.fallimenti_di_fila ?? null,
+        in_pausa_fino: stato?.in_pausa_fino || null
+      });
+    }
+
+    const eraInErrore = scrivi ? await fonti.segnaRiuscito(pool, "animeclick") : 0;
+
+    console.log(
+      `📚 Calendario manga (da GitHub): ${esito.lette} uscite lette (${esito.meseScorso} dal mese scorso), ` +
+        `${esito.scritte} nuove o cambiate${scrivi ? "" : " — prova a vuoto"}`
+    );
+
+    return res.json({ success: true, fallback: false, ...esito, dopo_fallimenti: eraInErrore });
+  } catch (err) {
+    console.error("MANGA USCITE ANIMECLICK ERROR:", err);
+
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * POST /api/manga/uscite/cerca — la ricerca del 7: cosa è uscito delle
  * serie in corso dall'8 del mese scorso all'8 di questo, scritto in
  * `uscite_manga` solo se trovato (vedi `services/cercaUscite.js`).

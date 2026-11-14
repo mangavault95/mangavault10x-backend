@@ -1,0 +1,131 @@
+name: Uscite manga da AnimeClick
+
+# Il giro quotidiano delle uscite, con AnimeClick come fonte principale e
+# Fumettologica di ripiego. Sostituisce `uscite-manga.yml` (spento il 03/11/2026).
+#
+# PERCHÉ QUI E NON SU RENDER
+# Dal 03/11/2026 AnimeClick ha una verifica anti-bot e a Render risponde 403.
+# Il 14/11/2026 una richiesta identica da GitHub Actions, con la stessa firma
+# dichiarata del progetto, ha avuto 200 e la pagina intera. Quindi le pagine le
+# scarica questo lavoro e le manda al backend, che le legge e le scrive come
+# prima. La firma resta quella onesta (MangaVault/1.0 …): non ci si finge un
+# browser, e se AnimeClick risponde di no si smette (vedi la pausa).
+#
+# COME SI COMPORTA
+#   1. Chiede al backend se AnimeClick è in pausa (sette giorni di fila senza
+#      riuscirci → due settimane di pausa, vedi services/fontiStato.js).
+#   2. Se non lo è, scarica le tre pagine del calendario manga, distanziate di
+#      qualche secondo, e le manda. Una pagina senza il calendario (la verifica
+#      anti-bot) conta come fallimento.
+#   3. Se AnimeClick non ha dato niente, o è in pausa, lancia subito la ricerca
+#      di Fumettologica: quel giorno le uscite arrivano da lì.
+#   4. Il giro riesce se almeno una delle due fonti ha risposto. Va in errore
+#      (e GitHub manda la mail) solo se non ha risposto nessuna.
+#   5. Dopo sette fallimenti di fila il backend manda un messaggio Telegram al
+#      proprietario.
+#
+# A mano: «Run workflow», con «prova» attivo legge e conta senza scrivere.
+on:
+  schedule:
+    - cron: "15 6 * * *"
+  workflow_dispatch:
+    inputs:
+      prova:
+        description: "Attivo: legge e conta, ma non scrive"
+        type: boolean
+        default: false
+
+jobs:
+  giro:
+    runs-on: ubuntu-latest
+    env:
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      PROVA: ${{ inputs.prova || false }}
+    steps:
+      - name: Giro
+        run: |
+          set -u
+          API="https://mangavault10x-api.onrender.com/api/manga/uscite"
+          UA="MangaVault/1.0 (collezione personale; +https://mangavault10x-frontend.vercel.app)"
+          BASE="https://www.animeclick.it/calendario-manga"
+
+          # Una chiamata al backend: ritenta una volta, perché il primo giro sveglia Render.
+          backend() {
+            local metodo="$1" percorso="$2" corpo="${3:-}" uscita codice
+            for tentativo in 1 2; do
+              if [ -n "$corpo" ]; then
+                codice=$(curl -sS -o risposta.json -w "%{http_code}" --max-time 150 -X "$metodo" \
+                  -H "X-Cron-Secret: $CRON_SECRET" -H "Content-Type: application/json" \
+                  --data-binary "@$corpo" "$API$percorso") || codice=000
+              else
+                codice=$(curl -sS -o risposta.json -w "%{http_code}" --max-time 150 -X "$metodo" \
+                  -H "X-Cron-Secret: $CRON_SECRET" "$API$percorso") || codice=000
+              fi
+              [ "$codice" = "200" ] && return 0
+              sleep 10
+            done
+            echo "Il backend ha risposto HTTP $codice su $percorso" >&2
+            cat risposta.json >&2 2>/dev/null || true
+            return 1
+          }
+
+          ripiego=0
+          motivo=""
+
+          # 1. In pausa?
+          tentare=true
+          if backend GET /animeclick/stato; then
+            tentare=$(jq -r '.tentare' risposta.json)
+            echo "Stato di AnimeClick: $(cat risposta.json)"
+          else
+            echo "Lo stato non si legge: si prova comunque."
+          fi
+
+          if [ "$tentare" = "true" ]; then
+            # 2. Le tre pagine, distanziate.
+            n=0
+            echo '[]' > pagine.json
+            for quando in "" "next-month" "prev-month"; do
+              n=$((n+1))
+              if [ -n "$quando" ]; then url="$BASE?paging=$quando"; else url="$BASE"; fi
+              codice=$(curl -sS -o "p$n.html" -w "%{http_code}" --max-time 40 -A "$UA" -H "Accept-Language: it-IT,it;q=0.9" "$url") || codice=000
+              if [ "$codice" = "200" ] && grep -q "date-separator" "p$n.html"; then
+                jq --arg q "$quando" --rawfile h "p$n.html" '. + [{quando: (if $q == "" then null else $q end), html: $h}]' pagine.json > t.json && mv t.json pagine.json
+                echo "Pagina ${quando:-corrente}: ok"
+              else
+                echo "Pagina ${quando:-corrente}: HTTP $codice, non è il calendario"
+                if [ "$n" = "1" ]; then motivo="HTTP $codice"; fi
+              fi
+              sleep 5
+            done
+
+            if [ -n "$motivo" ]; then
+              jq -n --arg m "$motivo" --argjson prova "$PROVA" '{fallito: true, motivo: $m, prova: $prova}' > corpo.json
+            else
+              jq -n --slurpfile p pagine.json --argjson prova "$PROVA" '{pagine: $p[0], prova: $prova}' > corpo.json
+            fi
+
+            # La risposta del backend dice se AnimeClick è servito.
+            if backend POST /animeclick corpo.json; then
+              cat risposta.json | jq -c 'del(.html)'
+              [ "$(jq -r '.fallback' risposta.json)" = "true" ] && ripiego=1
+            else
+              echo "Il backend non ha ricevuto le pagine: ripiego."
+              ripiego=1
+            fi
+          else
+            echo "AnimeClick è in pausa: oggi si usa Fumettologica."
+            ripiego=1
+          fi
+
+          # 3. Il ripiego.
+          if [ "$ripiego" = "1" ]; then
+            echo "Ricerca su Fumettologica (le due settimane intorno a oggi)…"
+            jq -n --argjson prova "$PROVA" '{settimana: true, prova: $prova}' > corpo.json
+            if backend POST /cerca corpo.json; then
+              jq -c . risposta.json | cut -c1-400
+            else
+              echo "Anche Fumettologica non ha risposto." >&2
+              exit 1
+            fi
+          fi

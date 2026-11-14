@@ -213,11 +213,11 @@ async function abbinaAllaCollezione(pool, calendario) {
  * il buco prima del primo giorno; se no, ci si accontenta di quello che
  * c'è e il primo riepilogo sarà parziale.
  */
-async function registraCalendario(pool, { scrivi = true } = {}) {
+async function registraCalendario(pool, { scrivi = true, fetchImpl = fetch } = {}) {
   const pagine = await Promise.all([
-    ac.calendarioManga({ quando: null }),
-    ac.calendarioManga({ quando: "next-month" }).catch(() => []),
-    ac.calendarioManga({ quando: "prev-month" }).catch(() => [])
+    ac.calendarioManga({ quando: null, fetchImpl }),
+    ac.calendarioManga({ quando: "next-month", fetchImpl }).catch(() => []),
+    ac.calendarioManga({ quando: "prev-month", fetchImpl }).catch(() => [])
   ]);
 
   const [correnti, prossime, scorse] = pagine;
@@ -245,6 +245,34 @@ async function registraCalendario(pool, { scrivi = true } = {}) {
   esito.scritte = await salvaUscite(pool, righe.map(([, u]) => u), "animeclick");
 
   return esito;
+}
+
+/**
+ * Registra il calendario partendo da pagine GIÀ scaricate da qualcun altro.
+ *
+ * Dal 14/11/2026 le pagine di AnimeClick le scarica GitHub Actions e non
+ * più Render (da Render rispondeva 403): il backend le riceve, le legge con
+ * lo stesso lettore di prima e le scrive. `pagine` è
+ * `[{ quando: null | "next-month" | "prev-month", html }]`.
+ *
+ * Il lettore non sa che non è andato lui a prenderle: gli si dà un `fetch`
+ * che risponde con quell'HTML invece di uscire in rete.
+ */
+function registraDaPagine(pool, pagine, { scrivi = true } = {}) {
+  const perUrl = new Map(
+    pagine.map(({ quando, html }) => [
+      quando ? `https://www.animeclick.it/calendario-manga?paging=${quando}` : "https://www.animeclick.it/calendario-manga",
+      html
+    ])
+  );
+
+  const fetchImpl = async (url) => {
+    if (!perUrl.has(url)) return new Response("", { status: 404 });
+
+    return new Response(perUrl.get(url), { status: 200 });
+  };
+
+  return registraCalendario(pool, { scrivi, fetchImpl });
 }
 
 /**
@@ -349,6 +377,7 @@ async function usciteTra(pool, { dopo, fino, soloMie = true }) {
 module.exports = {
   usciteDellaCollezione,
   registraCalendario,
+  registraDaPagine,
   salvaUscite,
   usciteTra,
   ossa,

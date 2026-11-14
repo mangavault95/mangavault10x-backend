@@ -17,6 +17,9 @@ name: Uscite manga
 # mano, per quando arriverà un accesso concordato: basta rimettere il
 # `schedule` qui sotto. Nel frattempo le uscite si cercano il 7 di ogni
 # mese con `cerca-uscite-manga.yml`.
+#
+# SOSTITUITO (14/11/2026) da `giro-animeclick.yml`: scarica le pagine da GitHub
+# (da qui, Render, il 403 resta) e ripiega su Fumettologica. Questo file non si usa più.
 on:
   # schedule:
   #   - cron: "15 6 * * *"
