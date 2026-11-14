@@ -305,7 +305,11 @@ async function salvaUscite(pool, uscite, fonte) {
            fonte = EXCLUDED.fonte,
            aggiornata_il = NOW()
      WHERE (uscite_manga.data IS DISTINCT FROM EXCLUDED.data
-            OR uscite_manga.titolo IS DISTINCT FROM EXCLUDED.titolo)
+            OR uscite_manga.titolo IS DISTINCT FROM EXCLUDED.titolo
+            -- La riga scritta da Fumettologica non ha copertina (non la dà): se la stessa uscita
+            -- arriva da AnimeClick con la copertina DEL VOLUME, la si riempie anche se data e
+            -- titolo sono già uguali. Altrimenti restava la copertina della serie (il volume 1).
+            OR (uscite_manga.copertina IS NULL AND EXCLUDED.copertina IS NOT NULL))
        AND (EXCLUDED.fonte = 'animeclick' OR uscite_manga.fonte NOT IN ('animeclick', 'manuale'))
     `,
     [

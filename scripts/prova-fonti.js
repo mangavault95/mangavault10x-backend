@@ -134,6 +134,18 @@ const FIXTURE = (mese, giorno, serie, volume, immagine) => `
         rows.map((r) => [r.serie, r.numero, r.copertina, r.fonte])
       );
 
+      // Una riga già scritta da Fumettologica: stessa data e stesso titolo, ma senza copertina.
+      await scratch.query(`UPDATE uscite_manga SET copertina = NULL, fonte = 'fumettologica' WHERE serie = 'Frieren'`);
+
+      const rifatto = await manda({ pagine: buone });
+      const { rows: rf } = await scratch.query(`SELECT copertina, fonte FROM uscite_manga WHERE serie = 'Frieren'`);
+
+      prova(
+        "una riga di Fumettologica senza copertina la riceve da AnimeClick, anche con data e titolo uguali",
+        [1, "https://www.animeclick.it/img/frieren15.jpg", "animeclick"],
+        [rifatto.scritte, rf[0].copertina, rf[0].fonte]
+      );
+
       const dopoOk = await stato();
 
       prova("lo stato dopo un successo: si può provare, zero fallimenti", [true, 0], [dopoOk.tentare, dopoOk.fallimenti_di_fila]);
