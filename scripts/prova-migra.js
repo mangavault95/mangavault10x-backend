@@ -82,7 +82,7 @@ const nomi = (lista) => lista.map((o) => (o.tabella ? `${o.tabella}.${o.nome}` :
     const vere = m.elenco();
 
     prova("sono tutti leggibili e hanno un id solo", true, vere.length >= 27 && new Set(vere.map((x) => x.id)).size === vere.length);
-    prova("il doppione 006 è l'unico ammesso", ["006_animeclick", "006_id_autoincrementale"], vere.filter((x) => x.numero === 6).map((x) => x.id));
+    prova("un solo 006 (l'altro, mai eseguito, è in sql/archivio e non si legge)", ["006_animeclick"], vere.filter((x) => x.numero === 6).map((x) => x.id));
 
     const t = Object.fromEntries(m.testimoni(vere).map((x) => [x.id, nomi(x.testimoni)]));
 
@@ -90,7 +90,7 @@ const nomi = (lista) => lista.map((o) => (o.tabella ? `${o.tabella}.${o.nome}` :
     prova("026 aggiunge Manga.SmessaIl", ["Manga.SmessaIl"], t["026_serie_smesse"]);
     prova("nessun testimone è una colonna tolta dopo: «Valutazione» non c'è", false, Object.values(t).flat().includes("Manga.Valutazione"));
     prova("le migrazioni di soli dati non hanno testimoni", [[], []], [t["002_pulizia_tipi"], t["025_riallinea_posseduti_e_italia"]]);
-    prova("la sequenza degli ID è un testimone", ["manga_id_seq"], t["006_id_autoincrementale"]);
+    prova("una sequenza creata è un testimone", ["manga_id_seq"], nomi(m.leggiOggetti("CREATE SEQUENCE IF NOT EXISTS manga_id_seq OWNED BY x;").crea));
 
     prova(
       "un numero nuovo ripetuto è un errore",

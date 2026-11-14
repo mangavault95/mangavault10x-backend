@@ -1,4 +1,22 @@
 -- ============================================================
+-- ARCHIVIATA il 14/11/2026 — NON ESEGUIRE, e non è nel registro.
+--
+-- Questa migrazione non è mai stata eseguita sul database di
+-- produzione: il controllo prima della baseline (npm run migra)
+-- ha trovato che la sequenza `manga_id_seq` non esiste. Il sito ha
+-- sempre funzionato senza, perché il codice calcola l'ID da solo
+-- (services/idManga.js, con un lucchetto di transazione che mette
+-- in fila le creazioni contemporanee).
+--
+-- Resta qui perché l'idea è giusta: se un giorno il codice smette di
+-- calcolare l'ID a mano e lascia fare al database, questo è il
+-- file da riportare in `sql/` con un numero nuovo. Attenzione:
+-- una sequenza non avanza quando si inseriscono ID espliciti, quindi
+-- la sostituzione va fatta in una volta sola, in tutti e tre i posti
+-- (creazione dal sito, wishlist, bot).
+-- ============================================================
+
+-- ============================================================
 -- MangaVault — Migrazione 006: ID autoincrementale
 --
 -- ESEGUIRE DOPO il 005.

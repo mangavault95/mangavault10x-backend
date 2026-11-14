@@ -38,10 +38,11 @@ const crypto = require("crypto");
 
 const CARTELLA_SQL = path.join(__dirname, "..", "sql");
 
-// Due file hanno il numero 006 per ragioni storiche. È l'unico doppione
-// ammesso: un numero nuovo ripetuto è quasi sempre due persone (o due
-// rami) che hanno scelto lo stesso e vanno messe d'accordo.
-const DOPPIONI_AMMESSI = new Set([6]);
+// Nessun numero ripetuto è ammesso: due file con lo stesso numero sono
+// quasi sempre due persone (o due rami) che hanno scelto lo stesso e vanno
+// messe d'accordo. (C'è stato un 006 doppio: uno dei due non è mai stato
+// eseguito ed è in `sql/archivio/`, che qui non si legge.)
+const DOPPIONI_AMMESSI = new Set();
 
 // Numero del lucchetto che impedisce due esecutori insieme. Diverso da
 // `LUCCHETTO_ID_MANGA` (services/idManga.js).

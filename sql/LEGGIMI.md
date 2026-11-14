@@ -17,7 +17,7 @@ Va fatto **prima** di pubblicare il codice che ne dipende, come sempre.
 Serve `DATABASE_URL` (di solito nel file `.env`). Non c'è niente di automatico:
 né all'avvio del server né al deploy.
 
-Un numero ripetuto è un errore (l'unico doppione ammesso è il `006`, storico),
+Un numero ripetuto è un errore,
 e un file con un numero più basso dell'ultimo applicato viene rifiutato.
 
 ## La prima volta: la baseline
@@ -47,3 +47,11 @@ servivano quando non si sapeva quali migrazioni fossero passate. **Sono ancora
 lì**, e vanno tolti solo dopo che la baseline è stata fatta sul database vero e
 `npm run migra` mostra tutto in ordine: tolti prima, un database in ritardo
 darebbe errori al posto di dati degradati.
+
+## `sql/archivio/`
+
+Migrazioni **mai eseguite** in produzione e non più da eseguire. Il registro non
+le legge. Oggi c'è la `006_id_autoincrementale` (una sequenza per gli ID delle
+serie): il codice sceglie l'ID da sé con un lucchetto (`services/idManga.js`) e
+il sito funziona così, quindi non serviva. Il motivo per cui è lì e cosa servirebbe
+per riprenderla sono scritti in testa al file.
