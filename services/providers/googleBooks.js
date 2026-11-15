@@ -199,11 +199,15 @@ async function search(title, author) {
  * Un volume dal suo codice a barre. Serve alla scansione (`services/isbn.js`):
  * qui non si sceglie il «migliore» fra tanti, si risponde a una domanda precisa.
  * Restituisce null se Google non conosce il codice (o la chiave manca).
+ *
+ * Il numero di volume sta a volte nel titolo («Berserk. Vol. 12») e a volte nel
+ * sottotitolo («Vol. 12», o «New edition»): si guardano tutti e due, e
+ * `titoloIntero` li tiene insieme per chi deve riconoscere l'edizione.
  */
 async function perIsbn(isbn13) {
   if (!isEnabled()) return null;
 
-  const params = new URLSearchParams({ q: `isbn:${isbn13}`, maxResults: "5", key: API_KEY });
+  const params = new URLSearchParams({ q: `isbn:${isbn13}`, country: "IT", maxResults: "5", key: API_KEY });
   const res = await fetch(`${ENDPOINT}?${params}`, { signal: AbortSignal.timeout(12000) });
 
   if (res.status === 429) throw new Error("Google Books: quota giornaliera esaurita");
@@ -211,15 +215,26 @@ async function perIsbn(isbn13) {
 
   const item = ((await res.json())?.items || [])[0];
 
-  if (!item) return null;
+  return item ? daVolume(item) : null;
+}
 
-  const info = item.volumeInfo || {};
-  const sale = item.saleInfo || {};
+/** Da una voce di Google Books alla forma che usa la scansione. A parte per poterla provare. */
+function daVolume(item) {
+  const info = item?.volumeInfo || {};
+  const sale = item?.saleInfo || {};
+
+  if (!info.title) return null;
+
+  const titoloIntero = [info.title, info.subtitle].filter(Boolean).join(". ");
+  const numeroNelTitolo = volumeNumber(info.title);
 
   return {
-    titolo: info.title || null,
-    serie: stripVolume(info.title) || null,
-    numero: volumeNumber(info.title),
+    fonte: "google",
+    titolo: titoloIntero,
+    titoloIntero,
+    // Se il numero è nel titolo lo si toglie da lì; se è nel sottotitolo il titolo è già la serie.
+    serie: stripVolume(info.title) || info.title,
+    numero: numeroNelTitolo ?? volumeNumber(info.subtitle),
     editore: info.publisher || null,
     lingua: info.language || null,
     autori: info.authors || [],
@@ -231,4 +246,4 @@ async function perIsbn(isbn13) {
 // `normalize`, `stripVolume` e `volumeNumber` servono anche a
 // services/volumiItaliani.js, che conta i volumi usciti in Italia:
 // meglio esporli che tenerne due copie che col tempo divergono.
-module.exports = { search, perIsbn, isEnabled, normalize, stripVolume, volumeNumber };
+module.exports = { search, perIsbn, daVolume, isEnabled, normalize, stripVolume, volumeNumber };
