@@ -39,6 +39,10 @@ prova("Google: numero nel sottotitolo, edizione nel titolo", ["One piece. New ed
 v = daVolume({ volumeInfo: { title: "20th Century Boys" } });
 prova("Google: un titolo che contiene un numero non perde pezzi", ["20th Century Boys", null], [v.serie, v.numero]);
 prova("Google: senza titolo niente", null, daVolume({ volumeInfo: {} }));
+prova("Google: il numero nudo nel sottotitolo", ["Blue box", 4], ((x) => [x.serie, x.numero])(daVolume({ volumeInfo: { title: "Blue box", subtitle: "4" } })));
+prova("Google: il numero nella scheda della serie", 4, daVolume({ volumeInfo: { title: "Blue box", seriesInfo: { bookDisplayNumber: "4" } } }).numero);
+prova("Google: …o nell'ordine della serie", 12, daVolume({ volumeInfo: { title: "Blue box", seriesInfo: { volumeSeries: [{ orderNumber: 12 }] } } }).numero);
+prova("Google: nessun numero da nessuna parte", null, daVolume({ volumeInfo: { title: "Blue box", subtitle: "Un amore" } }).numero);
 v = daEdizione({ title: "Vinland Saga 3", publishers: ["Star Comics"], covers: [123] });
 prova("Open Library: titolo, numero, editore (e nessuna copertina)", ["Vinland Saga", 3, "Star Comics", null], [v.serie, v.numero, v.editore, v.copertina]);
 prova("Open Library: senza titolo niente", null, daEdizione({}));
@@ -59,7 +63,7 @@ const esito = (r) => [r.sicura?.ID ?? null, r.candidate.map((s) => s.ID)];
 console.log("\nQuale serie è");
 prova("stesso titolo, una sola: sicura", [1, [1]], esito(abbina(libro("Berserk", { editore: "Panini" }), SERIE)));
 prova("maiuscole e punteggiatura non contano", [1, [1]], esito(abbina(libro("BERSERK!"), SERIE)));
-prova("stesso titolo ma un altro editore: si chiede", [null, [1]], esito(abbina(libro("Berserk", { editore: "J-Pop" }), SERIE)));
+prova("stesso titolo, una sola, editore scritto diverso: è lei comunque", [1, [1]], esito(abbina(libro("Berserk", { editore: "J-Pop" }), SERIE)));
 prova("due edizioni, il catalogo nomina la New Edition", [3, [2, 3]], esito(abbina(libro("One piece. New edition", { titoloIntero: "One piece. New edition. Vol. 5", editore: "Star Comics" }), SERIE)));
 prova("due edizioni, il catalogo non ne nomina nessuna: è quella normale", [2, [2, 3]], esito(abbina(libro("One Piece", { editore: "Star Comics" }), SERIE)));
 prova("due edizioni, l'editore ne sceglie una", [5, [5, 6]], esito(abbina(libro("Vagabond", { editore: "Panini Comics" }), SERIE)));
@@ -121,7 +125,7 @@ const contato = (l) => [async () => { chiamate += 1; return l; }];
 
   svuotaMemoria();
   r = await riconosci(db, ISBN, { cataloghi: catalogo(libro("Berserk", { numero: null })) });
-  prova("serie sicura ma numero illeggibile: si chiede", ["scegli", [1]], [r.stato, r.candidate.map((c) => c.id)]);
+  prova("serie sicura ma numero non scritto: la serie non si rimette in dubbio, si chiede solo il numero", ["che_volume", 1, undefined], [r.stato, r.serie?.id, r.candidate]);
 
   svuotaMemoria();
   r = await riconosci(db, ISBN, { cataloghi: catalogo(libro("Dandadan", { titolo: "Dandadan 1" })) });

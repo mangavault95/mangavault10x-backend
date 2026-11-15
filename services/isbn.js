@@ -27,7 +27,8 @@
 // COSA RISPONDE (`stato`):
 //   ce_l_hai            quel numero è fra i posseduti
 //   ti_manca            non c'è; `mancanti` dice quanti ne mancano prima di lui
-//   che_volume          la serie si sa, il numero no: lo dice chi ha il volume in mano
+//   che_volume          la serie si sa, il numero no (codice da edicola, o catalogo che non
+//                       lo scrive): lo dice chi ha il volume in mano
 //   scegli              la serie non è sicura (più edizioni, titolo solo simile, editore
 //                       diverso, numero illeggibile): `candidate` sono le proposte
 //   non_in_collezione   il catalogo lo conosce, ma nessuna vostra serie gli somiglia
@@ -170,7 +171,9 @@ function abbina(libro, serie) {
   const contrasto = (s) => Boolean(editoreDi(s.Editore) && b && !stessoEditore(s));
   const seSicura = (s) => (contrasto(s) ? { sicura: null, candidate: uguali } : { sicura: s, candidate: uguali });
 
-  if (uguali.length === 1) return seSicura(uguali[0]);
+  // Un solo titolo uguale fra le vostre serie: è quella, anche se il catalogo scrive un altro
+  // editore (li scrive in cento modi). Se è sbagliata si corregge dalla pagina.
+  if (uguali.length === 1) return { sicura: uguali[0], candidate: uguali };
 
   // Più edizioni con lo stesso titolo. Prima il nome dell'edizione, se il catalogo lo scrive…
   const perNome = uguali.filter((s) => edizioneDi(s.Edizione) && intero.includes(edizioneDi(s.Edizione)));
@@ -317,8 +320,11 @@ async function riconosci(pool, grezzo, { aggiunta: aggiuntaGrezza, numero: numer
 
   if (!candidate.length) return { ...trovato, stato: "non_in_collezione" };
 
-  // Senza il numero di volume non si può dire se ce l'avete, anche con la serie sicura.
-  if (!sicura || !trovato.numero) return { ...trovato, stato: "scegli", candidate: candidate.slice(0, 6).map(dellaSerie) };
+  if (!sicura) return { ...trovato, stato: "scegli", candidate: candidate.slice(0, 6).map(dellaSerie) };
+
+  // La serie è sicura ma il catalogo non dice il numero: non si rimette in dubbio la serie,
+  // si chiede solo quello. (Senza numero «ce l'hai» o «ti manca» sarebbe tirare a indovinare.)
+  if (!trovato.numero) return { ...trovato, serie: dellaSerie(sicura), stato: "che_volume" };
 
   return { ...trovato, serie: dellaSerie(sicura), ...stato(sicura, trovato.numero) };
 }

@@ -227,6 +227,13 @@ function daVolume(item) {
 
   const titoloIntero = [info.title, info.subtitle].filter(Boolean).join(". ");
   const numeroNelTitolo = volumeNumber(info.title);
+  // Google scrive spesso il titolo della serie e basta («Blue box»), e il numero altrove:
+  // nel sottotitolo, a volte nudo («4»), o nella scheda della serie (`seriesInfo`).
+  const numeroNudo = (testo) => (/^\s*#?\s*(\d{1,3})\s*$/.exec(String(testo ?? "")) || [])[1];
+  const daSerie = info.seriesInfo?.bookDisplayNumber ?? info.seriesInfo?.volumeSeries?.[0]?.orderNumber;
+  const altrove = [volumeNumber(info.subtitle), numeroNudo(info.subtitle), numeroNudo(daSerie)]
+    .map(Number)
+    .find((n) => Number.isInteger(n) && n > 0 && n < 1000);
 
   return {
     fonte: "google",
@@ -234,7 +241,7 @@ function daVolume(item) {
     titoloIntero,
     // Se il numero è nel titolo lo si toglie da lì; se è nel sottotitolo il titolo è già la serie.
     serie: stripVolume(info.title) || info.title,
-    numero: numeroNelTitolo ?? volumeNumber(info.subtitle),
+    numero: numeroNelTitolo ?? altrove ?? null,
     editore: info.publisher || null,
     lingua: info.language || null,
     autori: info.authors || [],
