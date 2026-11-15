@@ -109,6 +109,7 @@ console.log("\nIl lettore");
           (3, 'Senza scheda', NULL, 'in_corso', NULL),
           (4, 'Frieren', NULL, 'in_corso', 7000);`);
       await scratch.query(fs.readFileSync(path.join(__dirname, "..", "sql", "030_copertine_volumi.sql"), "utf8"));
+      await scratch.query(fs.readFileSync(path.join(__dirname, "..", "sql", "034_copertine_volumi_manuali.sql"), "utf8"));
 
       const express = require("express");
       const app = express();
@@ -156,6 +157,27 @@ console.log("\nIl lettore");
         [2, [1, "HunterxHunter1-nuova.jpg"], [2, "HunterxHunter2.jpg"], [3, "HunterxHunter3.jpg"]],
         [r2.scritte, ...rows.map((r) => [r.numero, r.copertina.split("/").pop()])]
       );
+
+      // Una copertina scelta a mano (034): il giro non la riscrive, e «togli» la restituisce ad AnimeClick.
+      const copertineSrv = require("../services/copertineVolumi");
+      const scelta = await copertineSrv.scegli(scratch, 1, 1, "https://example.org/mia.jpg");
+      const dopoGiro = await manda({ manga_id: 1, html: hxh });
+      const dopoScelta = (await scratch.query(`SELECT copertina, manuale FROM copertine_volumi WHERE manga_id = 1 AND numero = 1`)).rows[0];
+
+      prova(
+        "la copertina scelta a mano resta, anche se il giro la legge diversa",
+        [true, "https://example.org/mia.jpg", true, 0],
+        [scelta.ok, dopoScelta.copertina, dopoScelta.manuale, dopoGiro.scritte]
+      );
+
+      prova("un indirizzo non https si rifiuta", true, Boolean((await copertineSrv.scegli(scratch, 1, 1, "http://example.org/a.jpg")).errore));
+
+      const tolta = await copertineSrv.scegli(scratch, 1, 1, null);
+      const resta = (await scratch.query(`SELECT count(*)::int AS n FROM copertine_volumi WHERE manga_id = 1 AND numero = 1`)).rows[0].n;
+
+      prova("togliere la scelta a mano cancella la riga, e la serie si rilegge", [true, 0], [tolta.tolta, resta]);
+
+      await manda({ manga_id: 1, html: cambiata });
 
       const bloccata = await manda({ manga_id: 2, html: "<html>Verifica che sei un essere umano</html>" });
 
