@@ -302,7 +302,13 @@ async function riconosci(pool, grezzo, { aggiunta: aggiuntaGrezza, numero: numer
 
   const { libro, motivo } = await chiediAiCataloghi(codice, cataloghi || cataloghiVeri());
 
-  if (!libro) return { ...base, stato: "non_riconosciuto", ...(motivo ? { motivo } : {}) };
+  if (!libro) {
+    // Nei registri resta quale codice e perché: è l'unico modo di sapere, dopo, se i cataloghi
+    // non conoscono le edizioni italiane o se c'è un guasto (chiave, quota).
+    console.log(`ISBN non riconosciuto: ${codice}${motivo ? ` (${motivo})` : " (nessun catalogo lo conosce)"}`);
+
+    return { ...base, stato: "non_riconosciuto", ...(motivo ? { motivo } : {}) };
+  }
 
   const trovato = {
     ...base,

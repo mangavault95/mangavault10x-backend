@@ -205,17 +205,35 @@ async function search(title, author) {
  * `titoloIntero` li tiene insieme per chi deve riconoscere l'edizione.
  */
 async function perIsbn(isbn13) {
-  if (!isEnabled()) return null;
+  // Senza chiave Google rifiuta quasi sempre: va detto, non scambiato per «non lo conosco».
+  if (!isEnabled()) throw new Error("Google Books: chiave non configurata (GOOGLE_BOOKS_API_KEY)");
 
-  const params = new URLSearchParams({ q: `isbn:${isbn13}`, country: "IT", maxResults: "5", key: API_KEY });
-  const res = await fetch(`${ENDPOINT}?${params}`, { signal: AbortSignal.timeout(12000) });
+  const chiedi = async (q) => {
+    const params = new URLSearchParams({ q, country: "IT", maxResults: "10", key: API_KEY });
+    const res = await fetch(`${ENDPOINT}?${params}`, { signal: AbortSignal.timeout(12000) });
 
-  if (res.status === 429) throw new Error("Google Books: quota giornaliera esaurita");
-  if (!res.ok) throw new Error(`Google Books HTTP ${res.status}`);
+    if (res.status === 429) throw new Error("Google Books: quota giornaliera esaurita");
+    if (!res.ok) throw new Error(`Google Books HTTP ${res.status}`);
 
-  const item = ((await res.json())?.items || [])[0];
+    return (await res.json())?.items || [];
+  };
 
-  return item ? daVolume(item) : null;
+  // Prima la domanda precisa. Se non trova niente, la stessa cifra come testo libero: per
+  // alcune edizioni l'indice `isbn:` è vuoto ma il codice sta comunque nella scheda. Lì però
+  // Google restituisce anche libri che c'entrano poco: si tiene solo chi ha DAVVERO quel codice.
+  const voce = scegliVoce(await chiedi(`isbn:${isbn13}`), isbn13, false) || scegliVoce(await chiedi(isbn13), isbn13, true);
+
+  return voce ? daVolume(voce) : null;
+}
+
+/** La voce giusta fra quelle tornate. `soloSeCombacia`: tiene solo chi dichiara proprio quel codice. */
+function scegliVoce(voci, isbn13, soloSeCombacia) {
+  const codici = (voce) => (voce?.volumeInfo?.industryIdentifiers || []).map((i) => String(i.identifier || "").replace(/[^0-9X]/gi, ""));
+  // L'ISBN-10 che corrisponde a un 978…: le nove cifre in mezzo, la decima è di controllo.
+  const dieci = isbn13.startsWith("978") ? isbn13.slice(3, 12) : null;
+  const combacia = (voce) => codici(voce).some((c) => c === isbn13 || (dieci && c.length === 10 && c.startsWith(dieci)));
+
+  return voci.find(combacia) || (soloSeCombacia ? null : voci[0]) || null;
 }
 
 /** Da una voce di Google Books alla forma che usa la scansione. A parte per poterla provare. */
@@ -253,4 +271,4 @@ function daVolume(item) {
 // `normalize`, `stripVolume` e `volumeNumber` servono anche a
 // services/volumiItaliani.js, che conta i volumi usciti in Italia:
 // meglio esporli che tenerne due copie che col tempo divergono.
-module.exports = { search, perIsbn, daVolume, isEnabled, normalize, stripVolume, volumeNumber };
+module.exports = { search, perIsbn, daVolume, scegliVoce, isEnabled, normalize, stripVolume, volumeNumber };

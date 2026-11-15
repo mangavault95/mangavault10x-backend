@@ -3,7 +3,7 @@
 //   node scripts/prova-isbn.js        (nessun database, nessuna rete: tabelle e cataloghi sono finti)
 
 const { leggiCodice, leggiAggiunta, normalizzaIsbn, abbina, riconosci, collega, scollega, svuotaMemoria } = require("../services/isbn");
-const { daVolume } = require("../services/providers/googleBooks");
+const { daVolume, scegliVoce } = require("../services/providers/googleBooks");
 const { daEdizione } = require("../services/providers/openLibrary");
 
 let falliti = 0;
@@ -43,6 +43,13 @@ prova("Google: il numero nudo nel sottotitolo", ["Blue box", 4], ((x) => [x.seri
 prova("Google: il numero nella scheda della serie", 4, daVolume({ volumeInfo: { title: "Blue box", seriesInfo: { bookDisplayNumber: "4" } } }).numero);
 prova("Google: …o nell'ordine della serie", 12, daVolume({ volumeInfo: { title: "Blue box", seriesInfo: { volumeSeries: [{ orderNumber: 12 }] } } }).numero);
 prova("Google: nessun numero da nessuna parte", null, daVolume({ volumeInfo: { title: "Blue box", subtitle: "Un amore" } }).numero);
+const voce = (titolo, ...ids) => ({ volumeInfo: { title: titolo, industryIdentifiers: ids.map((identifier) => ({ identifier })) } });
+prova("Google: fra più voci si prende quella con quel codice", "giusta", scegliVoce([voce("altra", "9781111111111"), voce("giusta", "9780306406157")], ISBN, false).volumeInfo.title);
+prova("Google: vale anche l'ISBN-10 corrispondente", "giusta", scegliVoce([voce("giusta", "0306406152")], ISBN, true).volumeInfo.title);
+prova("Google: alla domanda precisa, senza codici dichiarati, vale la prima", "prima", scegliVoce([voce("prima")], ISBN, false).volumeInfo.title);
+prova("Google: alla domanda larga, una voce senza quel codice si scarta", null, scegliVoce([voce("a caso", "9781111111111"), voce("senza")], ISBN, true));
+prova("Google: nessuna voce", null, scegliVoce([], ISBN, false));
+
 v = daEdizione({ title: "Vinland Saga 3", publishers: ["Star Comics"], covers: [123] });
 prova("Open Library: titolo, numero, editore (e nessuna copertina)", ["Vinland Saga", 3, "Star Comics", null], [v.serie, v.numero, v.editore, v.copertina]);
 prova("Open Library: senza titolo niente", null, daEdizione({}));
