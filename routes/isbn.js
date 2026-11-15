@@ -1,6 +1,6 @@
 // routes/isbn.js
 //
-//   GET  /api/isbn/:codice[?aggiunta=NNNNN][&numero=N]
+//   GET  /api/isbn/:codice[?aggiunta=NNNNN][&numero=N]   (`aggiunta`: le cinque cifre piccole)
 //        Cos'è questo codice a barre e a che punto siete (`services/isbn.js`).
 //   POST /api/isbn/collega    Ricorda che un codice è il volume N di una serie, e risponde
 //                             come il GET. Body: { codice, aggiunta?, mangaId, numero }

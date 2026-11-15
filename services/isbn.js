@@ -16,10 +16,13 @@
 // non comincia per 978/979 (quelli da edicola cominciano per 977) è comunque un codice
 // valido, solo che nessun catalogo di libri lo conosce. Qui non si rifiuta: si salta il
 // punto 2 e lo si collega a mano. Un codice da edicola è lo stesso per tutti i numeri di
-// una collana, e il numero sta nelle cifre piccole accanto (l'«aggiunta», 2 o 5 cifre):
-//   - con l'aggiunta letta, la chiave è `codice-aggiunta` e vale per quel volume;
+// una collana, e il numero sta nelle cifre piccole accanto (l'«aggiunta»):
+//   - con un'aggiunta di CINQUE cifre, la chiave è `codice-aggiunta` e vale per quel volume;
 //   - senza, la chiave è il codice solo e vale per la SERIE (`numero` vuoto): la volta
 //     dopo il sito sa già che serie è e chiede soltanto il numero.
+// Un'aggiunta di due cifre vale come nessuna: ha un controllo debole e il lettore la
+// confonde con una da cinque letta male (vedi `cifrePiccole.js` nel frontend). Una chiave
+// sbagliata vorrebbe dire rispondere «ce l'hai» per un altro numero: meglio chiederlo.
 //
 // COSA RISPONDE (`stato`):
 //   ce_l_hai            quel numero è fra i posseduti
@@ -80,11 +83,11 @@ function normalizzaIsbn(grezzo) {
   return letto?.libro ? letto.codice : null;
 }
 
-/** Le cifre piccole accanto al codice: 2 o 5, altrimenti niente. */
+/** Le cifre piccole accanto al codice: cinque, altrimenti niente (vedi in testa perché non due). */
 function leggiAggiunta(grezzo) {
   const testo = String(grezzo ?? "").replace(/\s/g, "");
 
-  return /^(\d{2}|\d{5})$/.test(testo) ? testo : null;
+  return /^\d{5}$/.test(testo) ? testo : null;
 }
 
 /* ==================================================
@@ -259,7 +262,7 @@ const COLONNE_M = COLONNE.split(", ")
  * @param {object} pool
  * @param {string} grezzo     il codice, letto o scritto
  * @param {object} [opzioni]
- * @param {string} [opzioni.aggiunta]   le cifre piccole accanto al codice (2 o 5)
+ * @param {string} [opzioni.aggiunta]   le cinque cifre piccole accanto al codice
  * @param {number} [opzioni.numero]     il volume, detto a mano: serve quando il codice vale per la serie
  * @param {Function[]} [opzioni.cataloghi]  per le prove
  */
@@ -330,8 +333,11 @@ class CollegamentoNonValido extends Error {}
  *   da edicola, con l'aggiunta    → `codice-aggiunta` = quel volume, e `codice` = la serie
  *                                   (se il codice solo non era già di qualcuno)
  *   da edicola, senza l'aggiunta  → `codice` = la serie; il numero vale solo per la risposta
+ *
+ * `cambiaSerie` serve a correggere: il codice solo passa a questa serie anche se era già di
+ * un'altra («non è Berserk, è Vagabond»). Senza, la prima serie collegata resta.
  */
-async function collega(pool, { codice: grezzo, isbn, aggiunta: aggiuntaGrezza, mangaId, numero }) {
+async function collega(pool, { codice: grezzo, isbn, aggiunta: aggiuntaGrezza, mangaId, numero, cambiaSerie = false }) {
   const letto = leggiCodice(grezzo ?? isbn);
   const n = Number(numero);
   const id = Number(mangaId);
@@ -358,10 +364,13 @@ async function collega(pool, { codice: grezzo, isbn, aggiunta: aggiuntaGrezza, m
     await scrivi(`${letto.codice}-${aggiunta}`, n);
     // Il codice solo resta della serie che aveva, se ne aveva una: una collana può ospitare
     // più serie, e la prima collegata non va scalzata da un numero di un'altra.
-    await pool.query(
-      `INSERT INTO isbn_volumi (isbn, manga_id, numero) VALUES ($1, $2, NULL) ON CONFLICT (isbn) DO NOTHING`,
-      [letto.codice, id]
-    );
+    if (cambiaSerie === true) await scrivi(letto.codice, null);
+    else {
+      await pool.query(
+        `INSERT INTO isbn_volumi (isbn, manga_id, numero) VALUES ($1, $2, NULL) ON CONFLICT (isbn) DO NOTHING`,
+        [letto.codice, id]
+      );
+    }
   } else {
     await scrivi(letto.codice, null);
   }
@@ -369,15 +378,19 @@ async function collega(pool, { codice: grezzo, isbn, aggiunta: aggiuntaGrezza, m
   return riconosci(pool, letto.codice, { aggiunta, numero: n, cataloghi: [] });
 }
 
-/** Dimentica un collegamento sbagliato (codice solo, o codice-aggiunta). */
+/**
+ * Dimentica tutto quello che si sapeva di un codice: il volume (codice-aggiunta) e, per i
+ * codici da edicola, anche la serie (codice solo). Chi dice «dimenticalo» ha il volume in
+ * mano e ha visto una risposta sbagliata: non deve sapere in quale delle due righe stava.
+ */
 async function scollega(pool, { codice: grezzo, aggiunta: aggiuntaGrezza }) {
   const letto = leggiCodice(grezzo);
 
   if (!letto) throw new CollegamentoNonValido("Codice non valido");
 
   const aggiunta = letto.libro ? null : leggiAggiunta(aggiuntaGrezza);
-  const { rowCount } = await pool.query(`DELETE FROM isbn_volumi WHERE isbn = $1`, [
-    aggiunta ? `${letto.codice}-${aggiunta}` : letto.codice
+  const { rowCount } = await pool.query(`DELETE FROM isbn_volumi WHERE isbn = ANY($1::text[])`, [
+    aggiunta ? [`${letto.codice}-${aggiunta}`, letto.codice] : [letto.codice]
   ]);
 
   return { tolti: rowCount };

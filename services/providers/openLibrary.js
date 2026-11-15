@@ -29,9 +29,6 @@ function daEdizione(edizione) {
   if (!edizione?.title) return null;
 
   const titoloIntero = [edizione.title, edizione.subtitle].filter(Boolean).join(". ");
-  const copertina = Array.isArray(edizione.covers) && edizione.covers[0] > 0
-    ? `https://covers.openlibrary.org/b/id/${edizione.covers[0]}-M.jpg`
-    : null;
 
   return {
     fonte: "openlibrary",
@@ -40,7 +37,10 @@ function daEdizione(edizione) {
     serie: stripVolume(edizione.title) || edizione.title,
     numero: volumeNumber(edizione.title) ?? volumeNumber(edizione.subtitle) ?? volumeNumber(edizione.edition_name),
     editore: Array.isArray(edizione.publishers) ? edizione.publishers[0] || null : null,
-    copertina,
+    // Niente copertina: quelle di Open Library stanno su un dominio che il ponte delle copertine
+    // (`routes/cover.js`) non ammette, e non vale la pena ammetterlo per un riquadro. Se la serie è
+    // fra le vostre si vede la sua; altrimenti resta il riquadro vuoto.
+    copertina: null,
     prezzoCopertina: null
   };
 }

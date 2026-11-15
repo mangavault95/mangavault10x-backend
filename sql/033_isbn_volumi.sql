@@ -22,8 +22,8 @@
 -- (`services/isbn.js`):
 --
 --   9788891234568         un ISBN: è quel volume              (numero pieno)
---   9771234567003-00042   un codice da edicola con le cifre
---                         piccole accanto: è quel volume      (numero pieno)
+--   9771234567003-00042   un codice da edicola con le cinque
+--                         cifre piccole accanto: quel volume  (numero pieno)
 --   9771234567003         un codice da edicola da solo: è
 --                         uguale per tutti i numeri, quindi
 --                         dice la SERIE e basta               (numero vuoto)
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS isbn_volumi (
 ALTER TABLE isbn_volumi ALTER COLUMN numero DROP NOT NULL;
 ALTER TABLE isbn_volumi DROP CONSTRAINT IF EXISTS isbn_volumi_isbn_check;
 ALTER TABLE isbn_volumi ADD CONSTRAINT isbn_volumi_isbn_check
-  CHECK (isbn ~ '^[0-9]{13}(-([0-9]{2}|[0-9]{5}))?$');
+  CHECK (isbn ~ '^[0-9]{13}(-[0-9]{5})?$');
 
 CREATE INDEX IF NOT EXISTS idx_isbn_volumi_manga ON isbn_volumi (manga_id);
 

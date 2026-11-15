@@ -27,7 +27,7 @@ prova("un codice da edicola è un codice, ma non un libro", { codice: EDICOLA, l
 prova("un codice da edicola con la cifra sbagliata non vale", null, leggiCodice("9771234567004"));
 prova("testo, vuoto, niente", [null, null, null], [leggiCodice("abc"), leggiCodice(""), leggiCodice(undefined)]);
 prova("normalizzaIsbn dice sì solo ai libri", [ISBN, null], [normalizzaIsbn(ISBN), normalizzaIsbn(EDICOLA)]);
-prova("le cifre piccole: 2 o 5, non altro", ["42", "00042", null, null, null], [
+prova("le cifre piccole: cinque, non due e non altro", [null, "00042", null, null, null], [
   leggiAggiunta("42"), leggiAggiunta("00042"), leggiAggiunta("123"), leggiAggiunta("abcde"), leggiAggiunta(undefined)
 ]);
 
@@ -40,7 +40,7 @@ v = daVolume({ volumeInfo: { title: "20th Century Boys" } });
 prova("Google: un titolo che contiene un numero non perde pezzi", ["20th Century Boys", null], [v.serie, v.numero]);
 prova("Google: senza titolo niente", null, daVolume({ volumeInfo: {} }));
 v = daEdizione({ title: "Vinland Saga 3", publishers: ["Star Comics"], covers: [123] });
-prova("Open Library: titolo, numero, editore, copertina", ["Vinland Saga", 3, "Star Comics", true], [v.serie, v.numero, v.editore, /123-M\.jpg$/.test(v.copertina)]);
+prova("Open Library: titolo, numero, editore (e nessuna copertina)", ["Vinland Saga", 3, "Star Comics", null], [v.serie, v.numero, v.editore, v.copertina]);
 prova("Open Library: senza titolo niente", null, daEdizione({}));
 
 // Le vostre serie, finte.
@@ -86,7 +86,7 @@ function finta() {
       else collegati.set(v[0], { manga_id: v[1], numero: v[2] });
       return { rowCount: 1 };
     }
-    if (/DELETE FROM isbn_volumi/.test(q)) return { rowCount: collegati.delete(v[0]) ? 1 : 0 };
+    if (/DELETE FROM isbn_volumi/.test(q)) return { rowCount: v[0].filter((k) => collegati.delete(k)).length };
     if (/FROM "Manga"/.test(q)) return { rows: SERIE };
     throw new Error(`query non prevista: ${q}`);
   };
@@ -199,11 +199,20 @@ const contato = (l) => [async () => { chiamate += 1; return l; }];
   prova("un'altra serie nella stessa collana: quel volume è suo", [4, 5], [r.serie.id, r.numero]);
   prova("…ma il codice solo resta della prima", 1, db.collegati.get(EDICOLA).manga_id);
 
+  r = await collega(db, { codice: EDICOLA, aggiunta: "00043", mangaId: 4, numero: 5, cambiaSerie: true });
+  prova("…a meno di una correzione: allora passa alla nuova", 4, db.collegati.get(EDICOLA).manga_id);
+  prova("dimenticare un codice da edicola toglie il volume e la serie", { tolti: 2 }, await scollega(db, { codice: EDICOLA, aggiunta: "00043" }));
+  prova("…ma non gli altri volumi", [`${EDICOLA}-00042`], [...db.collegati.keys()]);
+
   db = finta();
   r = await collega(db, { codice: EDICOLA, mangaId: 1, numero: 2 });
   prova("collegato senza cifre piccole: vale per la serie, la risposta è per quel numero", ["ce_l_hai", 2, null], [r.stato, r.numero, db.collegati.get(EDICOLA).numero]);
   r = await riconosci(db, ISBN.replace(/^978/, "978"), { aggiunta: "12345", cataloghi: catalogo(null) });
   prova("le cifre piccole di un ISBN (il prezzo) si ignorano", null, r.aggiunta);
+
+  db = finta();
+  r = await collega(db, { codice: EDICOLA, aggiunta: "42", mangaId: 1, numero: 2 });
+  prova("due cifre piccole valgono come nessuna: si ricorda la serie, non il volume", [[EDICOLA, null]], [...db.collegati].map(([k, x]) => [k, x.numero]));
 
   if (falliti) { console.log(`\n${falliti} prove fallite`); process.exit(1); }
   console.log("\nTutto a posto.");
