@@ -7,9 +7,11 @@
 //
 //   1. un codice già collegato (`isbn_volumi`, migrazione 033): immediato, senza chiedere
 //      niente a nessuno. È la strada che conta: ogni conferma fatta dal sito finisce qui;
-//   2. se è un ISBN (comincia per 978 o 979): Google Books, e se Google non lo conosce
-//      Open Library. Dal titolo si toglie il numero di volume («Berserk. Vol. 12») e si
-//      cerca la serie fra le vostre (vedi `abbina`);
+//   2. se è un ISBN (comincia per 978 o 979): Google Books, poi Open Library, poi il
+//      catalogo delle biblioteche italiane (SBN). Ci si ferma al primo che sa serie E numero:
+//      se uno sa la serie ma non il numero (Google, spesso) si chiede il numero al successivo.
+//      Dal titolo si toglie il numero di volume («Berserk. Vol. 12») e si cerca la serie fra
+//      le vostre (vedi `abbina`);
 //   3. niente: il sito chiede a voi di dire che volume è, e il collegamento si ricorda (1).
 //
 // I CODICI CHE NON SONO ISBN. Non tutti i volumi hanno un ISBN sul retro: un codice che
@@ -217,7 +219,8 @@ function svuotaMemoria() {
 
 const cataloghiVeri = () => [
   require("./providers/googleBooks").perIsbn,
-  require("./providers/openLibrary").perIsbn
+  require("./providers/openLibrary").perIsbn,
+  require("./providers/sbn").perIsbn
 ];
 
 /**
@@ -232,24 +235,44 @@ async function chiediAiCataloghi(codice, cataloghi) {
   if (inMemoria && inMemoria.scade > Date.now()) return { libro: inMemoria.libro };
 
   let motivo = null;
+  let libro = null;
 
   for (const cerca of cataloghi) {
+    let risposta = null;
+
     try {
-      const libro = await cerca(codice);
-
-      if (libro?.serie) {
-        ricorda(codice, libro);
-
-        return { libro };
-      }
+      risposta = await cerca(codice);
     } catch (err) {
+      // Un guasto conta solo se alla fine nessuno ha saputo dire che libro è…
       motivo = motivo || err.message;
+      // …ma si annota comunque: se il numero non è uscito, da qui si vede chi non ha risposto.
+      if (libro) libro = { ...libro, grezzo: { ...libro.grezzo, errori: [...(libro.grezzo?.errori || []), err.message] } };
+      continue;
     }
+
+    if (!risposta) continue;
+
+    if (!libro) {
+      // Il primo che sa dire la serie fa da base (titolo, copertina, editore, prezzo).
+      if (risposta.serie) libro = risposta;
+    } else if (risposta.numero) {
+      // La serie c'era già ma non il numero (Google scrive «Servamp» e basta): un catalogo
+      // dopo lo sa. Si prende solo quello, e si annota da chi viene.
+      libro = { ...libro, numero: risposta.numero, numeroDa: risposta.fonte || null };
+    }
+
+    // Quello che ogni catalogo ha scritto resta nella risposta, per «Cosa dice il catalogo».
+    if (libro && risposta !== libro && risposta.grezzo) {
+      libro = { ...libro, grezzo: { ...libro.grezzo, [risposta.fonte || "altro"]: risposta.grezzo } };
+    }
+
+    if (libro?.numero) break;
   }
 
-  if (!motivo && cataloghi.length) ricorda(codice, null);
+  if (libro) ricorda(codice, libro);
+  else if (!motivo && cataloghi.length) ricorda(codice, null);
 
-  return { libro: null, motivo };
+  return { libro, motivo: libro ? null : motivo };
 }
 
 /* ==================================================
@@ -319,6 +342,7 @@ async function riconosci(pool, grezzo, { aggiunta: aggiuntaGrezza, numero: numer
     editore: libro.editore || null,
     copertina: libro.copertina || null,
     prezzoCopertina: libro.prezzoCopertina ?? null,
+    ...(libro.numeroDa ? { numeroDa: libro.numeroDa } : {}),
     ...(libro.grezzo ? { grezzo: libro.grezzo } : {})
   };
 

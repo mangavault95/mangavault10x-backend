@@ -5,6 +5,7 @@
 const { leggiCodice, leggiAggiunta, normalizzaIsbn, abbina, riconosci, collega, scollega, svuotaMemoria } = require("../services/isbn");
 const { daVolume, scegliVoce } = require("../services/providers/googleBooks");
 const { daEdizione } = require("../services/providers/openLibrary");
+const sbn = require("../services/providers/sbn");
 
 let falliti = 0;
 function prova(nome, atteso, ottenuto) {
@@ -53,6 +54,26 @@ prova("Google: nessuna voce", null, scegliVoce([], ISBN, false));
 v = daEdizione({ title: "Vinland Saga 3", publishers: ["Star Comics"], covers: [123] });
 prova("Open Library: titolo, numero, editore (e nessuna copertina)", ["Vinland Saga", 3, "Star Comics", null], [v.serie, v.numero, v.editore, v.copertina]);
 prova("Open Library: senza titolo niente", null, daEdizione({}));
+
+console.log("\nIl catalogo delle biblioteche italiane (SBN)");
+for (const [titolo, atteso] of [
+  ["Servamp / Tanaka Strike. 10", 10],
+  ["Servamp. 10 / Tanaka Strike", 10],
+  ["10 / Tanaka Strike", 10],
+  ["10", 10],
+  ["Blue box. Vol. 4 / Kouji Miura", 4],
+  ["Berserk : n. 12", 12],
+  ["Servamp / Tanaka Strike", null],
+  ["20th century boys / Naoki Urasawa", null],
+  ["Area 51 / Masato Hisa", null],
+  ["1984 / George Orwell", null],
+  ["", null]
+]) prova(`numero in «${titolo}»`, atteso, sbn.numeroNelTitolo(titolo));
+v = sbn.daRisposta({ numFound: 1, briefRecords: [{ titolo: "Servamp / Tanaka Strike. 10", pubblicazione: "Milano : Edizioni BD, 2018", autorePrincipale: "Tanaka, Strike" }] });
+prova("SBN: serie, numero, editore", ["Servamp", 10, "Edizioni BD", "sbn"], [v.serie, v.numero, v.editore, v.fonte]);
+v = sbn.daRisposta({ briefRecords: [{ titolo: "10 / Tanaka Strike" }] });
+prova("SBN: un titolo che è solo il numero dà il numero ma non la serie", ["", 10], [v.serie, v.numero]);
+prova("SBN: nessun record", [null, null], [sbn.daRisposta({ numFound: 0, briefRecords: [] }), sbn.daRisposta(null)]);
 
 // Le vostre serie, finte.
 const SERIE = [
@@ -151,6 +172,33 @@ const contato = (l) => [async () => { chiamate += 1; return l; }];
   prova("la quota è finita: lo dice, non crolla", ["non_riconosciuto", true], [r.stato, /quota/.test(r.motivo)]);
   r = await riconosci(db, ISBN, { cataloghi: catalogo(libro("Berserk", { numero: 3 })) });
   prova("…e un errore non viene ricordato come «non esiste»", "ce_l_hai", r.stato);
+
+  console.log("\nIl numero da un altro catalogo");
+  svuotaMemoria();
+  r = await riconosci(db, ISBN, { cataloghi: [
+    async () => libro("Berserk", { numero: null, fonte: "google", copertina: "cop-google", grezzo: { title: "Berserk" } }),
+    async () => null,
+    async () => ({ fonte: "sbn", serie: "", numero: 3, grezzo: { titolo: "3 / Miura" } })
+  ] });
+  prova("il primo sa la serie, il terzo il numero: risposta completa", ["ce_l_hai", 3, "sbn", "google", "cop-google"], [r.stato, r.numero, r.numeroDa, r.fonte, r.copertina]);
+  prova("…e si vede cosa ha scritto ciascuno", ["Berserk", "3 / Miura"], [r.grezzo.title, r.grezzo.sbn.titolo]);
+
+  svuotaMemoria();
+  chiamate = 0;
+  r = await riconosci(db, ISBN, { cataloghi: [async () => libro("Berserk", { numero: 3 }), async () => { chiamate += 1; return null; }] });
+  prova("se il primo sa già il numero, gli altri non si disturbano", ["ce_l_hai", 0], [r.stato, chiamate]);
+
+  svuotaMemoria();
+  r = await riconosci(db, ISBN, { cataloghi: [async () => libro("Berserk", { numero: null }), async () => { throw new Error("SBN: non risponde"); }] });
+  prova("il secondo è guasto: resta la serie e si chiede il numero, senza errori", ["che_volume", undefined], [r.stato, r.motivo]);
+
+  svuotaMemoria();
+  r = await riconosci(db, ISBN, { cataloghi: [async () => null, async () => ({ fonte: "sbn", serie: "", numero: 3 })] });
+  prova("un numero senza serie non basta a riconoscere un volume", "non_riconosciuto", r.stato);
+
+  svuotaMemoria();
+  r = await riconosci(db, ISBN, { cataloghi: [async () => null, async () => ({ fonte: "sbn", serie: "Berserk", titolo: "Berserk / Miura. 3", numero: 3 })] });
+  prova("solo SBN lo conosce (un volume appena uscito): basta lui", ["ce_l_hai", "sbn"], [r.stato, r.fonte]);
 
   console.log("\nLa memoria risparmia le richieste");
   svuotaMemoria();
