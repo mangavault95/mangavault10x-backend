@@ -525,6 +525,34 @@ router.post("/", richiediBiblioteca, async (req, res) => {
   }
 });
 
+/**
+ * PUT /api/manga/:id/copertine-volumi/:numero — sceglie a mano la copertina
+ * di un volume (`{ copertina: "https://…" }`), o la toglie (`{ copertina: null }`).
+ * Una copertina scelta così il giro di AnimeClick non la riscrive (sql/034).
+ */
+router.put("/:id/copertine-volumi/:numero", richiediBiblioteca, async (req, res) => {
+  try {
+    const mangaId = Number(req.params.id);
+    const numero = Number(req.params.numero);
+
+    if (!Number.isInteger(mangaId)) return res.status(400).json({ error: "Serie non valida" });
+
+    const esito = await require("../services/copertineVolumi").scegli(pool, mangaId, numero, req.body?.copertina);
+
+    if (esito.errore) return res.status(400).json({ error: esito.errore });
+
+    return res.json({ success: true, ...esito });
+  } catch (err) {
+    if (err.code === "23503") return res.status(404).json({ error: "Serie non trovata" });
+    // La 034 non è ancora passata.
+    if (err.code === "42703") return res.status(503).json({ error: "Manca la migrazione 034: eseguila prima" });
+
+    console.error("MANGA COPERTINA VOLUME ERROR:", err);
+
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
 router.put("/:id", richiediBiblioteca, async (req, res) => {
   try {
     const esito = await aggiornaManga(req.params.id, req.body);

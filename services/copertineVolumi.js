@@ -69,7 +69,9 @@ async function registraPagina(pool, mangaId, html, { scrivi = true } = {}) {
        SELECT $1, n, c FROM UNNEST($2::int[], $3::text[]) AS x(n, c)
        ON CONFLICT (manga_id, numero) DO UPDATE
           SET copertina = EXCLUDED.copertina, aggiornata_il = NOW()
-        WHERE copertine_volumi.copertina IS DISTINCT FROM EXCLUDED.copertina`,
+        -- Una copertina scelta a mano (034) non si riscrive.
+        WHERE copertine_volumi.copertina IS DISTINCT FROM EXCLUDED.copertina
+          AND NOT copertine_volumi.manuale`,
       [mangaId, volumi.map((v) => v.numero), volumi.map((v) => v.copertina)]
     );
 
@@ -105,4 +107,48 @@ async function tutte(pool) {
   }
 }
 
-module.exports = { daLeggere, registraPagina, segnaGiro, tutte, RILEGGI_GIORNI, RITENTA_GIORNI };
+/**
+ * Mette a mano la copertina di un volume (`indirizzo` testo) o la toglie
+ * (`indirizzo` null): toglierla rimette la serie in testa al prossimo giro,
+ * che la rilegge da AnimeClick. Restituisce `{ errore }` o `{ ok: true }`.
+ */
+async function scegli(pool, mangaId, numero, indirizzo) {
+  if (!Number.isInteger(numero) || numero < 1) return { errore: "Il volume è un numero intero dall'1 in su" };
+
+  if (indirizzo == null || String(indirizzo).trim() === "") {
+    const { rowCount } = await pool.query(
+      `DELETE FROM copertine_volumi WHERE manga_id = $1 AND numero = $2 AND manuale`,
+      [mangaId, numero]
+    );
+
+    // Rilettura alla prossima occasione: senza riga, il volume resterebbe vuoto fino ai 30 giorni.
+    if (rowCount) await pool.query(`DELETE FROM copertine_giri WHERE manga_id = $1`, [mangaId]);
+
+    return { ok: true, tolta: rowCount > 0 };
+  }
+
+  const testo = String(indirizzo).trim();
+  let url;
+
+  try {
+    url = new URL(testo);
+  } catch {
+    return { errore: "L'indirizzo della copertina non è valido" };
+  }
+
+  if (url.protocol !== "https:" || testo.length > 2000) {
+    return { errore: "L'indirizzo deve cominciare con https:// ed essere più corto di 2000 caratteri" };
+  }
+
+  const esito = await pool.query(
+    `INSERT INTO copertine_volumi (manga_id, numero, copertina, manuale)
+     VALUES ($1, $2, $3, TRUE)
+     ON CONFLICT (manga_id, numero) DO UPDATE
+        SET copertina = EXCLUDED.copertina, manuale = TRUE, aggiornata_il = NOW()`,
+    [mangaId, numero, testo]
+  );
+
+  return { ok: true, scritta: esito.rowCount > 0 };
+}
+
+module.exports = { scegli, daLeggere, registraPagina, segnaGiro, tutte, RILEGGI_GIORNI, RITENTA_GIORNI };
