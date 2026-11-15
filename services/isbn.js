@@ -318,7 +318,8 @@ async function riconosci(pool, grezzo, { aggiunta: aggiuntaGrezza, numero: numer
     numero: libro.numero ?? null,
     editore: libro.editore || null,
     copertina: libro.copertina || null,
-    prezzoCopertina: libro.prezzoCopertina ?? null
+    prezzoCopertina: libro.prezzoCopertina ?? null,
+    ...(libro.grezzo ? { grezzo: libro.grezzo } : {})
   };
 
   const { rows: serie } = await pool.query(`SELECT ${COLONNE} FROM "Manga"`);

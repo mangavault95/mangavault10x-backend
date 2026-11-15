@@ -223,7 +223,31 @@ async function perIsbn(isbn13) {
   // Google restituisce anche libri che c'entrano poco: si tiene solo chi ha DAVVERO quel codice.
   const voce = scegliVoce(await chiedi(`isbn:${isbn13}`), isbn13, false) || scegliVoce(await chiedi(isbn13), isbn13, true);
 
-  return voce ? daVolume(voce) : null;
+  if (!voce) return null;
+
+  let libro = daVolume(voce);
+
+  // L'elenco dei risultati è una scheda ridotta: per molti manga scrive il titolo della serie
+  // e basta. La scheda intera del volume (`/volumes/<id>`) a volte ha di più: il sottotitolo,
+  // la posizione nella serie. Costa una richiesta in più, e si fa solo quando il numero manca.
+  if (libro && libro.numero == null && voce.id) {
+    try {
+      const res = await fetch(`${ENDPOINT}/${encodeURIComponent(voce.id)}?${new URLSearchParams({ country: "IT", key: API_KEY })}`, {
+        signal: AbortSignal.timeout(12000)
+      });
+
+      if (res.ok) {
+        const intera = await res.json();
+        const conDettaglio = daVolume({ ...voce, ...intera, volumeInfo: { ...voce.volumeInfo, ...intera.volumeInfo } });
+
+        if (conDettaglio) libro = { ...conDettaglio, grezzo: { ...conDettaglio.grezzo, dettaglio: true } };
+      }
+    } catch {
+      // La scheda ridotta basta per la serie: il numero lo dirà chi ha il volume in mano.
+    }
+  }
+
+  return libro;
 }
 
 /** La voce giusta fra quelle tornate. `soloSeCombacia`: tiene solo chi dichiara proprio quel codice. */
@@ -264,7 +288,18 @@ function daVolume(item) {
     lingua: info.language || null,
     autori: info.authors || [],
     copertina: (info.imageLinks?.thumbnail || "").replace(/^http:/, "https:") || null,
-    prezzoCopertina: sale.listPrice?.amount ?? null
+    prezzoCopertina: sale.listPrice?.amount ?? null,
+    // Quello che il catalogo ha scritto davvero, com'era: la pagina lo mostra su richiesta
+    // («Cosa dice il catalogo»), ed è l'unico modo di capire perché un numero non è uscito.
+    grezzo: {
+      id: item?.id || null,
+      title: info.title || null,
+      subtitle: info.subtitle || null,
+      seriesInfo: info.seriesInfo || null,
+      publishedDate: info.publishedDate || null,
+      publisher: info.publisher || null,
+      codici: (info.industryIdentifiers || []).map((i) => i.identifier)
+    }
   };
 }
 
