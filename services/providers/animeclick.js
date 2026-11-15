@@ -88,6 +88,54 @@ function testoDi(html) {
 }
 
 /**
+ * L'indirizzo di un'immagine letto da un attributo dell'HTML (`src`, `data-img`).
+ *
+ * Dentro un attributo i caratteri speciali arrivano come entità: «Yu-Gi-Oh!» può
+ * essere scritto `Yu-Gi-Oh&#33;`, «È» `&Egrave;` o `&#xC8;`, una «&» `&amp;`.
+ * Il titolo lo si ripuliva già (`testoDi`), l'indirizzo dell'immagine no: e una
+ * `&#33;` lasciata lì dentro è peggio di un carattere sbagliato, perché il `#`
+ * per un indirizzo è l'inizio di un'àncora — il browser chiede il file fino alla
+ * `&`, che non esiste. Le serie con un punto esclamativo o un accento nel titolo
+ * restavano senza copertina.
+ *
+ * Qui si sciolgono le entità (tutte, maiuscole comprese) e si lascia a `URL` il
+ * compito di scrivere l'indirizzo per bene (spazi e accenti in `%..`).
+ * Restituisce null se non è un indirizzo.
+ */
+function indirizzoImmagine(valore, base = "https://www.animeclick.it") {
+  const sciolto = sciogliEntita(valore).trim();
+
+  if (!sciolto) return null;
+
+  try {
+    return new URL(sciolto, base).href;
+  } catch {
+    return null;
+  }
+}
+
+// Le entità con nome che possono stare in un nome di file: le lettere accentate
+// (maiuscole e minuscole contano: `&Egrave;` è «È», `&egrave;` è «è») e i segni.
+const LETTERE = { a: ["grave", "acute", "circ", "uml", "tilde"], e: ["grave", "acute", "circ", "uml"], i: ["grave", "acute", "circ", "uml"], o: ["grave", "acute", "circ", "uml", "tilde"], u: ["grave", "acute", "circ", "uml"] };
+const ENTITA_ESATTE = { amp: "&", quot: '"', apos: "'", lt: "<", gt: ">", nbsp: " ", ccedil: "ç", Ccedil: "Ç", ntilde: "ñ", Ntilde: "Ñ" };
+const SEGNI = { grave: "\u0300", acute: "\u0301", circ: "\u0302", uml: "\u0308", tilde: "\u0303" };
+
+for (const [lettera, segni] of Object.entries(LETTERE)) {
+  for (const segno of segni) {
+    ENTITA_ESATTE[`${lettera}${segno}`] = `${lettera}${SEGNI[segno]}`.normalize("NFC");
+    ENTITA_ESATTE[`${lettera.toUpperCase()}${segno}`] = `${lettera.toUpperCase()}${SEGNI[segno]}`.normalize("NFC");
+  }
+}
+
+/** Scioglie le entità HTML di un valore, lasciando stare quelle che non conosce. */
+function sciogliEntita(valore) {
+  return String(valore ?? "")
+    .replace(/&#(\d+);/g, (tutto, n) => (Number(n) > 0 && Number(n) <= 0x10ffff ? String.fromCodePoint(Number(n)) : tutto))
+    .replace(/&#x([0-9a-f]+);/gi, (tutto, n) => (parseInt(n, 16) > 0 && parseInt(n, 16) <= 0x10ffff ? String.fromCodePoint(parseInt(n, 16)) : tutto))
+    .replace(/&([a-z]+);/gi, (tutto, nome) => ENTITA_ESATTE[nome] ?? tutto);
+}
+
+/**
  * L'indirizzo di una scheda: solo l'ID conta davvero, lo slug è
  * decorativo — `/manga/9553/x/edizioni` risponde come quello giusto.
  * Ma `/manga/9553` da solo dà 404, e `/manga/9553/edizioni` legge
@@ -252,13 +300,9 @@ function copertineVolumi(html, { edizione = null } = {}) {
 
     if (!n || !immagine) continue;
 
-    let indirizzo;
+    const indirizzo = indirizzoImmagine(immagine[1]);
 
-    try {
-      indirizzo = new URL(immagine[1], "https://www.animeclick.it").href;
-    } catch {
-      continue;
-    }
+    if (!indirizzo) continue;
 
     // Solo immagini di AnimeClick: quello che si scrive in tabella finisce in un <img> del sito.
     if (!/^https:\/\/www\.animeclick\.it\//.test(indirizzo)) continue;
@@ -585,7 +629,7 @@ async function cercaGrezzo(campi, { fetchImpl = fetch, tipo = "manga" } = {}) {
       anno: anno ? Number(anno[1]) : null,
       // Le miniature sono indirizzi relativi al sito, e il ponte delle
       // copertine sa scaricare solo indirizzi interi.
-      copertina: copertina ? new URL(copertina[1], BASE).href : null,
+      copertina: copertina ? indirizzoImmagine(copertina[1], BASE) : null,
       url: `${BASE}/${tipo}/${link[1]}/${link[2] || "-"}`
     });
   }
@@ -884,7 +928,7 @@ async function consigli(
       url: `${BASE}/${tipo}/${link[1]}/${link[2] || "-"}`,
       // Le miniature sono indirizzi relativi al sito, e il ponte delle
       // copertine sa scaricare solo indirizzi interi.
-      copertina: copertina ? new URL(copertina[1], BASE).href : null,
+      copertina: copertina ? indirizzoImmagine(copertina[1], BASE) : null,
       segnalazioni: quanteVolte ? Number(quanteVolte[1]) : 0
     });
   }
@@ -999,6 +1043,8 @@ async function statoItalianoDi(animeClickId, { fetchImpl = fetch } = {}) {
 module.exports = {
   volumiUsciti,
   copertineVolumi,
+  indirizzoImmagine,
+  sciogliEntita,
   leggiStatoItaliano,
   statoItalianoDi,
   urlEdizioni,

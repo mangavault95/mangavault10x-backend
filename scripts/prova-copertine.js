@@ -14,7 +14,8 @@ const fs = require("fs");
 const path = require("path");
 const { Pool } = require("pg");
 
-const { copertineVolumi } = require("../services/providers/animeclick");
+const { copertineVolumi, indirizzoImmagine } = require("../services/providers/animeclick");
+const { riparato } = require("../services/copertineVolumi");
 
 let falliti = 0;
 
@@ -76,6 +77,43 @@ console.log("\nIl lettore");
   }
 
   prova("una pagina senza la tabella lancia (non «zero copertine»)", true, /tabella delle edizioni/.test(errore || ""));
+}
+
+console.log("\nI titoli con caratteri speciali (Yu-Gi-Oh!, È una stella cadente…)");
+{
+  // Dentro un attributo dell'HTML i caratteri speciali arrivano come entità. Prima del 15/11/2026
+  // restavano lì: `&#33;` dentro un indirizzo è un'àncora (`#`), e il browser chiedeva un file
+  // che non esiste. Le serie con un «!» o un accento nel titolo restavano senza copertine.
+  const html = pagina(
+    riga("Yu-Gi-Oh&#33; 1", "/images/Manga_Cover/Yu-Gi-Oh&#33;1.jpg"),
+    riga("Yu-Gi-Oh&#x21; 2", "/images/Manga_Cover/Yu-Gi-Oh&#x21;2.jpg"),
+    riga("&Egrave; una stella cadente in pieno cielo 3", "/images/Manga_Cover/&Egrave;unastellacadente3.jpg"),
+    riga("Rock &amp; Roll 4", "/images/Manga_Cover/Rock&amp;Roll4.jpg")
+  );
+
+  prova(
+    "le entità si sciolgono e l'indirizzo si scrive per bene",
+    [
+      [1, `${AC}/images/Manga_Cover/Yu-Gi-Oh!1.jpg`],
+      [2, `${AC}/images/Manga_Cover/Yu-Gi-Oh!2.jpg`],
+      [3, `${AC}/images/Manga_Cover/%C3%88unastellacadente3.jpg`],
+      [4, `${AC}/images/Manga_Cover/Rock&Roll4.jpg`]
+    ],
+    copertineVolumi(html).map((v) => [v.numero, v.copertina])
+  );
+
+  prova("nessuna àncora negli indirizzi", true, copertineVolumi(html).every((v) => !new URL(v.copertina).hash));
+  prova("un'entità che non si conosce resta com'è", `${AC}/images/x&foo;y.jpg`, indirizzoImmagine("/images/x&foo;y.jpg"));
+  prova("un valore vuoto non è un indirizzo", null, indirizzoImmagine(""));
+  prova(
+    "gli indirizzi già salvati con le entità si riparano leggendoli",
+    [`${AC}/images/Manga_Cover/Yu-Gi-Oh!1.jpg`, `${AC}/images/Manga_Cover/%C3%88unastella1.jpg`, `${AC}/images/Manga_Cover/Berserk1.jpg`],
+    [
+      riparato(new URL("/images/Manga_Cover/Yu-Gi-Oh&#33;1.jpg", AC).href),
+      riparato(`${AC}/images/Manga_Cover/&Egrave;unastella1.jpg`),
+      riparato(`${AC}/images/Manga_Cover/Berserk1.jpg`)
+    ]
+  );
 }
 
 (async () => {

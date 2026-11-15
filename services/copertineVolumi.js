@@ -10,7 +10,14 @@
 // rilegge più se l'ultima lettura ha trovato qualcosa, e si riprova dopo
 // RITENTA_GIORNI se non aveva trovato niente.
 
-const { copertineVolumi } = require("./providers/animeclick");
+const { copertineVolumi, indirizzoImmagine } = require("./providers/animeclick");
+
+/**
+ * Un indirizzo salvato prima del 15/11/2026 può avere ancora le entità HTML dentro
+ * (`Yu-Gi-Oh&#33;1.jpg`: vedi `indirizzoImmagine`). Si ripara leggendolo, così si
+ * aggiustano anche le serie concluse, che il giro non rilegge più.
+ */
+const riparato = (indirizzo) => (/&(#\d+|#x[0-9a-f]+|[a-z]+);/i.test(indirizzo) ? indirizzoImmagine(indirizzo) || indirizzo : indirizzo);
 
 const RILEGGI_GIORNI = 30;
 const RITENTA_GIORNI = 60;
@@ -96,7 +103,9 @@ async function tutte(pool) {
     const copertine = {};
 
     for (const r of rows) {
-      (copertine[r.manga_id] ||= {})[r.numero] = r.copertina.startsWith(base) ? r.copertina.slice(base.length) : r.copertina;
+      const copertina = riparato(r.copertina);
+
+      (copertine[r.manga_id] ||= {})[r.numero] = copertina.startsWith(base) ? copertina.slice(base.length) : copertina;
     }
 
     return { base, copertine };
@@ -151,4 +160,4 @@ async function scegli(pool, mangaId, numero, indirizzo) {
   return { ok: true, scritta: esito.rowCount > 0 };
 }
 
-module.exports = { scegli, daLeggere, registraPagina, segnaGiro, tutte, RILEGGI_GIORNI, RITENTA_GIORNI };
+module.exports = { riparato, scegli, daLeggere, registraPagina, segnaGiro, tutte, RILEGGI_GIORNI, RITENTA_GIORNI };
