@@ -18,7 +18,9 @@
 #   - una pagina che non sembra quella cercata (la verifica anti-bot risponde 200 con altro dentro)
 #     vale come un rifiuto: ci si ferma;
 #   - tre errori di fila (timeout, 5xx) fermano il giro;
-#   - niente redirect seguiti, niente pagine oltre i 3,5 MB.
+#   - redirect: solo quelli verso l'indirizzo canonico (AnimeClick risponde 301 da
+#     anime/<id>/-/ allo slug), al massimo due, solo https, e solo se l'indirizzo finale
+#     resta su AnimeClick; un redirect altrove vale come errore. Niente pagine oltre i 3,5 MB.
 # NON si cambia indirizzo, firma o strada per aggirare un rifiuto.
 #
 # Scrive su $GITHUB_OUTPUT: scaricate=<quante>, rifiutato=0|1, in_pausa=0|1, non_accettate=<quante>
@@ -95,8 +97,17 @@ while IFS= read -r url; do
     *) echo "Indirizzo fuori da AnimeClick, lo salto: $url" >&2; continue ;;
   esac
 
-  codice=$(curl -sS -o pagina.html -w "%{http_code}" --max-time 40 --max-filesize 3500000 \
-    -A "$UA" -H "Accept-Language: it-IT,it;q=0.9" "$url") || codice=000
+  esito=$(curl -sS -o pagina.html -w "%{http_code} %{url_effective}" --max-time 40 --max-filesize 3500000 \
+    -L --max-redirs 2 --proto-redir =https \
+    -A "$UA" -H "Accept-Language: it-IT,it;q=0.9" "$url") || esito="000 $url"
+  codice="${esito%% *}"
+  finale="${esito#* }"
+
+  # Un redirect che porta fuori da AnimeClick non si accetta: vale come errore.
+  case "$finale" in
+    "$PREFISSO"*) ;;
+    *) echo "[$n/$totale] redirect fuori da AnimeClick, lo scarto: $finale" >&2; codice=000 ;;
+  esac
 
   case "$codice" in
     403|429)
