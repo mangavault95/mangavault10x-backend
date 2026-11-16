@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const pool = require("../db");
 const {
   credenzialiProprietario,
@@ -152,30 +153,50 @@ function dimenticaPermessi(utenteId = null) {
  * Prima della 009 la tabella non c'è: risponde SÌ, come si comportava
  * il sito quando il lettore era uno.
  */
-async function ancoraAttivo(utenteId) {
+async function ancoraAttivo(utenteId, emessoIl = null) {
   const id = Number(utenteId);
 
   if (!Number.isInteger(id) || id <= 0) return true; // token di prima: solo il proprietario
 
-  const ricordo = attiviRicordati.get(id);
+  let ricordo = attiviRicordati.get(id);
 
-  if (ricordo && Date.now() - ricordo.quando < RICORDO_PERMESSI) return ricordo.valore;
+  if (!ricordo || Date.now() - ricordo.quando >= RICORDO_PERMESSI) {
+    let attivo;
+    let cambiataIl = null;
 
-  let valore;
+    try {
+      const { rows } = await pool.query(
+        `SELECT password_cambiata_il FROM utenti WHERE id = $1 AND stato = 'attivo'`,
+        [id]
+      );
 
-  try {
-    const { rows } = await pool.query(`SELECT 1 FROM utenti WHERE id = $1 AND stato = 'attivo'`, [id]);
+      attivo = rows.length > 0;
+      cambiataIl = rows[0]?.password_cambiata_il ? new Date(rows[0].password_cambiata_il).getTime() : null;
+    } catch (err) {
+      if (err.code === "42703") {
+        // Migrazione 035 non ancora eseguita: manca solo la colonna.
+        const { rows } = await pool.query(`SELECT 1 FROM utenti WHERE id = $1 AND stato = 'attivo'`, [id]);
 
-    valore = rows.length > 0;
-  } catch (err) {
-    if (err.code !== "42P01") throw err;
+        attivo = rows.length > 0;
+      } else if (err.code === "42P01") {
+        attivo = true;
+      } else {
+        throw err;
+      }
+    }
 
-    valore = true;
+    ricordo = { valore: attivo, cambiataIl, quando: Date.now() };
+    attiviRicordati.set(id, ricordo);
   }
 
-  attiviRicordati.set(id, { valore, quando: Date.now() });
+  if (!ricordo.valore) return false;
 
-  return valore;
+  // Un token emesso PRIMA dell'ultimo cambio di password non vale più.
+  // `iat` è in secondi, e il cambio avviene nello stesso secondo in cui si
+  // emette il token nuovo: il confronto è «strettamente prima».
+  if (ricordo.cambiataIl && emessoIl != null && emessoIl * 1000 < ricordo.cambiataIl) return false;
+
+  return true;
 }
 
 /**
@@ -899,6 +920,133 @@ function pubblico(riga) {
   };
 }
 
+/* ==================================================
+   RESET DELLA PASSWORD
+   ================================================== */
+
+const RESET_DURATA_MS = 30 * 60 * 1000;
+
+const sha256 = (testo) => crypto.createHash("sha256").update(testo).digest("hex");
+
+/**
+ * Il proprietario genera un link di reset per una persona.
+ *
+ * Il segreto (32 byte casuali) esce di qui UNA volta e non si può
+ * rileggere: nel database c'è solo il suo hash. Un nuovo link annulla
+ * quelli ancora aperti per la stessa persona. Il proprietario non si
+ * resetta da qui: le sue credenziali stanno su Render.
+ *
+ * @returns {{token, scadeIl, utente} | {errore}}
+ */
+async function creaReset(utenteId) {
+  const id = Number(utenteId);
+
+  const { rows } = await pool.query(
+    `SELECT id, username, nickname, stato, proprietario FROM utenti WHERE id = $1`,
+    [id]
+  );
+
+  const utente = rows[0];
+
+  if (!utente) return { errore: "Persona non trovata", codice: 404 };
+  if (utente.proprietario) {
+    return { errore: "La password del proprietario si cambia da Render (npm run hash).", codice: 400 };
+  }
+  if (utente.stato !== "attivo") return { errore: "Questa persona non ha un accesso attivo.", codice: 400 };
+
+  const token = crypto.randomBytes(32).toString("base64url");
+  const scadeIl = new Date(Date.now() + RESET_DURATA_MS);
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    await client.query(`UPDATE reset_password SET usato_il = NOW() WHERE utente_id = $1 AND usato_il IS NULL`, [id]);
+    await client.query(
+      `INSERT INTO reset_password (utente_id, token_hash, scade_il) VALUES ($1, $2, $3)`,
+      [id, sha256(token), scadeIl]
+    );
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  return { token, scadeIl, utente: pubblico(utente) };
+}
+
+/**
+ * Chi apre il link sceglie la nuova password.
+ *
+ * La password si valida PRIMA di toccare il token: un errore di
+ * battitura non deve bruciare un link che vale una volta sola. Poi il
+ * token si consuma con un solo UPDATE condizionato — due richieste
+ * insieme non possono usarlo entrambe. Risposta uguale per token
+ * sbagliato, scaduto o già usato: non si deve poter distinguere.
+ */
+async function usaReset(token, nuovaPassword) {
+  const segreto = String(nuovaPassword || "");
+
+  if (segreto.length < REGOLE.passwordMin) {
+    return { errore: `La password deve avere almeno ${REGOLE.passwordMin} caratteri.`, codice: 400 };
+  }
+
+  if (segreto.length > PASSWORD_MASSIMA) {
+    return { errore: `La password può avere al massimo ${PASSWORD_MASSIMA} caratteri.`, codice: 400 };
+  }
+
+  const grezzo = String(token || "");
+
+  if (grezzo.length < 20 || grezzo.length > 200) return { errore: LINK_NON_VALIDO, codice: 400 };
+
+  const hash = await creaHash(segreto);
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const { rows } = await client.query(
+      `
+      UPDATE reset_password r
+      SET usato_il = NOW()
+      FROM utenti u
+      WHERE r.token_hash = $1
+        AND r.usato_il IS NULL
+        AND r.scade_il > NOW()
+        AND u.id = r.utente_id
+        AND u.stato = 'attivo'
+        AND NOT u.proprietario
+      RETURNING r.utente_id
+      `,
+      [sha256(grezzo)]
+    );
+
+    if (!rows.length) {
+      await client.query("ROLLBACK");
+      return { errore: LINK_NON_VALIDO, codice: 400 };
+    }
+
+    const id = rows[0].utente_id;
+
+    await client.query(`UPDATE utenti SET password_hash = $2, password_cambiata_il = NOW() WHERE id = $1`, [id, hash]);
+    await client.query(`UPDATE reset_password SET usato_il = NOW() WHERE utente_id = $1 AND usato_il IS NULL`, [id]);
+    await client.query("COMMIT");
+
+    dimenticaPermessi(id);
+
+    return { ok: true };
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+const LINK_NON_VALIDO = "Questo link non è valido o è scaduto. Chiedine uno nuovo al proprietario.";
+
 module.exports = {
   ancoraAttivo,
   MOTIVI,
@@ -918,6 +1066,8 @@ module.exports = {
   elenco,
   richieste,
   decidi,
+  creaReset,
+  usaReset,
   pubblici,
   aspetto,
   faccia,
