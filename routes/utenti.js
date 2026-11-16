@@ -40,6 +40,15 @@ const limiteRegistrazione = limite({
   messaggio: "Troppe richieste di registrazione. Riprova più tardi."
 });
 
+// Usare un link di reset: dieci tentativi all'ora per indirizzo. Il segreto è a 256 bit e non si
+// indovina, ma ogni tentativo costa un conto scrypt: il tetto difende la CPU, non il segreto.
+const limiteReset = limite({
+  finestraMs: 60 * 60 * 1000,
+  massimo: 10,
+  globale: 100,
+  messaggio: "Troppi tentativi. Riprova più tardi."
+});
+
 /**
  * Le persone.
  *
@@ -474,6 +483,78 @@ router.post("/:id/biblioteca", requireProprietario, async (req, res) => {
     }
 
     console.error("❌ UTENTI BIBLIOTECA ERROR:", err);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+/* ==================================================
+   RESET DELLA PASSWORD
+   ================================================== */
+
+/**
+ * Il proprietario genera un link di reset per una persona.
+ *
+ * Il link si consegna a mano (messaggio, di persona): è lui a dover
+ * essere sicuro che chi lo riceve sia davvero quella persona. Dentro c'è
+ * un segreto monouso che dura mezz'ora; la nuova password la sceglie
+ * chi apre il link, non il proprietario.
+ *
+ * `no-store`: la risposta contiene il segreto e non deve restare in
+ * nessuna cache.
+ */
+router.post("/:id/reset-password", requireProprietario, async (req, res) => {
+  const id = Number(req.params.id);
+
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ error: "Identificativo non valido" });
+  }
+
+  try {
+    const esito = await utenti.creaReset(id);
+
+    if (esito.errore) return res.status(esito.codice || 400).json({ error: esito.errore });
+
+    console.info(`reset password: link generato per utente ${id} da proprietario`);
+
+    res.set("Cache-Control", "no-store");
+
+    return res.status(201).json({
+      utente: esito.utente,
+      token: esito.token,
+      scadeIl: esito.scadeIl,
+      percorso: `/reset-password#${esito.token}`
+    });
+  } catch (err) {
+    if (err.code === "42P01") {
+      return res.status(503).json({ error: "Migrazione 035 non ancora eseguita" });
+    }
+
+    console.error("❌ RESET PASSWORD ERROR:", err.message);
+    return res.status(500).json({ error: "Errore server" });
+  }
+});
+
+/**
+ * Chi ha il link sceglie la nuova password. Aperta (chi ha perso la
+ * password non ha un token), ma protetta dal segreto e da un tetto.
+ */
+router.post("/reset-password", limiteReset, async (req, res) => {
+  const { token, password } = req.body || {};
+
+  try {
+    const esito = await utenti.usaReset(token, password);
+
+    if (esito.errore) return res.status(esito.codice || 400).json({ error: esito.errore });
+
+    console.info("reset password: password cambiata con un link");
+
+    return res.json({ ok: true });
+  } catch (err) {
+    if (err.code === "42P01") {
+      return res.status(503).json({ error: "Reset non ancora disponibile" });
+    }
+
+    console.error("❌ RESET PASSWORD USO ERROR:", err.message);
     return res.status(500).json({ error: "Errore server" });
   }
 });

@@ -179,7 +179,7 @@ async function requireAuth(req, res, next) {
   if (!req.user.proprietario) {
     try {
       // Richiesto qui e non in cima: utenti.js richiede questo file.
-      if (!(await require("./utenti").ancoraAttivo(req.user.id))) {
+      if (!(await require("./utenti").ancoraAttivo(req.user.id, req.user.iat))) {
         return res.status(401).json({ error: "Questo accesso non è più attivo" });
       }
     } catch (err) {
