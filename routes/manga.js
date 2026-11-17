@@ -54,11 +54,12 @@ router.post("/enrich-bulk", richiediBiblioteca, async (req, res) => {
   const soloGenere = Boolean(req.body?.soloGenere);
 
   try {
-    // Le copertine non AniList sono un problema a parte: miniature a
-    // bassa risoluzione (AnimeClick), URL che si rompono (MyAnimeList)
-    // o cache temporanee che scadono (gstatic). Queste schede possono
-    // essere complete sotto ogni altro aspetto, quindi servono un
-    // filtro dedicato.
+    // Le copertine che non sono né AnimeClick né AniList sono un problema a
+    // parte: URL che si rompono (MyAnimeList) o cache temporanee che
+    // scadono (gstatic). Queste schede possono essere complete sotto ogni
+    // altro aspetto, quindi servono un filtro dedicato. Quelle di AnimeClick
+    // sono la copertina italiana del volume 1 (services/copertineVolumi.js):
+    // non sono un problema, e non si sostituiscono con la cover di AniList.
     //
     // Stessa storia per il genere: il filtro generico sotto non lo
     // controlla, quindi una scheda già completa per il resto (trama,
@@ -67,7 +68,7 @@ router.post("/enrich-bulk", richiediBiblioteca, async (req, res) => {
     let filtro;
 
     if (soloCover) {
-      filtro = `("CoverURL" IS NULL OR "CoverURL" NOT LIKE '%anilist%')`;
+      filtro = `("CoverURL" IS NULL OR ("CoverURL" NOT LIKE '%anilist%' AND "CoverURL" NOT LIKE '%animeclick.it%'))`;
     } else if (soloTrame) {
       filtro = `"Trama" IS NULL`;
     } else if (soloGenere) {
@@ -103,14 +104,17 @@ router.post("/enrich-bulk", richiediBiblioteca, async (req, res) => {
         // Regola: riempio solo i campi vuoti, non sovrascrivo mai un
         // valore già presente — potresti averlo corretto a mano.
         //
-        // Unica eccezione la copertina: una cover AniList è sempre
-        // meglio di una miniatura AnimeClick o di un URL che scade,
-        // quindi lì il dato nuovo vince.
+        // Unica eccezione la copertina: una cover AniList è meglio di
+        // un URL che scade, quindi lì il dato nuovo vince — tranne se
+        // la serie ha già la copertina di AnimeClick (quella del
+        // volume 1 italiano): AniList ha l'edizione giapponese, e
+        // sovrascriverla annullerebbe l'allineamento.
         await pool.query(
           `
           UPDATE "Manga" SET
             "Trama"           = COALESCE("Trama",           $1),
-            "CoverURL"        = COALESCE($2,  "CoverURL"),
+            "CoverURL"        = CASE WHEN "CoverURL" LIKE '%animeclick.it%' THEN "CoverURL"
+                                     ELSE COALESCE($2, "CoverURL") END,
             "Genere"          = COALESCE("Genere",          $3),
             "Disegnatore"     = COALESCE("Disegnatore",     $4),
             "VolumiTotali"    = COALESCE("VolumiTotali",    $5),
