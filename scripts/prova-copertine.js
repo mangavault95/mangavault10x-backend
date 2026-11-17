@@ -277,6 +277,32 @@ console.log("\nI titoli con caratteri speciali (Yu-Gi-Oh!, È una stella cadente
 
       prova("scegliendo a mano il volume 1, la serie lo segue", "https://example.org/mio-volume-uno.jpg", await copertinaSerie(1));
 
+      // La rotta che lancia il lavoro di GitHub (copertine-volumi.yml, «allinea»).
+      await scratch.query(`UPDATE "Manga" SET "CoverURL" = 'https://s4.anilist.co/estera.jpg' WHERE "ID" = 1`);
+
+      const allinea = async (corpo, headers = intest) => {
+        const r = await fetch(`${base}/copertine/allinea`, { method: "POST", headers, body: JSON.stringify(corpo) });
+
+        return { stato: r.status, ...(await r.json()) };
+      };
+      const aProva = await allinea({ prova: true });
+
+      prova(
+        "la rotta con prova:true elenca e non scrive",
+        [200, false, 1, "https://s4.anilist.co/estera.jpg", "https://example.org/mio-volume-uno.jpg", "https://s4.anilist.co/estera.jpg"],
+        [aProva.stato, aProva.scritto, aProva.cambiate, aProva.elenco[0]?.da, aProva.elenco[0]?.a, await copertinaSerie(1)]
+      );
+
+      const davvero = await allinea({});
+
+      prova("la rotta senza prova scrive (qui il volume 1 è quello scelto a mano)", [200, true, 1, "https://example.org/mio-volume-uno.jpg"], [davvero.stato, davvero.scritto, davvero.cambiate, await copertinaSerie(1)]);
+      prova("la rotta, rifatta, non ha più niente da cambiare", [0, []], [(await allinea({})).cambiate, (await allinea({})).elenco]);
+      prova(
+        "la rotta senza il segreto: 403",
+        [403, 403],
+        [(await allinea({}, { "content-type": "application/json" })).stato, (await allinea({}, { "content-type": "application/json", "x-cron-secret": "no" })).stato]
+      );
+
       await scratch.query(`DELETE FROM copertine_volumi WHERE manga_id = 1 AND numero = 1`);
       await manda({ manga_id: 1, html: cambiata });
 

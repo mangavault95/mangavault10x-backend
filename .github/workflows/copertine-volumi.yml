@@ -19,6 +19,10 @@ name: Copertine dei volumi
 #
 # Alle 6:45 UTC, mezz'ora dopo il giro delle uscite: stesso sito, non insieme.
 # A mano: «Run workflow», con «prova» attivo legge e conta senza scrivere.
+#
+# «allinea» è un'altra cosa: non legge niente da AnimeClick, porta la copertina
+# di ogni serie a quella del suo volume 1 (quelle già lette). Con «prova» attivo
+# elenca cosa cambierebbe senza scrivere; poi si rilancia con «prova» spento.
 on:
   schedule:
     - cron: "45 6 * * *"
@@ -32,6 +36,10 @@ on:
         description: "Quante serie (al massimo 40)"
         type: string
         default: "20"
+      allinea:
+        description: "Attivo: non legge AnimeClick, porta la copertina di ogni serie a quella del volume 1"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -47,6 +55,7 @@ jobs:
       CRON_SECRET: ${{ secrets.CRON_SECRET }}
       PROVA: ${{ inputs.prova || false }}
       QUANTI: ${{ inputs.quanti || '20' }}
+      ALLINEA: ${{ inputs.allinea || false }}
     steps:
       - name: Giro
         run: |
@@ -55,6 +64,28 @@ jobs:
           UA="MangaVault/1.0 (collezione personale; +https://mangavault10x-frontend.vercel.app)"
 
           case "$QUANTI" in ''|*[!0-9]*) QUANTI=20;; esac
+
+          # «allinea»: niente AnimeClick, solo le copertine delle serie già lette.
+          if [ "$ALLINEA" = "true" ]; then
+            codice=000
+            for tentativo in 1 2 3; do
+              codice=$(curl -sS -o allinea.json -w "%{http_code}" --max-time 150 -X POST \
+                -H "X-Cron-Secret: $CRON_SECRET" -H "Content-Type: application/json" \
+                --data "{\"prova\": $PROVA}" "$API/allinea") || codice=000
+              [ "$codice" = "200" ] && break
+              sleep 10
+            done
+
+            if [ "$codice" != "200" ]; then
+              echo "Il backend non ha allineato: HTTP $codice" >&2
+              cat allinea.json >&2 2>/dev/null || true
+              exit 1
+            fi
+
+            jq -r '.elenco[] | "Serie \(.manga_id) \(.titolo)\n   da \(.da // "(vuota)")\n   a  \(.a)"' allinea.json
+            echo "$(jq -r '.esaminate' allinea.json) serie con copertine di volume, $(jq -r '.cambiate' allinea.json) $([ "$PROVA" = "true" ] && echo "da aggiornare (prova: non scritto)" || echo "aggiornate")."
+            exit 0
+          fi
 
           # L'elenco: ritenta, perché la prima chiamata sveglia Render.
           codice=000
