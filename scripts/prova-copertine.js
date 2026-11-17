@@ -135,6 +135,25 @@ console.log("\nGli artbook numerati come i volumi (Soul Eater - Soul Art 1): l'e
   prova("anche fra le ristampe vale il nome esatto", ["SoulEater04-ristampa.jpg"], file({ titolo: "Soul Eater" }, conRistampe));
 }
 
+console.log("\nUn variant col nome dell'edizione davanti al volume 1 (Atelier of Witch Hat - Grimoire Edition)");
+{
+  // Dai dati veri della serie 191 (Edizione «Grimoire Edition», Panini): il volume 1 usciva con la copertina
+  // «… Grimoire Edition Instant Variant Crunchyroll», che contiene l'etichetta. I nomi delle righe sono
+  // ricostruiti dai nomi dei file: la pagina non è stata letta.
+  const html = pagina(
+    riga("Atelier of Witch Hat Grimoire Edition Instant Variant Crunchyroll 1", "/images/Manga_Cover/AtelierVariantCrunchyroll1.jpg", { extra: "Panini" }),
+    riga("Atelier of Witch Hat Grimoire Edition 1", "/images/Manga_Cover/AtelierGrimoire1.jpg", { extra: "Panini" }),
+    riga("Atelier of Witch Hat Grimoire Edition 2", "/images/Manga_Cover/AtelierGrimoire2.jpg", { extra: "Panini" }),
+    riga("Atelier of Witch Hat Grimoire Edition 3", "/images/Manga_Cover/AtelierGrimoire3.jpg", { extra: "Panini" }),
+    riga("Atelier of Witch Hat 1", "/images/Manga_Cover/AtelierNormale1.jpg", { extra: "Panini" })
+  );
+  const file = (o) => copertineVolumi(html, o).map((v) => v.copertina.split("/").pop());
+  const o = { edizione: "Grimoire Edition", editore: "Panini" };
+
+  prova("senza titolo vince il variant (il filtro di sempre: contiene l'etichetta, è il primo)", ["AtelierVariantCrunchyroll1.jpg", "AtelierGrimoire2.jpg", "AtelierGrimoire3.jpg"], file(o));
+  prova("con il titolo: la Grimoire Edition, non il variant né l'edizione normale", ["AtelierGrimoire1.jpg", "AtelierGrimoire2.jpg", "AtelierGrimoire3.jpg"], file({ ...o, titolo: "Atelier of Witch Hat" }));
+}
+
 console.log("\nI titoli con caratteri speciali (Yu-Gi-Oh!, È una stella cadente…)");
 {
   // Dentro un attributo dell'HTML i caratteri speciali arrivano come entità. Prima del 15/11/2026
