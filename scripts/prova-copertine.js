@@ -96,6 +96,32 @@ console.log("\nL'editore decide fra edizioni con lo stesso nome (Zatch Bell!)");
   prova("se nessuna riga nomina l'editore non si scarta niente", ["ZB-vecchia1.jpg", "ZB-vecchia2.jpg", "ZB-vecchia3.jpg"], numeri({ editore: "Panini" }));
 }
 
+console.log("\nGli artbook numerati come i volumi (Soul Eater - Soul Art 1)");
+{
+  // L'artbook sta nella stessa tabella, con gli stessi numeri 1 e 2, e viene prima dei volumi veri.
+  const html = pagina(
+    riga("Soul Eater - Soul Art 1", "/images/Manga_Cover/SoulEaterArtbook.jpg", { extra: "Panini" }),
+    riga("Soul Eater - Soul Art 2", "/images/Manga_Cover/SoulArt2.jpg", { extra: "Panini" }),
+    riga("Soul Eater 1", "/images/Manga_Cover/SoulEater01.jpg", { extra: "Panini" }),
+    riga("Soul Eater 2", "/images/Manga_Cover/SoulEater02.jpg", { extra: "Panini" }),
+    riga("Soul Eater 3", "/images/Manga_Cover/SoulEater03.jpg", { extra: "Panini" })
+  );
+  const file = (o) => copertineVolumi(html, o).map((v) => v.copertina.split("/").pop());
+
+  prova("senza titolo resta la prima riga trovata", ["SoulEaterArtbook.jpg", "SoulArt2.jpg", "SoulEater03.jpg"], file({ editore: "Panini" }));
+  prova("con il titolo vince il nome più vicino", ["SoulEater01.jpg", "SoulEater02.jpg", "SoulEater03.jpg"], file({ editore: "Panini", titolo: "Soul Eater" }));
+  prova("maiuscole e punteggiatura del titolo non contano", ["SoulEater01.jpg", "SoulEater02.jpg", "SoulEater03.jpg"], file({ titolo: "SOUL-EATER" }));
+  prova("un titolo che non somiglia a nessuna riga lascia la prima che capita", ["SoulEaterArtbook.jpg", "SoulArt2.jpg", "SoulEater03.jpg"], file({ titolo: "Anima Mangiatrice" }));
+
+  // Un numero solo presente come ristampa si prende lo stesso; fra due ristampe vince il nome più vicino.
+  const conRistampe = pagina(
+    riga("Soul Eater - Soul Art 4", "/images/Manga_Cover/SoulArt4-ristampa.jpg", { extra: "Ristampa" }),
+    riga("Soul Eater 4", "/images/Manga_Cover/SoulEater04-ristampa.jpg", { extra: "Ristampa" })
+  );
+
+  prova("anche fra le ristampe vince il nome più vicino", ["SoulEater04-ristampa.jpg"], copertineVolumi(conRistampe, { titolo: "Soul Eater" }).map((v) => v.copertina.split("/").pop()));
+}
+
 console.log("\nI titoli con caratteri speciali (Yu-Gi-Oh!, È una stella cadente…)");
 {
   // Dentro un attributo dell'HTML i caratteri speciali arrivano come entità. Prima del 15/11/2026

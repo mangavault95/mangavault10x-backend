@@ -272,8 +272,13 @@ async function volumiUsciti(animeClickId, { edizione = null, oggi = new Date(), 
  * la nomina, senza si scartano le edizioni speciali. Le ristampe valgono solo
  * se di quel numero non c'è altro (la copertina di una ristampa è meglio di
  * quella del volume 1). I volumi annunciati contano: la copertina c'è già.
+ *
+ * Con `titolo` (il titolo della serie in collezione), se di uno stesso numero ci sono
+ * più righe vince quella il cui nome è più vicino al titolo: «Soul Eater - Soul Art 1»
+ * (l'artbook) non toglie il posto a «Soul Eater 1». Senza `titolo`, o a parità, resta la
+ * prima riga trovata.
  */
-function copertineVolumi(html, { edizione = null, editore = null } = {}) {
+function copertineVolumi(html, { edizione = null, editore = null, titolo = null } = {}) {
   const tbody = (String(html || "").match(/<tbody[\s\S]*?<\/tbody>/i) || [])[0];
 
   if (!tbody) throw new Error("AnimeClick: tabella delle edizioni non trovata");
@@ -310,6 +315,17 @@ function copertineVolumi(html, { edizione = null, editore = null } = {}) {
   const dellEditore = voluto.length >= 2 ? candidate.filter(({ r }) => r.celle.some((c) => c !== r.titolo && chiave(c).includes(voluto))) : [];
   const righeScelte = dellEditore.length ? dellEditore : candidate;
 
+  // Quanto il nome di una riga è lontano dal titolo della serie (senza maiuscole, accenti e
+  // punteggiatura): 0 se coincide, 1 più i caratteri in più se lo contiene, altrimenti uguale per
+  // tutte — il titolo in collezione può essere scritto in un altro modo, e allora non si sceglie
+  // niente e resta la prima riga. Senza titolo vale 0 per tutte.
+  const titoloChiave = chiave(titolo);
+  const distanza = (nome) => {
+    if (!titoloChiave) return 0;
+    const k = chiave(nome);
+    return k.includes(titoloChiave) ? (k === titoloChiave ? 0 : 1 + k.length - titoloChiave.length) : 1e6;
+  };
+
   for (const { tr, r } of righeScelte) {
     const n = volumeNumber(r.titolo);
     // `data-img` è l'immagine vera; `src` può essere un segnaposto finché la riga non si vede.
@@ -325,13 +341,16 @@ function copertineVolumi(html, { edizione = null, editore = null } = {}) {
     if (!/^https:\/\/www\.animeclick\.it\//.test(indirizzo)) continue;
 
     const dove = RISTAMPA.test(r.riga) ? ristampe : prime;
+    const punti = distanza(r.titolo.replace(/\s*\d{1,3}\s*$/, "").trim());
+    const attuale = dove.get(n);
 
-    if (!dove.has(n)) dove.set(n, indirizzo);
+    // Strettamente minore: a parità resta la prima riga trovata.
+    if (!attuale || punti < attuale.punti) dove.set(n, { indirizzo, punti });
   }
 
-  for (const [n, indirizzo] of ristampe) if (!prime.has(n)) prime.set(n, indirizzo);
+  for (const [n, v] of ristampe) if (!prime.has(n)) prime.set(n, v);
 
-  return [...prime.entries()].sort((a, b) => a[0] - b[0]).map(([numero, copertina]) => ({ numero, copertina }));
+  return [...prime.entries()].sort((a, b) => a[0] - b[0]).map(([numero, v]) => ({ numero, copertina: v.indirizzo }));
 }
 
 /* ==================================================
