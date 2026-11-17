@@ -273,7 +273,7 @@ async function volumiUsciti(animeClickId, { edizione = null, oggi = new Date(), 
  * se di quel numero non c'è altro (la copertina di una ristampa è meglio di
  * quella del volume 1). I volumi annunciati contano: la copertina c'è già.
  */
-function copertineVolumi(html, { edizione = null } = {}) {
+function copertineVolumi(html, { edizione = null, editore = null } = {}) {
   const tbody = (String(html || "").match(/<tbody[\s\S]*?<\/tbody>/i) || [])[0];
 
   if (!tbody) throw new Error("AnimeClick: tabella delle edizioni non trovata");
@@ -281,6 +281,9 @@ function copertineVolumi(html, { edizione = null } = {}) {
   const etichetta = edizione ? String(edizione).trim() : null;
   const prime = new Map();
   const ristampe = new Map();
+
+  // Righe che passano il filtro sull'edizione, lette una volta sola: l'editore si sceglie dopo.
+  const candidate = [];
 
   for (const tr of tbody.match(/<tr[\s\S]*?<\/tr>/gi) || []) {
     const r = leggiRiga(tr);
@@ -294,6 +297,20 @@ function copertineVolumi(html, { edizione = null } = {}) {
 
     if (!suaEdizione) continue;
 
+    candidate.push({ tr, r });
+  }
+
+  // L'EDITORE decide fra edizioni che hanno lo stesso nome (Zatch Bell!: la vecchia di Star Comics,
+  // interrotta, e la nuova di J-POP si chiamano uguale, e senza questo vinceva la prima). Si cerca
+  // in tutte le celle tranne il titolo, per forma e non per posizione, come il resto del lettore.
+  // Se nessuna riga nomina l'editore (la scheda lo scrive in un altro modo) non si scarta niente:
+  // meglio le copertine di un'altra edizione che nessuna copertina.
+  const chiave = (t) => String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  const voluto = chiave(editore);
+  const dellEditore = voluto.length >= 2 ? candidate.filter(({ r }) => r.celle.some((c) => c !== r.titolo && chiave(c).includes(voluto))) : [];
+  const righeScelte = dellEditore.length ? dellEditore : candidate;
+
+  for (const { tr, r } of righeScelte) {
     const n = volumeNumber(r.titolo);
     // `data-img` è l'immagine vera; `src` può essere un segnaposto finché la riga non si vede.
     const immagine = tr.match(/data-img="([^"]+)"/i) || tr.match(/<img[^>]*class="anteprima-img"[^>]*src="([^"]+)"/i);

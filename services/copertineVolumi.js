@@ -60,11 +60,11 @@ async function segnaGiro(pool, mangaId, esito, trovate = 0) {
  * edizioni lancia: chi chiama lo segna come giro fallito.
  */
 async function registraPagina(pool, mangaId, html, { scrivi = true } = {}) {
-  const { rows } = await pool.query(`SELECT "ID", "Edizione" FROM "Manga" WHERE "ID" = $1`, [mangaId]);
+  const { rows } = await pool.query(`SELECT "ID", "Edizione", "Editore" FROM "Manga" WHERE "ID" = $1`, [mangaId]);
 
   if (!rows[0]) throw new Error("serie non trovata");
 
-  const volumi = copertineVolumi(html, { edizione: rows[0].Edizione || null });
+  const volumi = copertineVolumi(html, { edizione: rows[0].Edizione || null, editore: rows[0].Editore || null });
 
   if (!scrivi) return { trovate: volumi.length, scritte: 0 };
 
