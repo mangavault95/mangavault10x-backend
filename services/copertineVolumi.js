@@ -55,6 +55,50 @@ async function segnaGiro(pool, mangaId, esito, trovate = 0) {
 }
 
 /**
+ * La copertina della SERIE è quella del suo primo volume, da AnimeClick.
+ *
+ * `"Manga"."CoverURL"` nasceva da AniList, MyAnimeList o da una ricerca immagini:
+ * copertine dell'edizione giapponese o americana, o di un'altra serie con lo
+ * stesso titolo, a volte un indirizzo scaduto. In `copertine_volumi` c'è invece
+ * la copertina dell'edizione italiana che si possiede (scelta con l'editore).
+ * Qui la si porta nella serie: il volume 1, e se manca quello col numero più
+ * basso (è sempre meglio di una copertina estera).
+ *
+ * Non tocca le serie che non hanno nessuna copertina di volume: per quelle resta
+ * quella che c'era finché il giro di AnimeClick non le legge. Una copertina messa
+ * a mano nella scheda della serie si perde alla prossima lettura: per sceglierla
+ * a mano si sceglie quella del volume 1 (`scegli`), e la serie la segue.
+ *
+ * `mangaId` null = tutte le serie. `scrivi:false` conta e non scrive.
+ * Restituisce `{ esaminate, cambiate, elenco: [{ manga_id, titolo, da, a }] }`.
+ */
+async function allineaSerie(pool, { mangaId = null, scrivi = true } = {}) {
+  const { rows } = await pool.query(
+    `SELECT DISTINCT ON (c.manga_id) c.manga_id, m."Titolo" AS titolo, c.copertina, m."CoverURL" AS attuale
+       FROM copertine_volumi c
+       JOIN "Manga" m ON m."ID" = c.manga_id
+      WHERE ($1::int IS NULL OR c.manga_id = $1)
+      ORDER BY c.manga_id, c.numero`,
+    [mangaId]
+  );
+
+  const elenco = rows
+    .map((r) => ({ manga_id: Number(r.manga_id), titolo: r.titolo, da: r.attuale || null, a: riparato(r.copertina) }))
+    .filter((r) => r.da !== r.a);
+
+  if (scrivi && elenco.length) {
+    await pool.query(
+      `UPDATE "Manga" m SET "CoverURL" = x.copertina
+         FROM UNNEST($1::int[], $2::text[]) AS x(id, copertina)
+        WHERE m."ID" = x.id`,
+      [elenco.map((r) => r.manga_id), elenco.map((r) => r.a)]
+    );
+  }
+
+  return { esaminate: rows.length, cambiate: elenco.length, elenco };
+}
+
+/**
  * Riceve la pagina delle edizioni di una serie e scrive le copertine dei volumi.
  * Restituisce `{ trovate, scritte }`. Una pagina che non è la tabella delle
  * edizioni lancia: chi chiama lo segna come giro fallito.
@@ -87,7 +131,17 @@ async function registraPagina(pool, mangaId, html, { scrivi = true } = {}) {
 
   await segnaGiro(pool, mangaId, "ok", volumi.length);
 
-  return { trovate: volumi.length, scritte };
+  // La copertina della serie segue il volume 1. Se non riesce, le copertine dei volumi
+  // sono già scritte e il giro è già segnato: non si fa fallire la lettura per questo.
+  let copertinaSerie = false;
+
+  try {
+    copertinaSerie = (await allineaSerie(pool, { mangaId })).cambiate > 0;
+  } catch (err) {
+    console.error("COPERTINA SERIE ERROR:", err.message);
+  }
+
+  return { trovate: volumi.length, scritte, copertinaSerie };
 }
 
 /**
@@ -157,7 +211,10 @@ async function scegli(pool, mangaId, numero, indirizzo) {
     [mangaId, numero, testo]
   );
 
-  return { ok: true, scritta: esito.rowCount > 0 };
+  // Il volume 1 scelto a mano è anche la copertina della serie.
+  const serie = await allineaSerie(pool, { mangaId });
+
+  return { ok: true, scritta: esito.rowCount > 0, copertinaSerie: serie.cambiate > 0 };
 }
 
-module.exports = { riparato, scegli, daLeggere, registraPagina, segnaGiro, tutte, RILEGGI_GIORNI, RITENTA_GIORNI };
+module.exports = { riparato, allineaSerie, scegli, daLeggere, registraPagina, segnaGiro, tutte, RILEGGI_GIORNI, RITENTA_GIORNI };

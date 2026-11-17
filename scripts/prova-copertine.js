@@ -157,12 +157,12 @@ console.log("\nI titoli con caratteri speciali (Yu-Gi-Oh!, È una stella cadente
 
     try {
       await scratch.query(`
-        CREATE TABLE "Manga" ("ID" int PRIMARY KEY, "Titolo" text, "Edizione" text, "Editore" text, "StatoSerie" text, "AnimeClickID" int);
-        INSERT INTO "Manga" ("ID","Titolo","Edizione","StatoSerie","AnimeClickID") VALUES
-          (1, 'Hunter x Hunter', NULL, 'in_corso', 9553),
-          (2, 'Berserk', 'Deluxe', 'conclusa', 9607),
-          (3, 'Senza scheda', NULL, 'in_corso', NULL),
-          (4, 'Frieren', NULL, 'in_corso', 7000);`);
+        CREATE TABLE "Manga" ("ID" int PRIMARY KEY, "Titolo" text, "Edizione" text, "Editore" text, "StatoSerie" text, "AnimeClickID" int, "CoverURL" text);
+        INSERT INTO "Manga" ("ID","Titolo","Edizione","StatoSerie","AnimeClickID","CoverURL") VALUES
+          (1, 'Hunter x Hunter', NULL, 'in_corso', 9553, 'https://s4.anilist.co/file/anilistcdn/media/manga/cover/large/bx-hxh-jp.jpg'),
+          (2, 'Berserk', 'Deluxe', 'conclusa', 9607, NULL),
+          (3, 'Senza scheda', NULL, 'in_corso', NULL, NULL),
+          (4, 'Frieren', NULL, 'in_corso', 7000, NULL);`);
       await scratch.query(fs.readFileSync(path.join(__dirname, "..", "sql", "030_copertine_volumi.sql"), "utf8"));
       await scratch.query(fs.readFileSync(path.join(__dirname, "..", "sql", "034_copertine_volumi_manuali.sql"), "utf8"));
 
@@ -243,6 +243,44 @@ console.log("\nI titoli con caratteri speciali (Yu-Gi-Oh!, È una stella cadente
       prova("il giro che dichiara il fallimento", [200, false, "HTTP 404"], [dichiarato.stato, dichiarato.letta, dichiarato.motivo]);
       prova("una serie che non esiste: 404, niente scritto", 404, (await manda({ manga_id: 99, html: hxh })).stato);
       prova("senza manga_id: 400", 400, (await manda({ html: hxh })).stato);
+
+      console.log("\nLa copertina della serie segue il volume 1");
+
+      const copertinaSerie = async (id) => (await scratch.query(`SELECT "CoverURL" FROM "Manga" WHERE "ID" = $1`, [id])).rows[0]["CoverURL"];
+
+      prova(
+        "dopo la lettura la serie ha la copertina del volume 1 (non più quella di AniList)",
+        `${AC}/images/Manga_Cover/HunterxHunter1-nuova.jpg`,
+        await copertinaSerie(1)
+      );
+
+      // Il volume 1 sparisce dalla pagina e la riga resta (come sopra): se manca il numero 1 si usa il più basso.
+      await scratch.query(`DELETE FROM copertine_volumi WHERE manga_id = 1 AND numero = 1`);
+      await scratch.query(`UPDATE "Manga" SET "CoverURL" = 'https://cdn.myanimelist.net/images/manga/vecchia.jpg' WHERE "ID" = 1`);
+
+      const senzaUno = await copertineSrv.allineaSerie(scratch, { scrivi: false });
+
+      prova("la simulazione conta e non scrive", [1, 1, "https://cdn.myanimelist.net/images/manga/vecchia.jpg"], [senzaUno.esaminate, senzaUno.cambiate, await copertinaSerie(1)]);
+
+      const tutteLeSerie = await copertineSrv.allineaSerie(scratch);
+
+      prova(
+        "senza volume 1 si usa il più basso; l'allineamento di tutte le serie scrive",
+        [1, `${AC}/images/Manga_Cover/HunterxHunter2.jpg`],
+        [tutteLeSerie.cambiate, await copertinaSerie(1)]
+      );
+      prova("rifatto subito, non c'è più niente da cambiare", 0, (await copertineSrv.allineaSerie(scratch)).cambiate);
+      prova("una serie senza copertine di volume non si tocca", null, await copertinaSerie(4));
+
+      await scratch.query(`UPDATE "Manga" SET "CoverURL" = 'https://s4.anilist.co/vecchia.jpg' WHERE "ID" = 1`);
+      await copertineSrv.scegli(scratch, 1, 1, "https://example.org/mio-volume-uno.jpg");
+
+      prova("scegliendo a mano il volume 1, la serie lo segue", "https://example.org/mio-volume-uno.jpg", await copertinaSerie(1));
+
+      await scratch.query(`DELETE FROM copertine_volumi WHERE manga_id = 1 AND numero = 1`);
+      await manda({ manga_id: 1, html: cambiata });
+
+      prova("la lettura successiva rimette il volume 1 di AnimeClick", `${AC}/images/Manga_Cover/HunterxHunter1-nuova.jpg`, await copertinaSerie(1));
 
       console.log("\nIl giro va avanti");
 
