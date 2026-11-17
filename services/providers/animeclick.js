@@ -273,6 +273,10 @@ async function volumiUsciti(animeClickId, { edizione = null, oggi = new Date(), 
  * se di quel numero non c'è altro (la copertina di una ristampa è meglio di
  * quella del volume 1). I volumi annunciati contano: la copertina c'è già.
  *
+ * A parità di numero, se il nome di una riga allunga quello di un'altra («Jujutsu Kaisen -
+ * Sorcery Fight - Edizione Early Access» su «Jujutsu Kaisen - Sorcery Fight») è una variante e
+ * vince la base: vale con o senza `titolo` e con o senza etichetta, in qualunque ordine.
+ *
  * Con `titolo` (il titolo della serie in collezione) l'edizione è quella ESATTA: la riga
  * vale solo se il suo nome, senza il numero, coincide col titolo — più l'etichetta
  * `edizione` se la serie ne ha una («Hunter x Hunter» + «Deluxe»). Non basta che lo
@@ -347,13 +351,22 @@ function copertineVolumi(html, { edizione = null, editore = null, titolo = null 
     if (!/^https:\/\/www\.animeclick\.it\//.test(indirizzo)) continue;
 
     const dove = RISTAMPA.test(r.riga) ? ristampe : prime;
+    const nome = chiave(r.titolo.replace(/\s*\d{1,3}\s*$/, "").trim());
+    const attuale = dove.get(n);
 
-    if (!dove.has(n)) dove.set(n, indirizzo);
+    // L'EDIZIONE BASE. Una riga il cui nome ne allunga un'altra con lo stesso numero è una variante
+    // di quella: «Jujutsu Kaisen - Sorcery Fight - Edizione Early Access 1» sta sopra «Jujutsu Kaisen
+    // - Sorcery Fight 1», «Gachiakuta Limited Edition Exclusive Trash Box 1» sopra «Gachiakuta 1»,
+    // «… Grimoire Edition Instant Variant 1» sopra «… Grimoire Edition 1». Vince il nome più corto, in
+    // qualunque ordine arrivino le righe, senza elenchi di parole e senza etichetta. Nomi che non si
+    // contengono (due editori, due edizioni diverse) restano alla prima riga, e fra quelle decide
+    // l'editore. Un nome senza lettere o cifre (titolo tutto in giapponese) non si confronta.
+    if (!attuale || (nome && attuale.nome && nome !== attuale.nome && attuale.nome.startsWith(nome))) dove.set(n, { indirizzo, nome });
   }
 
-  for (const [n, indirizzo] of ristampe) if (!prime.has(n)) prime.set(n, indirizzo);
+  for (const [n, v] of ristampe) if (!prime.has(n)) prime.set(n, v);
 
-  return [...prime.entries()].sort((a, b) => a[0] - b[0]).map(([numero, copertina]) => ({ numero, copertina }));
+  return [...prime.entries()].sort((a, b) => a[0] - b[0]).map(([numero, v]) => ({ numero, copertina: v.indirizzo }));
 }
 
 /* ==================================================
