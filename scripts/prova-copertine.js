@@ -79,6 +79,23 @@ console.log("\nIl lettore");
   prova("una pagina senza la tabella lancia (non «zero copertine»)", true, /tabella delle edizioni/.test(errore || ""));
 }
 
+console.log("\nL'editore decide fra edizioni con lo stesso nome (Zatch Bell!)");
+{
+  // La vecchia di Star Comics (interrotta a 3) e la nuova di J-POP hanno lo stesso titolo.
+  const html = pagina(
+    riga("Zatch Bell! 1", "/images/Manga_Cover/ZB-vecchia1.jpg", { extra: "Star Comics" }),
+    riga("Zatch Bell! 2", "/images/Manga_Cover/ZB-vecchia2.jpg", { extra: "Star Comics" }),
+    riga("Zatch Bell! 3", "/images/Manga_Cover/ZB-vecchia3.jpg", { extra: "Star Comics" }),
+    riga("Zatch Bell! 1", "/images/Manga_Cover/ZB-nuova1.jpg", { extra: "J-Pop" }),
+    riga("Zatch Bell! 2", "/images/Manga_Cover/ZB-nuova2.jpg", { extra: "J-Pop" })
+  );
+  const numeri = (o) => copertineVolumi(html, o).map((v) => v.copertina.split("/").pop());
+
+  prova("senza editore resta quello che c'era: la prima che capita", ["ZB-vecchia1.jpg", "ZB-vecchia2.jpg", "ZB-vecchia3.jpg"], numeri({}));
+  prova("con l'editore si tiene solo la sua (maiuscole e trattino non contano)", ["ZB-nuova1.jpg", "ZB-nuova2.jpg"], numeri({ editore: "J-POP" }));
+  prova("se nessuna riga nomina l'editore non si scarta niente", ["ZB-vecchia1.jpg", "ZB-vecchia2.jpg", "ZB-vecchia3.jpg"], numeri({ editore: "Panini" }));
+}
+
 console.log("\nI titoli con caratteri speciali (Yu-Gi-Oh!, È una stella cadente…)");
 {
   // Dentro un attributo dell'HTML i caratteri speciali arrivano come entità. Prima del 15/11/2026
@@ -140,8 +157,8 @@ console.log("\nI titoli con caratteri speciali (Yu-Gi-Oh!, È una stella cadente
 
     try {
       await scratch.query(`
-        CREATE TABLE "Manga" ("ID" int PRIMARY KEY, "Titolo" text, "Edizione" text, "StatoSerie" text, "AnimeClickID" int);
-        INSERT INTO "Manga" VALUES
+        CREATE TABLE "Manga" ("ID" int PRIMARY KEY, "Titolo" text, "Edizione" text, "Editore" text, "StatoSerie" text, "AnimeClickID" int);
+        INSERT INTO "Manga" ("ID","Titolo","Edizione","StatoSerie","AnimeClickID") VALUES
           (1, 'Hunter x Hunter', NULL, 'in_corso', 9553),
           (2, 'Berserk', 'Deluxe', 'conclusa', 9607),
           (3, 'Senza scheda', NULL, 'in_corso', NULL),
