@@ -158,7 +158,7 @@ console.log("\nI titoli con caratteri speciali (Yu-Gi-Oh!, È una stella cadente
     try {
       await scratch.query(`
         CREATE TABLE "Manga" ("ID" int PRIMARY KEY, "Titolo" text, "Edizione" text, "Editore" text, "StatoSerie" text, "AnimeClickID" int);
-        INSERT INTO "Manga" VALUES
+        INSERT INTO "Manga" ("ID","Titolo","Edizione","StatoSerie","AnimeClickID") VALUES
           (1, 'Hunter x Hunter', NULL, 'in_corso', 9553),
           (2, 'Berserk', 'Deluxe', 'conclusa', 9607),
           (3, 'Senza scheda', NULL, 'in_corso', NULL),
