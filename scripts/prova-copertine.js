@@ -109,10 +109,10 @@ console.log("\nGli artbook numerati come i volumi (Soul Eater - Soul Art 1): l'e
   const file = (o, h = html) => copertineVolumi(h, o).map((v) => v.copertina.split("/").pop());
   const veri = ["SoulEater01.jpg", "SoulEater02.jpg", "SoulEater03.jpg"];
 
-  prova("senza titolo il filtro è quello di sempre: la prima che capita", ["SoulEaterArtbook.jpg", "SoulArt2.jpg", "SoulEater03.jpg"], file({ editore: "Panini" }));
+  prova("senza titolo vince comunque la base: «Soul Eater - Soul Art» allunga «Soul Eater»", veri, file({ editore: "Panini" }));
   prova("con il titolo, Edizione vuota: solo i nomi che coincidono", veri, file({ editore: "Panini", titolo: "Soul Eater" }));
   prova("maiuscole e punteggiatura del titolo non contano", veri, file({ titolo: "SOUL-EATER" }));
-  prova("un titolo che non coincide con nessuna riga: filtro di sempre", ["SoulEaterArtbook.jpg", "SoulArt2.jpg", "SoulEater03.jpg"], file({ titolo: "Anima Mangiatrice" }));
+  prova("un titolo che non coincide con nessuna riga: resta la base, il nome più corto", veri, file({ titolo: "Anima Mangiatrice" }));
 
   // Edizione valorizzata: titolo + etichetta, non basta che la contenga.
   const deluxe = pagina(
@@ -122,7 +122,7 @@ console.log("\nGli artbook numerati come i volumi (Soul Eater - Soul Art 1): l'e
   );
 
   prova("con l'etichetta: titolo + etichetta esatti, non ogni nome che la contiene", ["HxHDeluxe1.jpg"], file({ edizione: "Deluxe", titolo: "Hunter x Hunter" }, deluxe));
-  prova("con l'etichetta e senza titolo: filtro di sempre (la prima che la contiene)", ["HxHDeluxeVariant1.jpg"], file({ edizione: "Deluxe" }, deluxe));
+  prova("con l'etichetta e senza titolo: fra le righe che la contengono vince la base", ["HxHDeluxe1.jpg"], file({ edizione: "Deluxe" }, deluxe));
   prova("l'etichetta può stare prima del titolo", ["Deluxe1.jpg"], file({ edizione: "Deluxe", titolo: "Hunter x Hunter" }, pagina(riga("Deluxe Hunter x Hunter 1", "/images/Manga_Cover/Deluxe1.jpg"), riga("Hunter x Hunter Deluxe - Variant 1", "/images/Manga_Cover/V1.jpg"))));
   prova("senza etichetta le edizioni speciali restano fuori", ["HxH1.jpg"], file({ titolo: "Hunter x Hunter" }, deluxe));
 
@@ -150,8 +150,64 @@ console.log("\nUn variant col nome dell'edizione davanti al volume 1 (Atelier of
   const file = (o) => copertineVolumi(html, o).map((v) => v.copertina.split("/").pop());
   const o = { edizione: "Grimoire Edition", editore: "Panini" };
 
-  prova("senza titolo vince il variant (il filtro di sempre: contiene l'etichetta, è il primo)", ["AtelierVariantCrunchyroll1.jpg", "AtelierGrimoire2.jpg", "AtelierGrimoire3.jpg"], file(o));
+  prova("senza titolo vince comunque la base: il variant allunga «Grimoire Edition»", ["AtelierGrimoire1.jpg", "AtelierGrimoire2.jpg", "AtelierGrimoire3.jpg"], file(o));
+  prova("etichetta scritta a metà («Grimoire»): il confronto esatto non coincide, ma la base vince lo stesso", ["AtelierGrimoire1.jpg", "AtelierGrimoire2.jpg", "AtelierGrimoire3.jpg"], file({ edizione: "Grimoire", editore: "Panini", titolo: "Atelier of Witch Hat" }));
   prova("con il titolo: la Grimoire Edition, non il variant né l'edizione normale", ["AtelierGrimoire1.jpg", "AtelierGrimoire2.jpg", "AtelierGrimoire3.jpg"], file({ ...o, titolo: "Atelier of Witch Hat" }));
+}
+
+console.log("\nL'edizione base senza etichetta (Jujutsu Kaisen, Gachiakuta)");
+{
+  // Jujutsu Kaisen: l'edizione normale si chiama «Jujutsu Kaisen - Sorcery Fight», non come il titolo in
+  // collezione, e `Edizione` resta vuota. L'Early Access sta davanti. I nomi sono ricostruiti dai nomi dei
+  // file delle copertine salvate: la pagina non è stata letta.
+  const jjk = pagina(
+    riga("Jujutsu Kaisen - Sorcery Fight - Edizione Early Access 1", "/images/Manga_Cover/JJKEarly1.jpg", { extra: "Panini" }),
+    riga("Jujutsu Kaisen - Sorcery Fight 1", "/images/Manga_Cover/JJK1.jpg", { extra: "Panini" }),
+    riga("Jujutsu Kaisen - Sorcery Fight 2", "/images/Manga_Cover/JJK2.jpg", { extra: "Panini" })
+  );
+  const file = (h, o) => copertineVolumi(h, o).map((v) => v.copertina.split("/").pop());
+
+  prova("Edizione vuota, titolo «Jujutsu Kaisen»: la base «… Sorcery Fight», non l'Early Access", ["JJK1.jpg", "JJK2.jpg"], file(jjk, { titolo: "Jujutsu Kaisen", editore: "Panini" }));
+  prova("lo stesso senza titolo", ["JJK1.jpg", "JJK2.jpg"], file(jjk, {}));
+  prova("in qualunque ordine arrivino le righe", ["JJK1.jpg", "JJK2.jpg"], file(
+    pagina(
+      riga("Jujutsu Kaisen - Sorcery Fight 1", "/images/Manga_Cover/JJK1.jpg"),
+      riga("Jujutsu Kaisen - Sorcery Fight - Edizione Early Access 1", "/images/Manga_Cover/JJKEarly1.jpg"),
+      riga("Jujutsu Kaisen - Sorcery Fight 2", "/images/Manga_Cover/JJK2.jpg")
+    ),
+    { titolo: "Jujutsu Kaisen" }
+  ));
+
+  const gachi = pagina(
+    riga("Gachiakuta Limited Edition Exclusive Trash Box 1", "/images/Manga_Cover/GachiaTrashBox.jpg", { extra: "Star Comics" }),
+    riga("Gachiakuta 1", "/images/Manga_Cover/Gachia1.jpg", { extra: "Star Comics" }),
+    riga("Gachiakuta 2", "/images/Manga_Cover/Gachia2.jpg", { extra: "Star Comics" })
+  );
+
+  prova("Gachiakuta: l'edizione speciale non toglie il posto al volume 1", ["Gachia1.jpg", "Gachia2.jpg"], file(gachi, { titolo: "Gachiakuta", editore: "Star Comics" }));
+
+  // Un numero che esiste solo come variant si prende lo stesso: meglio una copertina che nessuna.
+  prova(
+    "un numero che esiste solo nella variante si prende",
+    ["JJK1.jpg", "JJKEarly5.jpg"],
+    file(pagina(riga("Jujutsu Kaisen - Sorcery Fight 1", "/images/Manga_Cover/JJK1.jpg"), riga("Jujutsu Kaisen - Sorcery Fight - Edizione Early Access 5", "/images/Manga_Cover/JJKEarly5.jpg")), {})
+  );
+
+  // Nomi che non si contengono restano alla prima riga (due edizioni diverse), e decide l'editore.
+  const diverse = pagina(
+    riga("Devilman 1", "/images/Manga_Cover/DevilmanA1.jpg", { extra: "Dynamic" }),
+    riga("Devilman Complete Collection 1", "/images/Manga_Cover/DevilmanB1.jpg", { extra: "J-Pop" }),
+    riga("Mazinger 1", "/images/Manga_Cover/Mazinger1.jpg", { extra: "J-Pop" })
+  );
+
+  prova("nomi senza relazione: la prima riga trovata", ["DevilmanA1.jpg"], file(diverse, { titolo: "Devilman" }).slice(0, 1));
+
+  // Un titolo senza lettere né cifre latine non si confronta: resta la prima riga.
+  prova(
+    "titolo tutto in giapponese: la prima riga, niente confronto",
+    ["Prima1.jpg"],
+    file(pagina(riga("呪術廻戦 1", "/images/Manga_Cover/Prima1.jpg"), riga("呪術廻戦 特装版 1", "/images/Manga_Cover/Seconda1.jpg")), {})
+  );
 }
 
 console.log("\nI titoli con caratteri speciali (Yu-Gi-Oh!, È una stella cadente…)");
