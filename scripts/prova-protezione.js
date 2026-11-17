@@ -37,7 +37,10 @@ const ECCEZIONI = new Map([
   ["POST /api/manga/login", "il vecchio indirizzo dell'ingresso, tenuto per i browser con la pagina in cache"],
   // Non scrive nel database: interroga AniList, Google Books e il traduttore e restituisce il risultato. La usa
   // il banco del bibliotecario anche per chi non è entrato. Ha un tetto alle richieste (services/limite.js).
-  ["POST /api/manga/enrich", "solo lettura da fonti esterne, con un tetto alle richieste"]
+  ["POST /api/manga/enrich", "solo lettura da fonti esterne, con un tetto alle richieste"],
+  // Chi ha perso la password non ha un accesso: la protezione è il segreto monouso del link (256 bit, 30 minuti
+  // di vita al massimo, mai in chiaro nel database) e il tetto per indirizzo. Lo genera solo il proprietario.
+  ["POST /api/utenti/reset-password", "chi ha perso la password non può essere entrato: vale il link monouso, con un tetto"]
 ]);
 
 let falliti = 0;
