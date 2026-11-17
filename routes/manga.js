@@ -984,6 +984,42 @@ router.get("/copertine-volumi", async (req, res) => {
 });
 
 /**
+ * POST /api/manga/copertine/allinea — porta la copertina di ogni serie a quella
+ * del suo volume 1 (vedi `allineaSerie` in `services/copertineVolumi.js`).
+ *
+ *   {"prova": true}   conta e dice cosa cambierebbe, senza scrivere
+ *   {}                scrive
+ *
+ * Serve a sistemare in una volta le serie le cui copertine di volume sono già
+ * state lette (le concluse non si rileggono più): lo lancia a mano il lavoro
+ * «Copertine dei volumi» su GitHub. Protetta dal segreto del cron.
+ */
+router.post("/copertine/allinea", richiedeSegretoCron, async (req, res) => {
+  try {
+    const scrivi = req.body?.prova !== true;
+    const esito = await require("../services/copertineVolumi").allineaSerie(pool, { scrivi });
+
+    console.log(`COPERTINE ALLINEA: ${esito.cambiate} serie su ${esito.esaminate}${scrivi ? "" : " — prova a vuoto"}`);
+
+    return res.json({
+      success: true,
+      scritto: scrivi,
+      esaminate: esito.esaminate,
+      cambiate: esito.cambiate,
+      // Il giro le stampa nel registro: un elenco lungo non serve a nessuno.
+      elenco: esito.elenco.slice(0, 300)
+    });
+  } catch (err) {
+    // La 030 non è ancora passata: non c'è niente da allineare.
+    if (err.code === "42P01") return res.status(503).json({ error: "Manca la migrazione 030: eseguila prima" });
+
+    console.error("MANGA COPERTINE ALLINEA ERROR:", err);
+
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /api/manga/copertine/da-leggere?quanti=20 — le prossime serie di cui
  * leggere la pagina delle edizioni (vedi `services/copertineVolumi.js`).
  * Risponde anche se AnimeClick è in pausa: in quel caso l'elenco è vuoto.
