@@ -272,8 +272,17 @@ async function volumiUsciti(animeClickId, { edizione = null, oggi = new Date(), 
  * la nomina, senza si scartano le edizioni speciali. Le ristampe valgono solo
  * se di quel numero non c'è altro (la copertina di una ristampa è meglio di
  * quella del volume 1). I volumi annunciati contano: la copertina c'è già.
+ *
+ * Con `titolo` (il titolo della serie in collezione) l'edizione è quella ESATTA: la riga
+ * vale solo se il suo nome, senza il numero, coincide col titolo — più l'etichetta
+ * `edizione` se la serie ne ha una («Hunter x Hunter» + «Deluxe»). Non basta che lo
+ * contenga: «Soul Eater - Soul Art 1» (l'artbook, numerato come i volumi) non è «Soul
+ * Eater 1». Maiuscole, accenti e punteggiatura non contano. Se nessuna riga coincide (il
+ * titolo in collezione è scritto in un altro modo) si torna al filtro di sempre: meglio
+ * le copertine di un'altra edizione che nessuna copertina. Senza `titolo` il filtro è
+ * quello di sempre.
  */
-function copertineVolumi(html, { edizione = null, editore = null } = {}) {
+function copertineVolumi(html, { edizione = null, editore = null, titolo = null } = {}) {
   const tbody = (String(html || "").match(/<tbody[\s\S]*?<\/tbody>/i) || [])[0];
 
   if (!tbody) throw new Error("AnimeClick: tabella delle edizioni non trovata");
@@ -306,9 +315,22 @@ function copertineVolumi(html, { edizione = null, editore = null } = {}) {
   // Se nessuna riga nomina l'editore (la scheda lo scrive in un altro modo) non si scarta niente:
   // meglio le copertine di un'altra edizione che nessuna copertina.
   const chiave = (t) => String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+
+  // L'EDIZIONE ESATTA: il nome della riga, senza il numero, è il titolo della serie (più l'etichetta
+  // dell'Edizione, prima o dopo). Le altre righe «che contengono» il titolo sono altri prodotti.
+  const titoloChiave = chiave(titolo);
+  const etichettaChiave = chiave(etichetta);
+  const nomeGiusto = (r) => {
+    const k = chiave(r.titolo.replace(/\s*\d{1,3}\s*$/, "").trim());
+
+    return k === titoloChiave + etichettaChiave || (etichettaChiave !== "" && k === etichettaChiave + titoloChiave);
+  };
+  const esatte = titoloChiave ? candidate.filter(({ r }) => nomeGiusto(r)) : [];
+  const base = esatte.length ? esatte : candidate;
+
   const voluto = chiave(editore);
-  const dellEditore = voluto.length >= 2 ? candidate.filter(({ r }) => r.celle.some((c) => c !== r.titolo && chiave(c).includes(voluto))) : [];
-  const righeScelte = dellEditore.length ? dellEditore : candidate;
+  const dellEditore = voluto.length >= 2 ? base.filter(({ r }) => r.celle.some((c) => c !== r.titolo && chiave(c).includes(voluto))) : [];
+  const righeScelte = dellEditore.length ? dellEditore : base;
 
   for (const { tr, r } of righeScelte) {
     const n = volumeNumber(r.titolo);
