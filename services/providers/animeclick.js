@@ -285,8 +285,13 @@ async function volumiUsciti(animeClickId, { edizione = null, oggi = new Date(), 
  * titolo in collezione è scritto in un altro modo) si torna al filtro di sempre: meglio
  * le copertine di un'altra edizione che nessuna copertina. Senza `titolo` il filtro è
  * quello di sempre.
+ *
+ * `diagnosi` (un oggetto vuoto) si riempie con quello che il lettore ha visto: quante righe,
+ * quali ha scartato e perché, quali volumi non hanno immagine, quale riga ha scelto per ogni
+ * numero. Non cambia il risultato: serve a capire perché una serie ha la copertina sbagliata
+ * (lavoro «Copertine dei volumi» con «prova» attivo).
  */
-function copertineVolumi(html, { edizione = null, editore = null, titolo = null } = {}) {
+function copertineVolumi(html, { edizione = null, editore = null, titolo = null, diagnosi = null } = {}) {
   const tbody = (String(html || "").match(/<tbody[\s\S]*?<\/tbody>/i) || [])[0];
 
   if (!tbody) throw new Error("AnimeClick: tabella delle edizioni non trovata");
@@ -297,18 +302,32 @@ function copertineVolumi(html, { edizione = null, editore = null, titolo = null 
 
   // Righe che passano il filtro sull'edizione, lette una volta sola: l'editore si sceglie dopo.
   const candidate = [];
+  // Per la diagnosi: i nomi delle righe, al massimo `TETTO_DIAGNOSI` per elenco.
+  const TETTO_DIAGNOSI = 60;
+  const nota = (elenco, voce) => {
+    if (diagnosi && diagnosi[elenco].length < TETTO_DIAGNOSI) diagnosi[elenco].push(voce);
+  };
+
+  if (diagnosi) {
+    Object.assign(diagnosi, { titolo, edizione: etichetta, editore, righe: 0, altraEdizione: [], altroNome: [], altroEditore: [], senzaImmagine: [], scelte: [] });
+  }
 
   for (const tr of tbody.match(/<tr[\s\S]*?<\/tr>/gi) || []) {
     const r = leggiRiga(tr);
 
     if (!r || !r.titolo) continue;
 
+    if (diagnosi) diagnosi.righe += 1;
+
     const nomeEdizione = r.titolo.replace(/\s*\d{1,3}\s*$/, "").trim();
     const suaEdizione = etichetta
       ? nomeEdizione.toLowerCase().includes(etichetta.toLowerCase())
       : !MARCHI_EDIZIONE.test(nomeEdizione);
 
-    if (!suaEdizione) continue;
+    if (!suaEdizione) {
+      nota("altraEdizione", r.titolo);
+      continue;
+    }
 
     candidate.push({ tr, r });
   }
@@ -336,12 +355,22 @@ function copertineVolumi(html, { edizione = null, editore = null, titolo = null 
   const dellEditore = voluto.length >= 2 ? base.filter(({ r }) => r.celle.some((c) => c !== r.titolo && chiave(c).includes(voluto))) : [];
   const righeScelte = dellEditore.length ? dellEditore : base;
 
+  if (diagnosi) {
+    for (const c of candidate) {
+      if (!base.includes(c)) nota("altroNome", c.r.titolo);
+      else if (!righeScelte.includes(c)) nota("altroEditore", c.r.titolo);
+    }
+  }
+
   for (const { tr, r } of righeScelte) {
     const n = volumeNumber(r.titolo);
     // `data-img` è l'immagine vera; `src` può essere un segnaposto finché la riga non si vede.
     const immagine = tr.match(/data-img="([^"]+)"/i) || tr.match(/<img[^>]*class="anteprima-img"[^>]*src="([^"]+)"/i);
 
-    if (!n || !immagine) continue;
+    if (!n || !immagine) {
+      if (n) nota("senzaImmagine", r.titolo);
+      continue;
+    }
 
     const indirizzo = indirizzoImmagine(immagine[1]);
 
@@ -366,7 +395,13 @@ function copertineVolumi(html, { edizione = null, editore = null, titolo = null 
 
   for (const [n, v] of ristampe) if (!prime.has(n)) prime.set(n, v);
 
-  return [...prime.entries()].sort((a, b) => a[0] - b[0]).map(([numero, v]) => ({ numero, copertina: v.indirizzo }));
+  const risultato = [...prime.entries()].sort((a, b) => a[0] - b[0]).map(([numero, v]) => ({ numero, copertina: v.indirizzo }));
+
+  if (diagnosi) {
+    diagnosi.scelte = risultato.slice(0, 200).map((v) => `${v.numero}: ${v.copertina.split("/").pop()}`);
+  }
+
+  return risultato;
 }
 
 /* ==================================================

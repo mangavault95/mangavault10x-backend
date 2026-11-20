@@ -20,6 +20,11 @@ name: Copertine dei volumi
 # Alle 6:45 UTC, mezz'ora dopo il giro delle uscite: stesso sito, non insieme.
 # A mano: «Run workflow», con «prova» attivo legge e conta senza scrivere.
 #
+# «titolo» (es. Berserk) legge solo le serie che hanno quel pezzo nel titolo, senza badare
+# a quando erano state lette: per rileggerne una, o con «prova» attivo per vedere cosa
+# vede il lettore (righe scartate e perché, volumi senza immagine, riga scelta per ogni
+# numero) senza scrivere niente.
+#
 # «allinea» è un'altra cosa: non legge niente da AnimeClick, porta la copertina
 # di ogni serie a quella del suo volume 1 (quelle già lette). Con «prova» attivo
 # elenca cosa cambierebbe senza scrivere; poi si rilancia con «prova» spento.
@@ -36,6 +41,10 @@ on:
         description: "Quante serie (al massimo 40)"
         type: string
         default: "20"
+      titolo:
+        description: "Solo le serie con questo pezzo nel titolo (es. Berserk); con «prova» attivo mostra cosa vede il lettore"
+        type: string
+        default: ""
       allinea:
         description: "Attivo: non legge AnimeClick, porta la copertina di ogni serie a quella del volume 1"
         type: boolean
@@ -56,6 +65,7 @@ jobs:
       PROVA: ${{ inputs.prova || false }}
       QUANTI: ${{ inputs.quanti || '20' }}
       ALLINEA: ${{ inputs.allinea || false }}
+      TITOLO: ${{ inputs.titolo || '' }}
     steps:
       - name: Giro
         run: |
@@ -64,6 +74,10 @@ jobs:
           UA="MangaVault/1.0 (collezione personale; +https://mangavault10x-frontend.vercel.app)"
 
           case "$QUANTI" in ''|*[!0-9]*) QUANTI=20;; esac
+
+          # Con un titolo si guarda dentro la lettura: il backend manda anche cosa ha visto il lettore.
+          DIAGNOSI=false
+          [ -n "$TITOLO" ] && DIAGNOSI=true
 
           # «allinea»: niente AnimeClick, solo le copertine delle serie già lette.
           if [ "$ALLINEA" = "true" ]; then
@@ -91,7 +105,8 @@ jobs:
           codice=000
           for tentativo in 1 2 3; do
             codice=$(curl -sS -o elenco.json -w "%{http_code}" --max-time 150 \
-              -H "X-Cron-Secret: $CRON_SECRET" "$API/da-leggere?quanti=$QUANTI") || codice=000
+              -G --data-urlencode "quanti=$QUANTI" --data-urlencode "titolo=$TITOLO" \
+              -H "X-Cron-Secret: $CRON_SECRET" "$API/da-leggere") || codice=000
             [ "$codice" = "200" ] && break
             sleep 10
           done
@@ -124,7 +139,7 @@ jobs:
             fi
 
             if [ "$codice" = "200" ]; then
-              jq -n --argjson id "$id" --rawfile h pagina.html --argjson prova "$PROVA" '{manga_id: $id, html: $h, prova: $prova}' > corpo.json
+              jq -n --argjson id "$id" --rawfile h pagina.html --argjson prova "$PROVA" --argjson diagnosi "$DIAGNOSI" '{manga_id: $id, html: $h, prova: $prova, diagnosi: $diagnosi}' > corpo.json
             else
               jq -n --argjson id "$id" --arg m "HTTP $codice" --argjson prova "$PROVA" '{manga_id: $id, fallito: true, motivo: $m, prova: $prova}' > corpo.json
             fi
@@ -138,6 +153,15 @@ jobs:
               trovate=$((trovate + $(jq -r '.trovate' risposta.json)))
               scritte=$((scritte + $(jq -r '.scritte' risposta.json)))
               echo "Serie $id: $(jq -r '.trovate' risposta.json) copertine"
+
+              if [ "$DIAGNOSI" = "true" ]; then
+                jq -r '.diagnosi // empty | "   titolo \(.titolo // "-") | edizione \(.edizione // "-") | editore \(.editore // "-") | \(.righe) righe con un titolo",
+                  "   fuori edizione: \(.altraEdizione | join(" ; "))",
+                  "   nome diverso dal titolo: \(.altroNome | join(" ; "))",
+                  "   altro editore: \(.altroEditore | join(" ; "))",
+                  "   senza immagine: \(.senzaImmagine | join(" ; "))",
+                  "   scelte: \(.scelte | join(" | "))"' risposta.json
+              fi
             else
               saltate=$((saltate+1))
               echo "Serie $id: non letta (pagina HTTP $codice, backend HTTP $risposta) $(jq -r '.motivo // .error // ""' risposta.json 2>/dev/null | cut -c1-120)"
