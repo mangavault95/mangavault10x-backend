@@ -210,6 +210,27 @@ console.log("\nL'edizione base senza etichetta (Jujutsu Kaisen, Gachiakuta)");
   );
 }
 
+console.log("\nLa diagnosi: cosa ha visto il lettore");
+{
+  const html = pagina(
+    riga("Soul Eater - Soul Art 1", "/images/Manga_Cover/SoulEaterArtbook.jpg", { extra: "Panini" }),
+    riga("Soul Eater 1", "/images/Manga_Cover/SoulEater01.jpg", { extra: "Panini" }),
+    riga("Soul Eater 2", null, { extra: "Panini" }),
+    riga("Soul Eater 3", "/images/Manga_Cover/SoulEater03.jpg", { extra: "Star Comics" }),
+    riga("Soul Eater Deluxe 1", "/images/Manga_Cover/SoulEaterDeluxe1.jpg", { extra: "Panini" })
+  );
+  const diagnosi = {};
+  const volumi = copertineVolumi(html, { titolo: "Soul Eater", editore: "Panini", diagnosi });
+
+  prova("la diagnosi non cambia il risultato", copertineVolumi(html, { titolo: "Soul Eater", editore: "Panini" }), volumi);
+  prova("righe con un titolo", 5, diagnosi.righe);
+  prova("fuori edizione: quella speciale", ["Soul Eater Deluxe 1"], diagnosi.altraEdizione);
+  prova("nome diverso dal titolo: l'artbook", ["Soul Eater - Soul Art 1"], diagnosi.altroNome);
+  prova("altro editore", ["Soul Eater 3"], diagnosi.altroEditore);
+  prova("il volume senza immagine", ["Soul Eater 2"], diagnosi.senzaImmagine);
+  prova("la riga scelta per ogni numero", ["1: SoulEater01.jpg"], diagnosi.scelte);
+}
+
 console.log("\nI titoli con caratteri speciali (Yu-Gi-Oh!, È una stella cadente…)");
 {
   // Dentro un attributo dell'HTML i caratteri speciali arrivano come entità. Prima del 15/11/2026
@@ -279,6 +300,7 @@ console.log("\nI titoli con caratteri speciali (Yu-Gi-Oh!, È una stella cadente
           (4, 'Frieren', NULL, 'in_corso', 7000, NULL);`);
       await scratch.query(fs.readFileSync(path.join(__dirname, "..", "sql", "030_copertine_volumi.sql"), "utf8"));
       await scratch.query(fs.readFileSync(path.join(__dirname, "..", "sql", "034_copertine_volumi_manuali.sql"), "utf8"));
+      await scratch.query(fs.readFileSync(path.join(__dirname, "..", "sql", "036_copertine_versione_lettura.sql"), "utf8"));
 
       const express = require("express");
       const app = express();
@@ -433,6 +455,53 @@ console.log("\nI titoli con caratteri speciali (Yu-Gi-Oh!, È una stella cadente
       await scratch.query(`UPDATE copertine_giri SET letta_il = NOW() - interval '61 days'`);
 
       prova("dopo due mesi si riprovano anche quelle rimaste a zero", [1, 2, 4], (await elenco()).serie.map((s) => s.manga_id).sort());
+
+      console.log("\nUna serie letta con un lettore più vecchio si rilegge");
+
+      // Tutte lette adesso: niente deve tornare per le regole dei giorni.
+      await scratch.query(`UPDATE copertine_giri SET letta_il = NOW(), versione = $1`, [copertineSrv.VERSIONE_LETTURA]);
+      await scratch.query(`UPDATE "Manga" SET "StatoSerie" = 'conclusa' WHERE "ID" = 1`);
+
+      const daRileggere = async (o) => (await copertineSrv.daLeggere(scratch, o)).map((x) => x.manga_id).sort();
+
+      prova("lette col lettore di oggi: niente da rileggere", [], await daRileggere());
+
+      await scratch.query(`UPDATE copertine_giri SET versione = 0 WHERE manga_id = 1`);
+
+      prova("una conclusa letta con una versione più vecchia torna in coda", [1], await daRileggere());
+
+      await manda({ manga_id: 1, html: cambiata });
+
+      prova("riletta, ha la versione di oggi e non torna più", [copertineSrv.VERSIONE_LETTURA, []], [
+        (await scratch.query(`SELECT versione FROM copertine_giri WHERE manga_id = 1`)).rows[0].versione,
+        await daRileggere()
+      ]);
+
+      console.log("\nRileggere una serie a mano, per titolo");
+
+      prova("un pezzo del titolo, senza badare alle maiuscole né a quando è stata letta", [1], await daRileggere({ titolo: "HUNTER x" }));
+      prova("anche una serie letta da poco e conclusa", [2], await daRileggere({ titolo: "bers" }));
+      prova("«%» è una lettera, non un jolly", [], await daRileggere({ titolo: "%" }));
+      prova("un titolo che non c'è", [], await daRileggere({ titolo: "Nessuna serie così" }));
+      prova("la rotta lo accetta", [1], ((await (await fetch(`${base}/copertine/da-leggere?titolo=hunter`, { headers: intest })).json()).serie || []).map((x) => x.manga_id));
+
+      const conDiagnosi = await manda({ manga_id: 1, html: hxh, prova: true, diagnosi: true });
+
+      prova("con diagnosi:true la rotta risponde anche cosa ha visto il lettore", [true, 2, ["1: HunterxHunter1.jpg", "2: HunterxHunter2.jpg"]], [conDiagnosi.letta, conDiagnosi.diagnosi?.righe, conDiagnosi.diagnosi?.scelte]);
+      prova("senza diagnosi:true non c'è", false, "diagnosi" in (await manda({ manga_id: 1, html: hxh, prova: true })));
+
+      // La 036 non è ancora passata: valgono le regole di prima e la lettura si segna lo stesso.
+      await scratch.query(`ALTER TABLE copertine_giri DROP COLUMN versione`);
+
+      prova("senza la colonna `versione` l'elenco risponde ancora", [], await daRileggere());
+
+      await copertineSrv.segnaGiro(scratch, 1, "ok", 3);
+
+      prova("senza la colonna `versione` la lettura si segna ancora", 3, (await scratch.query(`SELECT trovate FROM copertine_giri WHERE manga_id = 1`)).rows[0].trovate);
+
+      await scratch.query(fs.readFileSync(path.join(__dirname, "..", "sql", "036_copertine_versione_lettura.sql"), "utf8"));
+      await scratch.query(`UPDATE copertine_giri SET versione = $1`, [copertineSrv.VERSIONE_LETTURA]);
+      await scratch.query(`UPDATE "Manga" SET "StatoSerie" = 'in_corso' WHERE "ID" = 1`);
 
       await scratch.query(`CREATE TABLE IF NOT EXISTS fonte_stato (fonte text PRIMARY KEY, fallimenti_di_fila int, ultimo_tentativo timestamptz, ultimo_esito text, ultimo_ok timestamptz, in_pausa_fino timestamptz);
         INSERT INTO fonte_stato (fonte, fallimenti_di_fila, in_pausa_fino) VALUES ('animeclick', 7, NOW() + interval '3 days')`);

@@ -8,7 +8,9 @@
 // Chi si rilegge: una serie mai letta viene prima di tutte; una serie in corso
 // si rilegge dopo RILEGGI_GIORNI (escono volumi nuovi); una conclusa non si
 // rilegge più se l'ultima lettura ha trovato qualcosa, e si riprova dopo
-// RITENTA_GIORNI se non aveva trovato niente.
+// RITENTA_GIORNI se non aveva trovato niente. Una serie letta con una versione del
+// lettore più vecchia di quella di oggi (`VERSIONE_LETTURA`) si rilegge comunque:
+// le correzioni al lettore non arrivavano mai alle serie concluse.
 
 const { copertineVolumi, indirizzoImmagine } = require("./providers/animeclick");
 
@@ -22,36 +24,95 @@ const riparato = (indirizzo) => (/&(#\d+|#x[0-9a-f]+|[a-z]+);/i.test(indirizzo) 
 const RILEGGI_GIORNI = 30;
 const RITENTA_GIORNI = 60;
 
+/**
+ * La versione del lettore delle pagine (`copertineVolumi` in providers/animeclick.js).
+ * SI ALZA quando il lettore cambia in un modo che può cambiare le copertine scelte
+ * (nuove regole su edizione, editore, variant): le serie lette con una versione più
+ * bassa tornano in coda e si rileggono, anche se sono concluse. Colonna: sql/036.
+ *
+ *   1  edizione esatta, editore, edizione base davanti alle variant (14-17/11/2026)
+ */
+const VERSIONE_LETTURA = 1;
+
 const assente = (err) => err?.code === "42P01";
+const colonnaAssente = (err) => err?.code === "42703";
 
-/** Le prossime serie da leggere, al massimo `quanti`. */
-async function daLeggere(pool, { quanti = 20 } = {}) {
-  const { rows } = await pool.query(
-    `SELECT m."ID" AS manga_id, m."AnimeClickID" AS animeclick_id
-       FROM "Manga" m
-       LEFT JOIN copertine_giri g ON g.manga_id = m."ID"
-      WHERE m."AnimeClickID" IS NOT NULL
-        AND (g.manga_id IS NULL
-             OR (m."StatoSerie" = 'in_corso' AND g.letta_il < NOW() - ($2 || ' days')::interval)
-             OR (g.trovate = 0 AND g.letta_il < NOW() - ($3 || ' days')::interval))
-      ORDER BY g.letta_il NULLS FIRST, m."ID"
-      LIMIT $1`,
-    [Math.max(1, Math.min(40, Number(quanti) || 20)), String(RILEGGI_GIORNI), String(RITENTA_GIORNI)]
-  );
+/**
+ * Le prossime serie da leggere, al massimo `quanti`.
+ *
+ * Con `titolo` (un pezzo del titolo, senza badare alle maiuscole) si saltano le regole
+ * di sopra e si dà quella serie, o quelle: serve a rileggerne una a mano, o a guardare
+ * cosa scrive il lettore (lavoro «Copertine dei volumi», campo «titolo»).
+ */
+async function daLeggere(pool, { quanti = 20, titolo = null } = {}) {
+  const limite = Math.max(1, Math.min(40, Number(quanti) || 20));
+  const cercato = String(titolo ?? "").trim();
 
-  return rows.map((r) => ({ manga_id: Number(r.manga_id), animeclick_id: Number(r.animeclick_id) }));
+  if (cercato) {
+    // `%` e `_` del titolo cercato valgono come lettere, non come jolly.
+    const pezzo = `%${cercato.slice(0, 80).replace(/[\\%_]/g, "\\$&")}%`;
+    const { rows } = await pool.query(
+      `SELECT "ID" AS manga_id, "AnimeClickID" AS animeclick_id
+         FROM "Manga"
+        WHERE "AnimeClickID" IS NOT NULL AND "Titolo" ILIKE $1
+        ORDER BY "ID"
+        LIMIT $2`,
+      [pezzo, limite]
+    );
+
+    return rows.map((r) => ({ manga_id: Number(r.manga_id), animeclick_id: Number(r.animeclick_id) }));
+  }
+
+  const query = (conVersione) =>
+    pool.query(
+      `SELECT m."ID" AS manga_id, m."AnimeClickID" AS animeclick_id
+         FROM "Manga" m
+         LEFT JOIN copertine_giri g ON g.manga_id = m."ID"
+        WHERE m."AnimeClickID" IS NOT NULL
+          AND (g.manga_id IS NULL
+               OR (m."StatoSerie" = 'in_corso' AND g.letta_il < NOW() - ($2 || ' days')::interval)
+               OR (g.trovate = 0 AND g.letta_il < NOW() - ($3 || ' days')::interval)
+               ${conVersione ? "OR g.versione < $4" : ""})
+        ORDER BY g.letta_il NULLS FIRST, m."ID"
+        LIMIT $1`,
+      [limite, String(RILEGGI_GIORNI), String(RITENTA_GIORNI), ...(conVersione ? [VERSIONE_LETTURA] : [])]
+    );
+
+  let esito;
+
+  try {
+    esito = await query(true);
+  } catch (err) {
+    // La 036 non è ancora passata: valgono le regole di prima.
+    if (!colonnaAssente(err)) throw err;
+
+    esito = await query(false);
+  }
+
+  return esito.rows.map((r) => ({ manga_id: Number(r.manga_id), animeclick_id: Number(r.animeclick_id) }));
 }
 
 /** Scrive com'è andata la lettura di una serie, senza toccare le copertine. */
 async function segnaGiro(pool, mangaId, esito, trovate = 0) {
-  await pool.query(
-    `INSERT INTO copertine_giri (manga_id, letta_il, esito, trovate) VALUES ($1, NOW(), $2, $3)
-     ON CONFLICT (manga_id) DO UPDATE
-        SET letta_il = NOW(), esito = EXCLUDED.esito,
-            -- Una lettura andata male non cancella quello che si sapeva.
-            trovate = GREATEST(copertine_giri.trovate, EXCLUDED.trovate)`,
-    [mangaId, String(esito).slice(0, 200), trovate]
-  );
+  const scrivi = (conVersione) =>
+    pool.query(
+      `INSERT INTO copertine_giri (manga_id, letta_il, esito, trovate${conVersione ? ", versione" : ""})
+       VALUES ($1, NOW(), $2, $3${conVersione ? ", $4" : ""})
+       ON CONFLICT (manga_id) DO UPDATE
+          SET letta_il = NOW(), esito = EXCLUDED.esito,
+              -- Una lettura andata male non cancella quello che si sapeva.
+              trovate = GREATEST(copertine_giri.trovate, EXCLUDED.trovate)${conVersione ? ", versione = EXCLUDED.versione" : ""}`,
+      [mangaId, String(esito).slice(0, 200), trovate, ...(conVersione ? [VERSIONE_LETTURA] : [])]
+    );
+
+  try {
+    await scrivi(true);
+  } catch (err) {
+    // La 036 non è ancora passata.
+    if (!colonnaAssente(err)) throw err;
+
+    await scrivi(false);
+  }
 }
 
 /**
@@ -101,16 +162,18 @@ async function allineaSerie(pool, { mangaId = null, scrivi = true } = {}) {
 /**
  * Riceve la pagina delle edizioni di una serie e scrive le copertine dei volumi.
  * Restituisce `{ trovate, scritte }`. Una pagina che non è la tabella delle
- * edizioni lancia: chi chiama lo segna come giro fallito.
+ * edizioni lancia: chi chiama lo segna come giro fallito. Con `diagnosi` aggiunge
+ * `diagnosi`: cosa ha visto il lettore (vedi `copertineVolumi`).
  */
-async function registraPagina(pool, mangaId, html, { scrivi = true } = {}) {
+async function registraPagina(pool, mangaId, html, { scrivi = true, diagnosi = false } = {}) {
   const { rows } = await pool.query(`SELECT "ID", "Titolo", "Edizione", "Editore" FROM "Manga" WHERE "ID" = $1`, [mangaId]);
 
   if (!rows[0]) throw new Error("serie non trovata");
 
-  const volumi = copertineVolumi(html, { edizione: rows[0].Edizione || null, editore: rows[0].Editore || null, titolo: rows[0].Titolo || null });
+  const nota = diagnosi ? {} : null;
+  const volumi = copertineVolumi(html, { edizione: rows[0].Edizione || null, editore: rows[0].Editore || null, titolo: rows[0].Titolo || null, diagnosi: nota });
 
-  if (!scrivi) return { trovate: volumi.length, scritte: 0 };
+  if (!scrivi) return { trovate: volumi.length, scritte: 0, ...(nota ? { diagnosi: nota } : {}) };
 
   let scritte = 0;
 
@@ -141,7 +204,7 @@ async function registraPagina(pool, mangaId, html, { scrivi = true } = {}) {
     console.error("COPERTINA SERIE ERROR:", err.message);
   }
 
-  return { trovate: volumi.length, scritte, copertinaSerie };
+  return { trovate: volumi.length, scritte, copertinaSerie, ...(nota ? { diagnosi: nota } : {}) };
 }
 
 /**
@@ -217,4 +280,4 @@ async function scegli(pool, mangaId, numero, indirizzo) {
   return { ok: true, scritta: esito.rowCount > 0, copertinaSerie: serie.cambiate > 0 };
 }
 
-module.exports = { riparato, allineaSerie, scegli, daLeggere, registraPagina, segnaGiro, tutte, RILEGGI_GIORNI, RITENTA_GIORNI };
+module.exports = { riparato, allineaSerie, scegli, daLeggere, registraPagina, segnaGiro, tutte, RILEGGI_GIORNI, RITENTA_GIORNI, VERSIONE_LETTURA };

@@ -1022,6 +1022,8 @@ router.post("/copertine/allinea", richiedeSegretoCron, async (req, res) => {
 /**
  * GET /api/manga/copertine/da-leggere?quanti=20 — le prossime serie di cui
  * leggere la pagina delle edizioni (vedi `services/copertineVolumi.js`).
+ * Con `&titolo=berserk` solo le serie che hanno quel pezzo nel titolo, senza le
+ * regole su quando rileggere (per rileggerne una a mano).
  * Risponde anche se AnimeClick è in pausa: in quel caso l'elenco è vuoto.
  * Protetta dal segreto del cron.
  */
@@ -1033,7 +1035,7 @@ router.get("/copertine/da-leggere", richiedeSegretoCron, async (req, res) => {
       return res.json({ serie: [], in_pausa: true });
     }
 
-    const serie = await require("../services/copertineVolumi").daLeggere(pool, { quanti: req.query.quanti });
+    const serie = await require("../services/copertineVolumi").daLeggere(pool, { quanti: req.query.quanti, titolo: req.query.titolo });
 
     return res.json({ serie, in_pausa: false });
   } catch (err) {
@@ -1048,6 +1050,7 @@ router.get("/copertine/da-leggere", richiedeSegretoCron, async (req, res) => {
  * serie, scaricata dal giro di GitHub, e scrive le copertine dei volumi.
  *
  *   {"manga_id": 12, "html": "…", "prova": false}
+ *   {"manga_id": 12, "html": "…", "prova": true, "diagnosi": true}   + cosa ha visto il lettore
  *   {"manga_id": 12, "fallito": true, "motivo": "HTTP 404"}
  *
  * Una pagina che non si legge si segna (così il giro passa alla serie dopo
@@ -1069,7 +1072,7 @@ router.post("/copertine/pagina", richiedeSegretoCron, async (req, res) => {
 
     if (!motivo) {
       try {
-        esito = await copertine.registraPagina(pool, mangaId, req.body.html, { scrivi });
+        esito = await copertine.registraPagina(pool, mangaId, req.body.html, { scrivi, diagnosi: req.body?.diagnosi === true });
       } catch (err) {
         if (err.message === "serie non trovata") return res.status(404).json({ error: err.message });
 
