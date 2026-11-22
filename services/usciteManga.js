@@ -122,6 +122,22 @@ function serieConTitoloSemplice(righe) {
   return chiavi;
 }
 
+/**
+ * La copertina di un'uscita, se è davvero quella del VOLUME.
+ *
+ * Il calendario di AnimeClick a volte porta la miniatura del volume
+ * (`/immagini/manga/<serie>/edizioni/…-thumb.jpg`), a volte la copertina generica
+ * della serie (`/immagini/manga/<serie>/cover/<serie>-cover.jpg`), che è quella del
+ * primo volume giapponese. Visto il 22/11/2026 su Black Letter 6 e Rent a Girlfriend 35:
+ * la pagina Uscite mostrava il volume 1. Quella della serie non vale come copertina del
+ * volume: torna null, e chi disegna usa `copertine_volumi`.
+ */
+const COPERTINA_DELLA_SERIE = /\/immagini\/manga\/[^/]+\/cover\//i;
+
+function copertinaDelVolume(indirizzo) {
+  return indirizzo && !COPERTINA_DELLA_SERIE.test(indirizzo) ? indirizzo : null;
+}
+
 /** Il giorno di oggi a Roma, come "AAAA-MM-GG". */
 function oggiInItalia() {
   return new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Rome" }).format(new Date());
@@ -264,7 +280,7 @@ async function abbinaAllaCollezione(pool, calendario) {
       numero: uscita.numero,
       titolo: uscita.titolo,
       editore: uscita.editore,
-      copertina: uscita.copertina,
+      copertina: copertinaDelVolume(uscita.copertina),
       stato: numeri.has(uscita.numero) ? "gia" : mancanti > 0 ? "manca" : "prossimo",
       mancanti,
       serie: {
@@ -329,7 +345,53 @@ async function registraCalendario(pool, { scrivi = true, fetchImpl = fetch } = {
 
   esito.scritte = await salvaUscite(pool, righe.map(([, u]) => u), "animeclick");
 
+  // Le miniature dei volumi che il calendario porta riempiono i buchi di `copertine_volumi`.
+  // Se non riesce, le uscite sono già scritte: il giro non fallisce per questo.
+  try {
+    esito.copertine = await copertineDalleUscite(pool);
+  } catch (err) {
+    // 42P01: manca una tabella (database più vecchio, o di prova): niente da riempire.
+    if (err?.code !== "42P01") console.error("COPERTINE DALLE USCITE ERROR:", err.message);
+  }
+
   return esito;
+}
+
+/**
+ * Scrive in `copertine_volumi` la copertina dei volumi in uscita che non ce l'hanno.
+ *
+ * Il giro delle copertine legge la pagina delle edizioni di una serie in corso una
+ * volta al mese: un volume appena annunciato resta senza copertina per settimane. Il
+ * calendario di AnimeClick spesso ha già la sua miniatura: qui la si mette da parte.
+ * Solo le serie della collezione (stessa regola dell'edizione di `abbinaAllaCollezione`),
+ * solo le miniature del volume (`copertinaDelVolume`), e solo dove manca: una copertina
+ * letta dalla pagina delle edizioni o scelta a mano non si tocca. La pagina delle
+ * edizioni, alla lettura dopo, può riscrivere quella messa qui (è più precisa sulle
+ * variant): per questo `manuale` resta falso.
+ *
+ * Restituisce quante copertine ha scritto.
+ */
+async function copertineDalleUscite(pool, { giorni = 60 } = {}) {
+  const oggi = oggiInItalia();
+  const { rows } = await pool.query(
+    `SELECT data::text AS data, serie, numero, titolo, edizione, editore, copertina
+       FROM uscite_manga
+      WHERE copertina IS NOT NULL AND data > $1::date AND data <= $2::date`,
+    [piuGiorni(oggi, -giorni), piuGiorni(oggi, giorni)]
+  );
+
+  const nuove = (await abbinaAllaCollezione(pool, rows)).filter((u) => u.copertina && u.numero > 0);
+
+  if (nuove.length === 0) return 0;
+
+  const { rowCount } = await pool.query(
+    `INSERT INTO copertine_volumi (manga_id, numero, copertina)
+     SELECT id, n, c FROM UNNEST($1::int[], $2::int[], $3::text[]) AS x(id, n, c)
+     ON CONFLICT (manga_id, numero) DO NOTHING`,
+    [nuove.map((u) => u.serie.id), nuove.map((u) => u.numero), nuove.map((u) => u.copertina)]
+  );
+
+  return rowCount;
 }
 
 /**
@@ -451,7 +513,7 @@ async function usciteTra(pool, { dopo, fino, soloMie = true }) {
         numero: r.numero,
         titolo: r.titolo,
         editore: r.editore,
-        copertina: r.copertina,
+        copertina: copertinaDelVolume(r.copertina),
         stato: null,
         mancanti: 0,
         // Non è in collezione: il nome della serie sta qui, e `serie`
@@ -466,6 +528,9 @@ async function usciteTra(pool, { dopo, fino, soloMie = true }) {
 module.exports = {
   usciteDellaCollezione,
   registraCalendario,
+  copertineDalleUscite,
+  copertinaDelVolume,
+  abbinaAllaCollezione,
   registraDaPagine,
   salvaUscite,
   usciteTra,

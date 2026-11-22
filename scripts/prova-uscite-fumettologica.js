@@ -10,7 +10,8 @@
 // serie. E «SERIE – ALTRA OPERA 1» (uno spin-off, come «I diari della speziale – La storia di
 // Xiaolan 1») compariva nella pagina Uscite come «I diari della speziale 1», già in casa.
 
-const { titoloRegolare, sottotitoloDi, usciteTra } = require("../services/usciteManga");
+const { titoloRegolare, sottotitoloDi, usciteTra, copertinaDelVolume, copertineDalleUscite } = require("../services/usciteManga");
+const { conUsciteSenzaCopertina } = require("../services/copertineVolumi");
 const { ultimoVolumeUscito } = require("../services/volumiDaUscite");
 const { usciteDellaRivista, numeroDi } = require("../services/usciteFumettologica");
 
@@ -141,6 +142,59 @@ const RENT = { ID: 2, Titolo: "Rent a Girlfriend", Edizione: null, Editore: "J-P
 
   prova("la speziale resta a 17", 17, await ultimoVolumeUscito(poolUltimo, SPEZIALE, { oggi: "2026-11-22" }));
   prova("Frieren, solo sottotitoli, resta a 12", 12, await ultimoVolumeUscito(poolUltimo, FRIEREN, { oggi: "2026-11-22" }));
+
+  console.log("\nLa copertina della riga vale solo se è quella del volume");
+  // Caso reale (22/11/2026): il calendario di AnimeClick dava a Black Letter 6 e Rent a
+  // Girlfriend 35 la copertina generica della serie, e la pagina Uscite mostrava il volume 1.
+  const COVER_SERIE = "https://www.animeclick.it/immagini/manga/Kanojo_Okarishimasu/cover/Kanojo_Okarishimasu-cover.jpg";
+  const MINIATURA = "https://www.animeclick.it/immagini/manga/Zatchbell/edizioni/Zatch%20Bell-edizione-3112746-thumb.jpg";
+
+  prova("la copertina della serie non è del volume", null, copertinaDelVolume(COVER_SERIE));
+  prova("la miniatura dell'edizione sì", MINIATURA, copertinaDelVolume(MINIATURA));
+  prova("niente copertina, niente", null, copertinaDelVolume(null));
+
+  const ZATCH = { ID: 4, Titolo: "Zatch Bell!", Edizione: null, Editore: "Star Comics", NumeriPosseduti: [1, 2, 3, 4, 5, 6], Costo: 6.9, CoverURL: null, SmessaIl: null };
+  const conCopertine = [
+    { data: "2026-11-25", serie: "Rent a Girlfriend", numero: 35, titolo: null, edizione: null, editore: "J-POP", copertina: COVER_SERIE },
+    { data: "2026-11-25", serie: "Zatch Bell!", numero: 7, titolo: null, edizione: null, editore: "Star Comics", copertina: MINIATURA }
+  ];
+  const scritte = [];
+  const poolCopertine = {
+    query: async (sql, parametri) => {
+      if (/INSERT INTO copertine_volumi/.test(sql)) {
+        scritte.push(parametri);
+
+        return { rowCount: parametri[0].length, rows: [] };
+      }
+
+      if (/FROM uscite_manga/.test(sql)) return { rows: conCopertine };
+      if (/FROM copertine_volumi/.test(sql)) return { rows: [{ manga_id: 2, numero: 34 }, { manga_id: 4, numero: 6 }] };
+      if (/LEFT JOIN copertine_giri/.test(sql)) return { rows: parametri[0].map((id) => ({ manga_id: id, animeclick_id: 1000 + id })) };
+
+      return { rows: [RENT, ZATCH] };
+    }
+  };
+
+  const viste = await usciteTra(poolCopertine, { dopo: "2026-11-01", fino: "2026-11-30", soloMie: true });
+
+  prova(
+    "nell'elenco delle uscite la copertina della serie sparisce, la miniatura resta",
+    [["Rent a Girlfriend", null], ["Zatch Bell!", MINIATURA]],
+    viste.map((u) => [u.serie.titolo, u.copertina])
+  );
+
+  prova("dal calendario si scrive in copertine_volumi solo la miniatura del volume", 1, await copertineDalleUscite(poolCopertine));
+  prova("ed è quella di Zatch Bell! 7", [[4], [7], [MINIATURA]], scritte[0]);
+
+  prova(
+    "in testa al giro: le serie con un volume in uscita senza copertina",
+    [2, 4],
+    (await conUsciteSenzaCopertina(poolCopertine, 20)).map((r) => r.manga_id)
+  );
+
+  const senzaArchivio = { query: async () => { const e = new Error("relation \"uscite_manga\" does not exist"); e.code = "42P01"; throw e; } };
+
+  prova("senza archivio delle uscite la coda resta quella di sempre", [], await conUsciteSenzaCopertina(senzaArchivio, 20));
 
   if (falliti) {
     console.log(`\n${falliti} prove fallite.\n`);

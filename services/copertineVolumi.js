@@ -11,6 +11,7 @@
 // RITENTA_GIORNI se non aveva trovato niente. Una serie letta con una versione del
 // lettore più vecchia di quella di oggi (`VERSIONE_LETTURA`) si rilegge comunque:
 // le correzioni al lettore non arrivavano mai alle serie concluse.
+// Davanti a tutte, le serie con un volume in uscita senza copertina (`conUsciteSenzaCopertina`).
 
 const { copertineVolumi, indirizzoImmagine } = require("./providers/animeclick");
 
@@ -23,6 +24,11 @@ const riparato = (indirizzo) => (/&(#\d+|#x[0-9a-f]+|[a-z]+);/i.test(indirizzo) 
 
 const RILEGGI_GIORNI = 30;
 const RITENTA_GIORNI = 60;
+
+// Una serie con un volume in uscita senza copertina si rilegge al massimo ogni tre giorni:
+// AnimeClick mette la miniatura di un volume nuovo qualche giorno prima o dopo l'uscita,
+// e rileggere ogni giorno sarebbe chiedere troppo al sito per una pagina che non cambia.
+const USCITA_GIORNI = 3;
 
 /**
  * La versione del lettore delle pagine (`copertineVolumi` in providers/animeclick.js).
@@ -63,6 +69,10 @@ async function daLeggere(pool, { quanti = 20, titolo = null } = {}) {
     return rows.map((r) => ({ manga_id: Number(r.manga_id), animeclick_id: Number(r.animeclick_id) }));
   }
 
+  // Prima le serie con un volume in uscita (da un mese fa a sei settimane) che non ha
+  // ancora la sua copertina: sono quelle che si vedono nella pagina Uscite e nella home.
+  const urgenti = await conUsciteSenzaCopertina(pool, limite);
+
   const query = (conVersione) =>
     pool.query(
       `SELECT m."ID" AS manga_id, m."AnimeClickID" AS animeclick_id
@@ -89,7 +99,65 @@ async function daLeggere(pool, { quanti = 20, titolo = null } = {}) {
     esito = await query(false);
   }
 
-  return esito.rows.map((r) => ({ manga_id: Number(r.manga_id), animeclick_id: Number(r.animeclick_id) }));
+  const visti = new Set(urgenti.map((r) => r.manga_id));
+  const altre = esito.rows
+    .map((r) => ({ manga_id: Number(r.manga_id), animeclick_id: Number(r.animeclick_id) }))
+    .filter((r) => !visti.has(r.manga_id));
+
+  return [...urgenti, ...altre].slice(0, limite);
+}
+
+/**
+ * Le serie della collezione con un volume in uscita che non ha copertina in
+ * `copertine_volumi`, lette da più di `USCITA_GIORNI` giorni (o mai). Al massimo `quanti`.
+ *
+ * È un anticipo, non una regola: se l'archivio delle uscite non c'è o la lettura non
+ * riesce, la coda è quella di sempre.
+ */
+async function conUsciteSenzaCopertina(pool, quanti) {
+  try {
+    const { abbinaAllaCollezione, oggiInItalia, piuGiorni } = require("./usciteManga");
+    const oggi = oggiInItalia();
+    const { rows } = await pool.query(
+      `SELECT data::text AS data, serie, numero, titolo, edizione, editore, copertina
+         FROM uscite_manga
+        WHERE data > $1::date AND data <= $2::date`,
+      [piuGiorni(oggi, -30), piuGiorni(oggi, 45)]
+    );
+
+    const uscite = await abbinaAllaCollezione(pool, rows);
+
+    if (uscite.length === 0) return [];
+
+    const { rows: presenti } = await pool.query(
+      `SELECT manga_id, numero FROM copertine_volumi WHERE manga_id = ANY($1::int[])`,
+      [[...new Set(uscite.map((u) => u.serie.id))]]
+    );
+
+    const ci = new Set(presenti.map((r) => `${r.manga_id}:${r.numero}`));
+    const senza = [...new Set(uscite.filter((u) => !ci.has(`${u.serie.id}:${u.numero}`)).map((u) => u.serie.id))];
+
+    if (senza.length === 0) return [];
+
+    const { rows: serie } = await pool.query(
+      `SELECT m."ID" AS manga_id, m."AnimeClickID" AS animeclick_id
+         FROM "Manga" m
+         LEFT JOIN copertine_giri g ON g.manga_id = m."ID"
+        WHERE m."ID" = ANY($1::int[])
+          AND m."AnimeClickID" IS NOT NULL
+          AND (g.manga_id IS NULL OR g.letta_il < NOW() - ($2 || ' days')::interval)
+        ORDER BY g.letta_il NULLS FIRST, m."ID"
+        LIMIT $3`,
+      [senza, String(USCITA_GIORNI), quanti]
+    );
+
+    return serie.map((r) => ({ manga_id: Number(r.manga_id), animeclick_id: Number(r.animeclick_id) }));
+  } catch (err) {
+    // Senza archivio delle uscite (o con un database più vecchio) non c'è niente da anticipare.
+    if (!assente(err) && !colonnaAssente(err)) console.error("COPERTINE USCITE IN CODA ERROR:", err.message);
+
+    return [];
+  }
 }
 
 /** Scrive com'è andata la lettura di una serie, senza toccare le copertine. */
@@ -280,4 +348,4 @@ async function scegli(pool, mangaId, numero, indirizzo) {
   return { ok: true, scritta: esito.rowCount > 0, copertinaSerie: serie.cambiate > 0 };
 }
 
-module.exports = { riparato, allineaSerie, scegli, daLeggere, registraPagina, segnaGiro, tutte, RILEGGI_GIORNI, RITENTA_GIORNI, VERSIONE_LETTURA };
+module.exports = { riparato, allineaSerie, scegli, daLeggere, conUsciteSenzaCopertina, registraPagina, segnaGiro, tutte, RILEGGI_GIORNI, RITENTA_GIORNI, USCITA_GIORNI, VERSIONE_LETTURA };
