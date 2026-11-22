@@ -18,8 +18,8 @@
 // - non dice se una serie è conclusa (gli articoli non hanno un campo di
 //   stato), quindi con la riserva il passaggio a «conclusa» non scatta.
 
-const { ossa, edizioneDi, stessoEditore, piuGiorni, oggiInItalia, salvaUscite } = require("./usciteManga");
-const { fonteDi, usciteDellaRivista, senzaNumero } = require("./usciteFumettologica");
+const { ossa, edizioneDi, stessoEditore, piuGiorni, oggiInItalia, salvaUscite, titoloRegolare } = require("./usciteManga");
+const { fonteDi, usciteDellaRivista } = require("./usciteFumettologica");
 
 // Quanto può essere più avanti la riserva di quello che si sapeva. L'archivio
 // copre un anno: uno scarto più grande non è una serie rimasta indietro, è
@@ -27,20 +27,8 @@ const { fonteDi, usciteDellaRivista, senzaNumero } = require("./usciteFumettolog
 // Online sta a 24, il manga a 2). Oltre questo tetto si chiede a una persona.
 const SCARTO_MASSIMO = 12;
 
-/**
- * Il titolo del volume è davvero «la serie + il suo numero»?
- * «CHAINSAW MAN 22 – MONSTERS 32» è un'edizione abbinata (il 22 con un
- * altro libro), non il volume 32; «GACHIAKUTA 15 – JANKU 27» idem. Fra il
- * nome della serie e il numero finale non devono esserci altre cifre;
- * un sottotitolo senza numeri («Frieren – Oltre la fine del viaggio 12») va bene.
- */
-function titoloRegolare(titoloVolume, titoloSerie) {
-  if (!titoloVolume) return true; // senza titolo non si può dire: non si scarta
-  const base = ossa(titoloSerie);
-  const intero = ossa(senzaNumero(titoloVolume));
-
-  return !intero.startsWith(base) || !/\d/.test(intero.slice(base.length));
-}
+// `titoloRegolare` vive in `usciteManga.js` (lo usa anche l'abbinamento alla collezione)
+// e si riesporta da qui perché chi lo cercava lo trovava in questo file.
 
 // Un articolo copre una settimana e la richiesta ne porta al massimo 40:
 // finestre da 26 settimane restano sotto il tetto per ogni rivista.
