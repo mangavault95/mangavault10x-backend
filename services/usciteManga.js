@@ -50,6 +50,32 @@ function stessoEditore(a, b) {
   return x === y || x.includes(y) || y.includes(x);
 }
 
+const NUMERO_IN_FONDO = /[\s.:\-–—,]*(?:\b(?:vol(?:ume)?|n)\b\.?|#)?\s*\d{1,3}\s*$/i;
+
+/** «BLUE LOCK 35» → «BLUE LOCK». */
+function senzaNumero(titolo) {
+  return String(titolo || "").replace(NUMERO_IN_FONDO, "").trim();
+}
+
+/**
+ * Il titolo del volume è davvero «la serie + il suo numero»?
+ * «CHAINSAW MAN 22 – MONSTERS 32» è un'edizione abbinata (il 22 con un
+ * altro libro), non il volume 32; «GACHIAKUTA 15 – JANKU 27» idem. Fra il
+ * nome della serie e il numero finale non devono esserci altre cifre;
+ * un sottotitolo senza numeri («Frieren – Oltre la fine del viaggio 12») va bene.
+ *
+ * Vale due volte: quando le uscite si leggono da Fumettologica (se no
+ * il «32» finirebbe in archivio come volume 32 della serie) e quando si
+ * abbinano alla collezione (le righe già scritte non si cancellano).
+ */
+function titoloRegolare(titoloVolume, titoloSerie) {
+  if (!titoloVolume) return true; // senza titolo non si può dire: non si scarta
+  const base = ossa(titoloSerie);
+  const intero = ossa(senzaNumero(titoloVolume));
+
+  return !intero.startsWith(base) || !/\d/.test(intero.slice(base.length));
+}
+
 /** Il giorno di oggi a Roma, come "AAAA-MM-GG". */
 function oggiInItalia() {
   return new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Rome" }).format(new Date());
@@ -154,6 +180,9 @@ async function abbinaAllaCollezione(pool, calendario) {
     );
 
     if (!serie) continue;
+
+    // Un'edizione abbinata («SERIE 17 – ALTRO 1») non è il volume 1 della serie.
+    if (!titoloRegolare(uscita.titolo, serie.Titolo)) continue;
 
     // Non la compriamo più (026): l'uscita non vi riguarda. Vedi `ancoraSeguita`.
     if (!ancoraSeguita(serie, uscita)) continue;
@@ -385,6 +414,8 @@ module.exports = {
   salvaUscite,
   usciteTra,
   ossa,
+  senzaNumero,
+  titoloRegolare,
   edizioneDi,
   editoreDi,
   stessoEditore,

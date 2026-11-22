@@ -19,7 +19,7 @@
  * righe di "Manga" e restituiscono uscite, così si possono provare da sole.
  */
 
-const { ossa } = require("./usciteManga");
+const { ossa, senzaNumero, titoloRegolare } = require("./usciteManga");
 
 const API = "https://fumettologica.it/wp-json/wp/v2/posts";
 
@@ -95,12 +95,6 @@ function numeroDi(titolo) {
   const m = String(titolo || "").match(/(?:\b(?:vol(?:ume)?|n)\b\.?|#)?\s*(\d{1,3})\s*$/i);
 
   return m ? Number(m[1]) : null;
-}
-
-const NUMERO_IN_FONDO = /[\s.:\-–—,]*(?:\b(?:vol(?:ume)?|n)\b\.?|#)?\s*\d{1,3}\s*$/i;
-
-function senzaNumero(titolo) {
-  return String(titolo || "").replace(NUMERO_IN_FONDO, "").trim();
 }
 
 /** Parole che fanno di un volume un'altra edizione di quella in collezione. */
@@ -192,6 +186,9 @@ async function usciteDellaRivista(rivista, serie, finestra) {
 
       for (const s of serie) {
         if (!titoloDellaSerie(voce, s)) continue;
+
+        // «SERIE 17 – ALTRO 1»: un'edizione abbinata, il numero in fondo non è quello della serie.
+        if (!titoloRegolare(voce, s.Titolo)) continue;
 
         uscite.push({
           data: a.giovedi,
