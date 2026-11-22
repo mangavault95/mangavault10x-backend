@@ -18,7 +18,7 @@
 // - non dice se una serie è conclusa (gli articoli non hanno un campo di
 //   stato), quindi con la riserva il passaggio a «conclusa» non scatta.
 
-const { ossa, edizioneDi, stessoEditore, piuGiorni, oggiInItalia, salvaUscite, titoloRegolare } = require("./usciteManga");
+const { ossa, edizioneDi, stessoEditore, piuGiorni, oggiInItalia, salvaUscite, titoloRegolare, sottotitoloDi } = require("./usciteManga");
 const { fonteDi, usciteDellaRivista } = require("./usciteFumettologica");
 
 // Quanto può essere più avanti la riserva di quello che si sapeva. L'archivio
@@ -100,11 +100,20 @@ async function ultimoVolumeUscito(pool, serie, { oggi = oggiInItalia(), extra = 
   const edizione = edizioneDi(serie.Edizione);
   let massimo = null;
 
-  for (const r of tutte) {
-    if (ossa(r.serie) !== chiave) continue;
-    if (edizioneDi(r.edizione) !== edizione) continue;
-    if (!stessoEditore(serie.Editore, r.editore)) continue;
-    if (!titoloRegolare(r.titolo, serie.Titolo)) continue;
+  const dellaSerie = tutte.filter(
+    (r) =>
+      ossa(r.serie) === chiave &&
+      edizioneDi(r.edizione) === edizione &&
+      stessoEditore(serie.Editore, r.editore) &&
+      titoloRegolare(r.titolo, serie.Titolo)
+  );
+
+  // Se la serie ha volumi dal titolo semplice, «SERIE – ALTRA COSA 20» è uno spin-off:
+  // il suo numero non dice a che punto è la serie (vedi `serieConTitoloSemplice`).
+  const haVolumiSemplici = dellaSerie.some((r) => sottotitoloDi(r.titolo, serie.Titolo, serie.Edizione) === "");
+
+  for (const r of dellaSerie) {
+    if (haVolumiSemplici && sottotitoloDi(r.titolo, serie.Titolo, serie.Edizione)) continue;
 
     if (massimo === null || r.numero > massimo) massimo = r.numero;
   }

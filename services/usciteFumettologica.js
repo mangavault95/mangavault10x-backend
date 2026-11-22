@@ -123,6 +123,9 @@ function titoloDellaSerie(titoloVolume, serie) {
 
   // Senza edizione: il volume dev'essere quello normale. Un sottotitolo
   // («Frieren - Oltre la fine del viaggio») va bene, un'altra edizione no.
+  // Qui il sottotitolo si accetta sempre; se poi la serie ha anche volumi dal titolo
+  // semplice, una riga con sottotitolo è uno spin-off e la scarta chi legge l'archivio
+  // (`serieConTitoloSemplice` in usciteManga.js).
   return !ALTRE_EDIZIONI.test(titoloVolume) && resto.length < 40;
 }
 

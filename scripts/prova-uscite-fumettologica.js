@@ -7,9 +7,11 @@
 // che il lettore cerca («<p><strong>TITOLO</strong><br />»): NON è un articolo vero.
 //
 // Il caso: «SERIE 17 – ALTRO 1» (edizione abbinata) finiva in archivio come volume 1 della
-// serie, e nella pagina Uscite compariva un «I diari della speziale 1» al posto del 17.
+// serie. E «SERIE – ALTRA OPERA 1» (uno spin-off, come «I diari della speziale – La storia di
+// Xiaolan 1») compariva nella pagina Uscite come «I diari della speziale 1», già in casa.
 
-const { titoloRegolare, usciteTra } = require("../services/usciteManga");
+const { titoloRegolare, sottotitoloDi, usciteTra } = require("../services/usciteManga");
+const { ultimoVolumeUscito } = require("../services/volumiDaUscite");
 const { usciteDellaRivista, numeroDi } = require("../services/usciteFumettologica");
 
 let falliti = 0;
@@ -90,6 +92,55 @@ const RENT = { ID: 2, Titolo: "Rent a Girlfriend", Edizione: null, Editore: "J-P
     [["I diari della speziale", 17, "manca"], ["Rent a Girlfriend", 35, "prossimo"]],
     mie.map((u) => [u.serie.titolo, u.numero, u.stato])
   );
+
+  console.log("\nUno spin-off con lo stesso prefisso non è un volume della serie");
+  // Caso reale (22/11/2026): il 17 dei «Diari della speziale» uscì il 28 ottobre; il 12 novembre
+  // Fumettologica elencò «I diari della speziale – La storia di Xiaolan 1», un'altra opera. Il
+  // sottotitolo si accettava (serve a Frieren), il numero 1 coincideva con il volume in casa e la
+  // pagina Uscite diceva «ce l'hai».
+  const FRIEREN = { ID: 3, Titolo: "Frieren", Edizione: null, Editore: "Star Comics", NumeriPosseduti: Array.from({ length: 11 }, (_, i) => i + 1), Costo: 5.9, CoverURL: null, SmessaIl: null };
+
+  const archivio = [
+    { data: "2026-10-28", serie: "I diari della speziale", numero: 17, titolo: "I diari della speziale 17", edizione: null, editore: "J-POP", copertina: null },
+    { data: "2026-11-12", serie: "I diari della speziale", numero: 1, titolo: "I diari della speziale – La storia di Xiaolan 1", edizione: null, editore: "J-POP", copertina: null },
+    { data: "2026-11-12", serie: "Frieren", numero: 12, titolo: "Frieren – Oltre la fine del viaggio 12", edizione: null, editore: "Star Comics", copertina: null }
+  ];
+
+  const poolArchivio = {
+    query: async (sql, parametri) => {
+      if (!/FROM uscite_manga/.test(sql)) return { rows: [SPEZIALE, FRIEREN] };
+
+      // `usciteTra` chiede le righe di un periodo, l'abbinamento chiede tutto l'archivio.
+      return { rows: parametri ? archivio.filter((r) => r.data > parametri[0] && r.data <= parametri[1]) : archivio };
+    }
+  };
+
+  const novembre = await usciteTra(poolArchivio, { dopo: "2026-10-31", fino: "2026-11-30", soloMie: true });
+
+  prova(
+    "lo spin-off sparisce; Frieren, che ha solo il sottotitolo, resta",
+    [["Frieren", 12]],
+    novembre.map((u) => [u.serie.titolo, u.numero])
+  );
+
+  const ottobre = await usciteTra(poolArchivio, { dopo: "2026-09-30", fino: "2026-10-31", soloMie: true });
+
+  prova("il 17 di ottobre resta", [["I diari della speziale", 17]], ottobre.map((u) => [u.serie.titolo, u.numero]));
+
+  prova("sottotitolo del volume normale", "", sottotitoloDi("I diari della speziale 17", "I diari della speziale"));
+  prova("sottotitolo di uno spin-off", "lastoriadixiaolan", sottotitoloDi("I diari della speziale – La storia di Xiaolan 1", "I diari della speziale"));
+  prova("il nome dell'edizione non è un sottotitolo", "", sottotitoloDi("ONE PIECE NEW EDITION 8", "One Piece", "New Edition"));
+  prova("titolo di un'altra serie: non si può dire", null, sottotitoloDi("Altra cosa 3", "I diari della speziale"));
+
+  console.log("\nL'ultimo volume uscito non lo alza uno spin-off");
+  const poolUltimo = { query: async () => ({ rows: [
+    { serie: "I diari della speziale", titolo: "I diari della speziale 17", edizione: null, editore: "J-POP", numero: 17, data: "2026-10-28" },
+    { serie: "I diari della speziale", titolo: "I diari della speziale – La storia di Xiaolan 24", edizione: null, editore: "J-POP", numero: 24, data: "2026-11-12" },
+    { serie: "Frieren", titolo: "Frieren – Oltre la fine del viaggio 12", edizione: null, editore: "Star Comics", numero: 12, data: "2026-11-12" }
+  ] }) };
+
+  prova("la speziale resta a 17", 17, await ultimoVolumeUscito(poolUltimo, SPEZIALE, { oggi: "2026-11-22" }));
+  prova("Frieren, solo sottotitoli, resta a 12", 12, await ultimoVolumeUscito(poolUltimo, FRIEREN, { oggi: "2026-11-22" }));
 
   if (falliti) {
     console.log(`\n${falliti} prove fallite.\n`);

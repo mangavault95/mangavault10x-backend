@@ -76,6 +76,52 @@ function titoloRegolare(titoloVolume, titoloSerie) {
   return !intero.startsWith(base) || !/\d/.test(intero.slice(base.length));
 }
 
+/**
+ * Quello che sta fra il nome della serie e il numero, ridotto a lettere e cifre:
+ * «I diari della speziale – La storia di Xiaolan 1» → «lastoriadixiaolan».
+ * Vuoto (`""`) per il volume normale («I diari della speziale 17»); `null` se
+ * non si può dire (titolo assente, o che non comincia con il nome della serie).
+ * Il nome dell'edizione della serie («New Edition») non conta come sottotitolo.
+ */
+function sottotitoloDi(titoloVolume, titoloSerie, edizione = null) {
+  if (!titoloVolume) return null;
+
+  // «New Edition» nel titolo: la parola «edition» la toglie anche `edizioneDi` dal nome dell'edizione.
+  const senzaParola = (t) => String(t || "").replace(/\b(edition|edizione)\b/gi, "");
+  const base = ossa(senzaParola(titoloSerie));
+  const intero = ossa(senzaParola(senzaNumero(titoloVolume)));
+
+  if (!base || !intero.startsWith(base)) return null;
+
+  let resto = intero.slice(base.length);
+  const ed = edizioneDi(edizione);
+
+  if (ed) resto = resto.replace(ed, "");
+
+  return resto;
+}
+
+/** Serie ed edizione, ridotte a una chiave: dove si ricorda che la serie ha volumi dal titolo semplice. */
+const chiaveSerie = (titolo, edizione) => `${ossa(titolo)}|${edizioneDi(edizione)}`;
+
+/**
+ * Le serie (chiave `chiaveSerie`) che nell'archivio hanno almeno un volume dal
+ * titolo semplice, «SERIE 17». Per queste, un volume «SERIE – ALTRA COSA 1» è un'altra
+ * opera con lo stesso prefisso (uno spin-off), non un volume della serie.
+ *
+ * Una serie che esce sempre con il sottotitolo («Frieren – Oltre la fine del viaggio 12»)
+ * non ha volumi semplici: i suoi sottotitoli restano accettati.
+ */
+function serieConTitoloSemplice(righe) {
+  const chiavi = new Set();
+
+  for (const r of righe) {
+    if (sottotitoloDi(r.titolo, r.serie, r.edizione) === "") chiavi.add(chiaveSerie(r.serie, r.edizione));
+  }
+
+  return chiavi;
+}
+
 /** Il giorno di oggi a Roma, come "AAAA-MM-GG". */
 function oggiInItalia() {
   return new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Rome" }).format(new Date());
@@ -157,6 +203,10 @@ async function abbinaAllaCollezione(pool, calendario) {
     `SELECT "ID", "Titolo", "Edizione", "Editore", "NumeriPosseduti", "Costo", "CoverURL", "SmessaIl" FROM "Manga"`
   );
 
+  // Per sapere se «SERIE – ALTRA COSA 1» è uno spin-off serve tutto l'archivio, non il solo mese.
+  const { rows: archivio } = await pool.query(`SELECT serie, titolo, edizione FROM uscite_manga WHERE titolo IS NOT NULL`);
+  const conTitoloSemplice = serieConTitoloSemplice(archivio);
+
   const perTitolo = new Map();
 
   for (const serie of collezione) {
@@ -183,6 +233,12 @@ async function abbinaAllaCollezione(pool, calendario) {
 
     // Un'edizione abbinata («SERIE 17 – ALTRO 1») non è il volume 1 della serie.
     if (!titoloRegolare(uscita.titolo, serie.Titolo)) continue;
+
+    // «I diari della speziale – La storia di Xiaolan 1» non è il volume 1 dei «Diari della
+    // speziale»: se la serie ha volumi dal titolo semplice, un sottotitolo è un'altra opera.
+    if (sottotitoloDi(uscita.titolo, serie.Titolo, serie.Edizione) && conTitoloSemplice.has(chiaveSerie(serie.Titolo, serie.Edizione))) {
+      continue;
+    }
 
     // Non la compriamo più (026): l'uscita non vi riguarda. Vedi `ancoraSeguita`.
     if (!ancoraSeguita(serie, uscita)) continue;
@@ -416,6 +472,8 @@ module.exports = {
   ossa,
   senzaNumero,
   titoloRegolare,
+  sottotitoloDi,
+  serieConTitoloSemplice,
   edizioneDi,
   editoreDi,
   stessoEditore,
