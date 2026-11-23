@@ -1127,6 +1127,61 @@ async function statoItalianoDi(animeClickId, { fetchImpl = fetch } = {}) {
   return leggiStatoItaliano(await risposta.text());
 }
 
+/**
+ * La scheda di un manga, letta per compilare un desiderio: autori, generi,
+ * volumi, trama e copertina in un colpo solo.
+ *
+ * Sono gli stessi campi che `enrich` ricava da AniList e Google Books, ma
+ * da AnimeClick arrivano già in italiano e sotto il titolo con cui la
+ * serie è uscita qui. È il motivo per cui esiste: «Arcobaleno di spezie»
+ * su AniList è «Niji-iro Togarashi», e cercandolo col titolo italiano non
+ * lo trova.
+ *
+ * Ogni voce che manca resta `null` (o lista vuota): chi chiama non deve
+ * credere che AnimeClick abbia detto «zero volumi» quando la riga non c'era.
+ */
+function leggiSchedaManga(html, animeClickId) {
+  const dl = tabellaScheda(html);
+  const voci = [...dl.matchAll(/<dt>([\s\S]*?)<\/dt>\s*<dd>([\s\S]*?)<\/dd>/g)].map(([, dt, dd]) => ({
+    etichetta: testoDi(dt).replace(/:$/, "").toLowerCase(),
+    html: dd,
+    testo: testoDi(dd)
+  }));
+
+  // Le etichette si riconoscono dall'inizio, perché con l'accento
+  // «Disponibilità» arriva come entità e «Storia» compare più volte
+  // (un sceneggiatore per riga).
+  const di = (inizio) => voci.filter((v) => v.etichetta.startsWith(inizio));
+  const nomi = (inizio) => di(inizio).flatMap((v) => linkDi(v.html));
+
+  const autori = [...new Set([...nomi("storia"), ...nomi("disegni")])];
+  const generi = [...new Set(di("genere").flatMap((v) => linkDi(v.html)))];
+
+  const volumi = di("volumi")[0]?.testo.match(/\d+/);
+
+  const trama = html.match(/<div id="trama-div"[^>]*>([\s\S]*?)<\/div>/i);
+
+  const immagine = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]*)"/i);
+  const titolo = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]*)"/i);
+
+  return {
+    animeclickId: Number(animeClickId),
+    titolo: titolo ? testoDi(titolo[1]) : null,
+    autori,
+    generi,
+    volumi: volumi ? Number(volumi[0]) : null,
+    trama: trama ? testoDi(trama[1]).replace(/^Trama:\s*/i, "") || null : null,
+    copertina: immagine ? indirizzoImmagine(immagine[1], BASE) : null,
+    url: `${BASE}/manga/${animeClickId}/-/`
+  };
+}
+
+async function schedaManga(animeClickId, { fetchImpl = fetch } = {}) {
+  const risposta = await prendi(`${BASE}/manga/${animeClickId}/-/`, {}, fetchImpl);
+
+  return leggiSchedaManga(await risposta.text(), animeClickId);
+}
+
 module.exports = {
   volumiUsciti,
   copertineVolumi,
@@ -1134,6 +1189,8 @@ module.exports = {
   sciogliEntita,
   leggiStatoItaliano,
   statoItalianoDi,
+  leggiSchedaManga,
+  schedaManga,
   urlEdizioni,
   USER_AGENT,
   BASE,

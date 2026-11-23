@@ -8,6 +8,7 @@ const { limiteFontiEsterne } = require("../services/limite");
 const { prossimoIdManga } = require("../services/idManga");
 const { editoreCanonico } = require("../services/editori");
 const { eseguiRapportoVolumi } = require("../services/rapportoVolumi");
+const animeclick = require("../services/providers/animeclick");
 
 // --------------------------------------------------
 // ENRICH — dati di una serie dalle fonti esterne
@@ -37,6 +38,91 @@ router.post("/enrich", limiteFontiEsterne, async (req, res) => {
   } catch (err) {
     console.error("❌ ENRICH ERROR:", err);
     return res.status(500).json({ error: err.message });
+  }
+});
+
+// --------------------------------------------------
+// ANIMECLICK — cerca e compila un titolo con la fonte italiana
+//
+// Il modulo dei desideri cercava solo su AniList, che conosce le serie
+// col titolo giapponese: «Arcobaleno di spezie» di Mitsuru Adachi lì è
+// «Niji-iro Togarashi», e scrivendo il titolo italiano non usciva niente.
+// AnimeClick le tiene con il titolo con cui sono uscite in Italia.
+//
+//   GET /api/manga/animeclick/cerca?titolo=…   i candidati, dal più probabile
+//   GET /api/manga/animeclick/:id              la scheda, per compilare il modulo
+//
+// Aperte e con lo stesso tetto di `/enrich`: il browser le chiama mentre
+// si scrive, e AnimeClick ci ospita per cortesia.
+// --------------------------------------------------
+
+// Le ricerche fatte da poco: «arcobaleno» sono otto richieste se non si
+// ricorda niente. Trenta secondi bastano a scrivere un titolo e ripensarci.
+const ricercheAnimeClick = new Map();
+const DURATA_RICERCA = 30 * 1000;
+const QUANTE_RICERCHE = 80;
+
+async function candidatiAnimeClick(titolo) {
+  const chiave = titolo.toLowerCase();
+  const ricordata = ricercheAnimeClick.get(chiave);
+
+  if (ricordata && Date.now() - ricordata.quando < DURATA_RICERCA) return ricordata.esito;
+
+  // Titolo ESATTO e titolo che CONTIENE, insieme. La ricerca «contiene»
+  // restituisce una pagina sola in ordine alfabetico, e su un titolo
+  // diffuso la serie vera non ci entra (vedi `cerca` nel provider): quella
+  // esatta la pesca sempre, e va davanti.
+  const [esatti, simili] = await Promise.all([
+    animeclick.cerca(titolo, { quanti: 3, modo: "esatto" }).catch(() => []),
+    animeclick.cerca(titolo, { quanti: 6 })
+  ]);
+
+  const visti = new Set();
+  const esito = [...esatti, ...simili]
+    .filter((c) => !visti.has(c.id) && visti.add(c.id))
+    .slice(0, 6)
+    .map((c) => ({
+      animeclickId: c.id,
+      titolo: c.titolo,
+      anno: c.anno,
+      copertina: c.copertina,
+      url: c.url,
+      punteggio: c.punteggio
+    }));
+
+  ricercheAnimeClick.delete(chiave);
+  ricercheAnimeClick.set(chiave, { esito, quando: Date.now() });
+
+  while (ricercheAnimeClick.size > QUANTE_RICERCHE) ricercheAnimeClick.delete(ricercheAnimeClick.keys().next().value);
+
+  return esito;
+}
+
+router.get("/animeclick/cerca", limiteFontiEsterne, async (req, res) => {
+  try {
+    const titolo = String(req.query.titolo || "").trim();
+
+    if (titolo.length < 2) return res.status(400).json({ error: "Scrivi almeno due lettere." });
+
+    return res.json(await candidatiAnimeClick(titolo));
+  } catch (err) {
+    console.error("ANIMECLICK CERCA MANGA ERROR:", err.message);
+
+    return res.status(502).json({ error: "AnimeClick non risponde" });
+  }
+});
+
+router.get("/animeclick/:id", limiteFontiEsterne, async (req, res) => {
+  const id = Number(req.params.id);
+
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "Serve un id di AnimeClick." });
+
+  try {
+    return res.json(await animeclick.schedaManga(id));
+  } catch (err) {
+    console.error("ANIMECLICK SCHEDA MANGA ERROR:", err.message);
+
+    return res.status(502).json({ error: "AnimeClick non risponde" });
   }
 });
 
