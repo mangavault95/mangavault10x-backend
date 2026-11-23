@@ -77,6 +77,44 @@ console.log("\nIl lettore");
   }
 
   prova("una pagina senza la tabella lancia (non «zero copertine»)", true, /tabella delle edizioni/.test(errore || ""));
+
+  // L'errore dice cosa è arrivato al posto della tabella: senza, «non trovata» non distingue
+  // una pagina vuota dalla verifica anti-bot (Rent a Girlfriend, 22-23/11/2026).
+  errore = null;
+
+  try {
+    copertineVolumi("<html><head><title>Just a moment...</title><script>var x=1;</script></head><body><p>Verifica che sei un essere umano</p></body></html>");
+  } catch (e) {
+    errore = e.message;
+  }
+
+  prova(
+    "l'errore riporta titolo e inizio della pagina, senza il codice",
+    [true, true, false],
+    [/titolo «Just a moment\.\.\.»/.test(errore || ""), /inizia con «Verifica che sei un essere umano»/.test(errore || ""), /var x/.test(errore || "")]
+  );
+
+  // Una tabella le cui righe non stanno in un <tbody> (il browser lo aggiunge da solo, il
+  // server non è tenuto a scriverlo) si legge lo stesso.
+  const righeNude = [riga("Hunter x Hunter 1", "/images/Manga_Cover/HunterxHunter1.jpg"), riga("Hunter x Hunter 2", "/images/Manga_Cover/HunterxHunter2.jpg")].join("");
+  const senzaTbody = `<html><table id="tabella-edizioni"><thead><tr><th>x</th></tr></thead>${righeNude}</table></html>`;
+
+  prova(
+    "una tabella senza <tbody> si legge lo stesso",
+    [[1, `${AC}/images/Manga_Cover/HunterxHunter1.jpg`], [2, `${AC}/images/Manga_Cover/HunterxHunter2.jpg`]],
+    copertineVolumi(senzaTbody).map((v) => [v.numero, v.copertina])
+  );
+
+  // Ma una pagina con una tabella senza celle (solo intestazione) non vale come tabella.
+  errore = null;
+
+  try {
+    copertineVolumi('<html><table><thead><tr><th>Titolo</th></tr></thead></table></html>');
+  } catch (e) {
+    errore = e.message;
+  }
+
+  prova("una tabella con la sola intestazione lancia", true, /tabella delle edizioni/.test(errore || ""));
 }
 
 console.log("\nL'editore decide fra edizioni con lo stesso nome (Zatch Bell!)");

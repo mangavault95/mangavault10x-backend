@@ -168,6 +168,39 @@ function leggiRiga(trHtml) {
   return { celle, data, titolo, riga: celle.join(" ") };
 }
 
+/**
+ * Il corpo della tabella delle edizioni: il `<tbody>`, e se la pagina non lo scrive (l'HTML
+ * mandato dal server non è quello che il browser ricostruisce: `<tbody>` è implicito) le
+ * righe `<tr>` con le loro celle. Una pagina senza né l'uno né le altre (la verifica
+ * anti-bot, una pagina d'errore) non è la tabella: `null`, e chi chiama LANCIA, non conta
+ * «zero copertine».
+ */
+function corpoTabella(html) {
+  const testo = String(html || "");
+  const tbody = (testo.match(/<tbody[\s\S]*?<\/tbody>/i) || [])[0];
+
+  if (tbody) return tbody;
+
+  const righe = (testo.match(/<tr[\s\S]*?<\/tr>/gi) || []).filter((tr) => /<td[\s>]/i.test(tr));
+
+  return righe.length ? righe.join("\n") : null;
+}
+
+/**
+ * Cosa è arrivato al posto della tabella, in una riga: titolo della pagina, grandezza e
+ * l'inizio del testo. Finisce nel messaggio dell'errore, quindi in `copertine_giri.esito`
+ * e nel log del giro: senza, «tabella non trovata» non dice se la pagina è vuota, è la
+ * verifica anti-bot o è un'altra pagina.
+ */
+function descriviPagina(html) {
+  const testo = String(html || "");
+  const titolo = ((testo.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || "").replace(/\s+/g, " ").trim();
+  const senzaCodice = testo.replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ");
+  const corpo = testoDi((senzaCodice.match(/<body[\s\S]*<\/body>/i) || [senzaCodice])[0]).slice(0, 80);
+
+  return `pagina di ${testo.length} caratteri, titolo «${titolo.slice(0, 60) || "-"}», inizia con «${corpo || "-"}»`;
+}
+
 function dataItaliana(gg_mm_aaaa) {
   const [gg, mm, aaaa] = gg_mm_aaaa.split("/");
   const d = new Date(`${aaaa}-${mm}-${gg}T00:00:00Z`);
@@ -192,12 +225,12 @@ async function volumiUsciti(animeClickId, { edizione = null, oggi = new Date(), 
   const risposta = await prendi(url, {}, fetchImpl);
 
   const html = await risposta.text();
-  const tbody = (html.match(/<tbody[\s\S]*?<\/tbody>/i) || [])[0];
+  const tbody = corpoTabella(html);
 
   // Tutta la tabella è già nell'HTML: quel DataTables impagina lato
   // client (`serverSide: false`), quindi una GET basta e non serve
   // eseguire JavaScript né sfogliare le pagine.
-  if (!tbody) throw new Error(`AnimeClick: tabella delle edizioni non trovata su ${url}`);
+  if (!tbody) throw new Error(`AnimeClick: tabella delle edizioni non trovata su ${url} (${descriviPagina(html)})`);
 
   const righe = tbody.match(/<tr[\s\S]*?<\/tr>/gi) || [];
   const etichetta = edizione ? String(edizione).trim() : null;
@@ -292,9 +325,9 @@ async function volumiUsciti(animeClickId, { edizione = null, oggi = new Date(), 
  * (lavoro «Copertine dei volumi» con «prova» attivo).
  */
 function copertineVolumi(html, { edizione = null, editore = null, titolo = null, diagnosi = null } = {}) {
-  const tbody = (String(html || "").match(/<tbody[\s\S]*?<\/tbody>/i) || [])[0];
+  const tbody = corpoTabella(html);
 
-  if (!tbody) throw new Error("AnimeClick: tabella delle edizioni non trovata");
+  if (!tbody) throw new Error(`AnimeClick: tabella delle edizioni non trovata (${descriviPagina(html)})`);
 
   const etichetta = edizione ? String(edizione).trim() : null;
   const prime = new Map();

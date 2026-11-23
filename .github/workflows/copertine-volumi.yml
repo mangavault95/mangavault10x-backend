@@ -130,8 +130,11 @@ jobs:
           for riga in $(jq -r '.serie[] | "\(.manga_id):\(.animeclick_id)"' elenco.json); do
             id="${riga%%:*}"; ac="${riga##*:}"
 
-            codice=$(curl -sSL -o pagina.html -w "%{http_code}" --max-time 40 -A "$UA" \
-              -H "Accept-Language: it-IT,it;q=0.9" "https://www.animeclick.it/manga/$ac/-/edizioni") || codice=000
+            # Oltre al codice si tiene dove si è finiti (-L segue i rimandi) e quanto è grande la pagina:
+            # se la tabella manca, il log deve dire cosa è arrivato al suo posto.
+            info=$(curl -sSL -o pagina.html -w "%{http_code} %{url_effective} %{size_download}" --max-time 40 -A "$UA" \
+              -H "Accept-Language: it-IT,it;q=0.9" "https://www.animeclick.it/manga/$ac/-/edizioni") || info="000 - 0"
+            codice="${info%% *}"
 
             if [ "$codice" = "403" ] || [ "$codice" = "429" ]; then
               echo "AnimeClick ha risposto HTTP $codice alla serie $id: mi fermo qui, senza provare le altre."
@@ -164,7 +167,13 @@ jobs:
               fi
             else
               saltate=$((saltate+1))
-              echo "Serie $id: non letta (pagina HTTP $codice, backend HTTP $risposta) $(jq -r '.motivo // .error // ""' risposta.json 2>/dev/null | cut -c1-120)"
+              echo "Serie $id: non letta (pagina HTTP $codice, backend HTTP $risposta) $(jq -r '.motivo // .error // ""' risposta.json 2>/dev/null | cut -c1-300)"
+
+              # Cosa si è scaricato davvero: indirizzo finale, byte, titolo, quante tabelle e righe.
+              if [ "$codice" = "200" ]; then
+                echo "   scaricato: ${info#* } byte, $(grep -oi '<title[^>]*>[^<]*' pagina.html | head -1 | sed 's/<[^>]*>//' | cut -c1-80)"
+                echo "   <table>: $(grep -oi '<table' pagina.html | wc -l), <tbody>: $(grep -oi '<tbody' pagina.html | wc -l), <tr>: $(grep -oi '<tr' pagina.html | wc -l), anteprima-img: $(grep -oi 'anteprima-img' pagina.html | wc -l)"
+              fi
             fi
 
             sleep 8
