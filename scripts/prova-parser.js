@@ -22,6 +22,8 @@ const {
   leggiStatoItaliano,
   categoriaDi,
   autoriDi,
+  schedaManga,
+  leggiSchedaManga,
   consigli,
   cerca,
   testoDi
@@ -154,6 +156,21 @@ function finto(rotte) {
 
     prova("categoria: l'avvertimento da solo vale «adulto»", "adulto", await categoriaDi(1, { fetchImpl: soloAdulto.fetchImpl }));
     prova("autori: storia e disegni, senza doppioni", ["Kentaro Miura", "Kouji Mori"], await autoriDi(9607, { fetchImpl: scheda.fetchImpl }));
+  }
+
+  console.log("\nScheda per compilare un desiderio");
+  {
+    const s = await schedaManga(9607, { fetchImpl: finto([[/\/manga\//, { risposta: () => risposta(leggi("scheda-berserk.html")) }]]).fetchImpl });
+
+    prova("titolo e autori, senza doppioni", ["Berserk", ["Kentaro Miura", "Kouji Mori"]], [s.titolo, s.autori]);
+    prova("generi uno per uno", ["Azione", "Dark Fantasy", "Avventura"], s.generi);
+    prova("volumi come numero", 43, s.volumi);
+    prova("la trama senza l'etichetta, entità sciolte", "Guts è un mercenario che porta una spada enorme. Note: la serie prosegue con un altro disegnatore.", s.trama);
+    prova("copertina intera", "https://www.animeclick.it/immagini/manga/Berserk/cover.jpg", s.copertina);
+
+    const vuota = leggiSchedaManga('<dl class="dl-horizontal"><dt>Storia</dt><dd><a>Mitsuru Adachi</a></dd></dl>', 1);
+
+    prova("le voci che mancano restano vuote, non zero", [["Mitsuru Adachi"], [], null, null, null], [vuota.autori, vuota.generi, vuota.volumi, vuota.trama, vuota.copertina]);
   }
 
   console.log("\nRicerca");
