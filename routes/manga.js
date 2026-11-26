@@ -1275,6 +1275,42 @@ router.post("/uscite/riepilogo", richiedeSegretoCron, async (req, res) => {
 });
 
 /**
+ * POST /api/manga/uscite/domani — «domani esce il vol. 12», come notifica push
+ * (vedi `services/avvisiVolumi.js`). Protetta dal segreto del cron.
+ *
+ *   {"prova": true}          dice cosa manderebbe senza mandarlo
+ *   {"oggi": "2026-11-26"}   per le prove: finge un altro giorno
+ *
+ * Risponde 200 anche col push spento o senza uscite: non avere niente da dire
+ * è il caso normale, non un guasto.
+ */
+router.post("/uscite/domani", richiedeSegretoCron, async (req, res) => {
+  const prova = req.body?.prova === true;
+  const oggi = /^\d{4}-\d{2}-\d{2}$/.test(req.body?.oggi || "") ? req.body.oggi : null;
+
+  try {
+    const esito = await require("../services/avvisiVolumi").avvisaVolumi(pool, { prova, oggi });
+
+    console.log(
+      esito.spento
+        ? "📚 Avviso volumi: push spento"
+        : `📚 Avviso volumi (${esito.domani}${prova ? ", a vuoto" : ""}): ${esito.volumi} volumi, ` +
+            `${esito.inviati} notifiche a ${esito.persone} persone` +
+            (esito.falliti ? ` — ${esito.falliti} falliti` : "")
+    );
+
+    return res.json({ success: true, ...esito });
+  } catch (err) {
+    // 42P01: la migrazione 037 non è ancora stata eseguita. Non è un guasto del giro.
+    if (err.code === "42P01") return res.json({ success: true, errore: "migrazione 037 non eseguita" });
+
+    console.error("MANGA AVVISO VOLUMI ERROR:", err);
+
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * POST /api/manga/:id/acquisto — un volume comprato, registrato dal sito.
  * Body: { volumi?: number[], prezzo?: number (totale), data?: "AAAA-MM-GG" }
  * Stesse regole del bot di Telegram: vedi `services/acquisti.js`.

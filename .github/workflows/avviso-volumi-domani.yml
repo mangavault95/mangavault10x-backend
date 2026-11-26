@@ -1,0 +1,49 @@
+name: Avviso volumi di domani
+
+# «Domani esce il vol. 12» — una notifica push la sera prima, per i volumi delle
+# serie in collezione che non hai già.
+#
+# Un giro al giorno alle 15:30 UTC: le 16:30 d'inverno e le 17:30 d'estate, cioè
+# nel tardo pomeriggio, quando si fa ancora in tempo a decidere se passare dalla
+# fumetteria. Va DOPO il giro del calendario (6:00 UTC), che è quello che scrive le
+# uscite di domani, e viene molto dopo il promemoria della mattina.
+#
+# Non ha una finestra di recupero e non serve: se il giro salta, salta l'avviso di
+# domani, e il volume lo trovi comunque nelle uscite e nel riepilogo dell'8. Il
+# cron di GitHub ritarda anche di mezz'ora: va bene, domani è domani lo stesso.
+#
+# Se il push è spento (mancano le chiavi VAPID) il backend risponde 200 e non fa
+# niente: questo giro non deve fallire ogni giorno per una cosa che non si è
+# scelto di accendere.
+on:
+  schedule:
+    - cron: "30 15 * * *"
+  workflow_dispatch:
+    inputs:
+      prova:
+        description: "A vuoto: dice cosa manderebbe senza mandarlo"
+        type: boolean
+        default: false
+
+jobs:
+  avviso:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chiama il backend
+        run: |
+          risposta=$(curl -sS -w "\n%{http_code}" -X POST \
+            --max-time 120 \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{"prova": ${{ inputs.prova || false }}}' \
+            "https://mangavault10x-api.onrender.com/api/manga/uscite/domani")
+
+          corpo=$(echo "$risposta" | head -n -1)
+          codice=$(echo "$risposta" | tail -n 1)
+
+          echo "$corpo"
+
+          if [ "$codice" != "200" ]; then
+            echo "HTTP $codice"
+            exit 1
+          fi

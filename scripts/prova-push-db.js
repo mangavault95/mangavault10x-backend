@@ -45,6 +45,7 @@ webpush.sendNotification = async (sottoscrizione, corpo, opzioni) => {
 
 const avvisi = require("../services/avvisi");
 const push = require("../services/push");
+const { avvisaVolumi } = require("../services/avvisiVolumi");
 
 const SCHEMA = `prova_push_${process.pid}`;
 let male = 0;
@@ -67,7 +68,7 @@ function ok(nome, vero) {
     await db.query(`
       CREATE TABLE utenti (
         id BIGINT PRIMARY KEY, nickname TEXT NOT NULL, stato TEXT NOT NULL DEFAULT 'attivo',
-        telegram_chat_id BIGINT
+        telegram_chat_id BIGINT, proprietario BOOLEAN NOT NULL DEFAULT FALSE
       );
       CREATE TABLE anime (id BIGINT PRIMARY KEY, titolo TEXT NOT NULL, tagli INTEGER[]);
       CREATE TABLE anime_episodi (
@@ -203,6 +204,95 @@ function ok(nome, vero) {
       "502 = guasto passeggero: la riga resta",
       (await db.query("SELECT COUNT(*)::int AS n FROM push_sottoscrizioni WHERE utente_id = 3")).rows[0].n === 1
     );
+
+    {
+    // ---- «Domani esce il vol. N» ----
+    await db.query(`DELETE FROM push_sottoscrizioni; DELETE FROM push_inviati;`);
+    await db.query(`
+      INSERT INTO utenti (id, nickname) VALUES (4, 'Casa'), (5, 'Fuori');
+      INSERT INTO push_sottoscrizioni (utente_id, endpoint, p256dh, auth) VALUES
+        (2, 'https://web.push.apple.com/vol-nanaki', 'k', 'a'),
+        (4, 'https://web.push.apple.com/vol-casa', 'k', 'a'),
+        (5, 'https://web.push.apple.com/vol-fuori', 'k', 'a');
+    `);
+    comportamento = () => {};
+    inviate.length = 0;
+
+    const serie = (id, titolo, edizione = null) => ({ id, titolo, edizione });
+    const uscite = [
+      { data: "2026-11-27", numero: 12, stato: "prossimo", mancanti: 0, serie: serie(100, "Berserk", "Deluxe") },
+      { data: "2026-11-27", numero: 5, stato: "manca", mancanti: 2, serie: serie(101, "Vagabond") },
+      { data: "2026-11-27", numero: 9, stato: "gia", mancanti: 0, serie: serie(102, "Monster") }
+    ];
+    let richiesta = null;
+    const leggiUscite = async (_pool, opzioni) => ((richiesta = opzioni), uscite);
+    // Nanaki (2) e Casa (4) hanno la biblioteca; Fuori (5) no.
+    const haAccesso = async (id) => Number(id) !== 5;
+
+    const vuoto = await avvisaVolumi(db, { prova: true, oggi: "2026-11-26", leggiUscite, haAccesso });
+
+    ok("guarda solo il giorno di domani (dopo = oggi, fino = domani)", richiesta.dopo === "2026-11-26" && richiesta.fino === "2026-11-27" && richiesta.soloMie === true);
+    ok("non parla dei volumi che hai già (3 uscite, 2 da avvisare)", vuoto.volumi === 2);
+    ok("a chi non ha la biblioteca non scrive (3 persone iscritte, 2 destinatari)", vuoto.persone === 2);
+    ok("a vuoto non manda e non segna", inviate.length === 0 && (await db.query("SELECT COUNT(*)::int AS n FROM push_volumi_inviati")).rows[0].n === 0);
+
+    const girovolumi = await avvisaVolumi(db, { oggi: "2026-11-26", leggiUscite, haAccesso });
+    const msg = inviate[0]?.messaggio;
+
+    ok("manda a Nanaki e a Casa, non a Fuori", girovolumi.inviati === 2 && !inviate.some((i) => i.endpoint.endsWith("/vol-fuori")));
+    ok("più volumi: una sola notifica con il conto", msg?.titolo === "Domani escono 2 volumi");
+    ok("l'elenco segna con ⚠️ quello con i buchi prima", msg?.corpo.includes("Vagabond 5 ⚠️") && msg.corpo.includes("Berserk · Deluxe 12"));
+    ok("più volumi: apre le uscite", msg?.url === "/uscite");
+    ok("ogni persona è segnata per ogni volume (2 persone × 2 volumi)", (await db.query("SELECT COUNT(*)::int AS n FROM push_volumi_inviati")).rows[0].n === 4);
+
+    const prima = inviate.length;
+    const bis = await avvisaVolumi(db, { oggi: "2026-11-26", leggiUscite, haAccesso });
+
+    ok("lanciato due volte, non rimanda", inviate.length === prima && bis.inviati === 0);
+
+    // Un'uscita che si sposta di giorno merita un avviso nuovo.
+    inviate.length = 0;
+    const spostata = [{ ...uscite[0], data: "2026-11-28" }];
+    await avvisaVolumi(db, { oggi: "2026-11-26", leggiUscite: async () => spostata, haAccesso });
+
+    ok("se la data cambia, riavvisa (la data è nella chiave)", inviate.length === 2);
+
+    // Un solo volume: titolo e corpo precisi.
+    inviate.length = 0;
+    await db.query("DELETE FROM push_volumi_inviati");
+    await avvisaVolumi(db, { oggi: "2026-11-26", leggiUscite: async () => [uscite[1]], haAccesso });
+
+    ok(
+      "un solo volume con dei buchi: «Domani esce il vol. 5», e quanti ne mancano",
+      inviate[0]?.messaggio.titolo === "Domani esce il vol. 5" && inviate[0].messaggio.corpo.includes("Prima te ne mancano 2.") && inviate[0].messaggio.url === "/serie/101"
+    );
+
+    inviate.length = 0;
+    await db.query("DELETE FROM push_volumi_inviati");
+    await avvisaVolumi(db, { oggi: "2026-11-26", leggiUscite: async () => [uscite[0]], haAccesso });
+
+    ok("un solo volume che è il prossimo: lo dice", inviate[0]?.messaggio.corpo.includes("È il prossimo che ti serve."));
+
+    // Nessuna uscita domani: nessuna notifica.
+    inviate.length = 0;
+    const niente = await avvisaVolumi(db, { oggi: "2026-11-26", leggiUscite: async () => [], haAccesso });
+
+    ok("senza uscite domani non manda niente", niente.volumi === 0 && inviate.length === 0);
+
+    // Se nessun dispositivo riceve, il segno si toglie e il giro dopo riprova.
+    await db.query("DELETE FROM push_volumi_inviati");
+    comportamento = () => {
+      const e = new Error("bad gateway");
+      e.statusCode = 502;
+      throw e;
+    };
+    const guasto = await avvisaVolumi(db, { oggi: "2026-11-26", leggiUscite: async () => [uscite[0]], haAccesso });
+
+    ok(
+      "se non parte, non resta segnato",
+      guasto.falliti === 2 && (await db.query("SELECT COUNT(*)::int AS n FROM push_volumi_inviati")).rows[0].n === 0
+    );
+    }
   } finally {
     await db.query(`DROP SCHEMA ${SCHEMA} CASCADE`).catch(() => {});
     await db.end();

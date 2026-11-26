@@ -3,7 +3,7 @@
 --
 -- Gli avvisi delle uscite oggi arrivano solo da Telegram. Da app installata
 -- (iPhone dal 16.4, Android, desktop) il browser sa riceverle da solo: «È uscito
--- l'ep. 3 di Frieren». Servono due cose, e nient'altro:
+-- l'ep. 3 di Frieren», «Domani esce il vol. 12». Servono tre tabelle, e nient'altro:
 --
 --   push_sottoscrizioni  dove consegnare: l'indirizzo che il browser ha dato a
 --                        quella persona su quel dispositivo, più le due chiavi
@@ -15,6 +15,8 @@
 --                        piedi (una puntata già annunciata su Telegram deve
 --                        partire comunque come push, e viceversa) e la CHECK di
 --                        `avvisi_uscite` non si tocca.
+--   push_volumi_inviati  lo stesso, per l'avviso del giorno prima dei volumi
+--                        (`services/avvisiVolumi.js`).
 --
 -- `endpoint` è unico: lo stesso dispositivo che si iscrive due volte è una riga
 -- sola. Se cambia persona sullo stesso dispositivo (esce uno, entra l'altro) la
@@ -49,6 +51,23 @@ CREATE TABLE IF NOT EXISTS push_inviati (
 
   PRIMARY KEY (utente_id, anime_id, numero, tipo)
 );
+
+-- «Domani esce il vol. 12»: i volumi annunciati il giorno prima. La DATA sta nella
+-- chiave perché un'uscita che si sposta merita un avviso nuovo. Niente chiave
+-- esterna su `manga_id`: «Manga» è la tabella più vecchia del sito e una serie
+-- cancellata lascia al più una riga morta, che non fa male a nessuno.
+CREATE TABLE IF NOT EXISTS push_volumi_inviati (
+  utente_id   BIGINT NOT NULL REFERENCES utenti(id) ON DELETE CASCADE,
+  manga_id    BIGINT NOT NULL,
+  numero      INTEGER NOT NULL,
+  data        DATE NOT NULL,
+  inviato_il  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  PRIMARY KEY (utente_id, manga_id, numero, data)
+);
+
+COMMENT ON TABLE push_volumi_inviati IS
+  'Un avviso «domani esce il vol. N» già mandato come push. Il giro gira una volta al giorno, ma può essere lanciato due volte: senza questa la stessa persona riceverebbe due notifiche.';
 
 COMMENT ON TABLE push_inviati IS
   'Una notifica push già mandata. Come avvisi_uscite ma per il canale push: il giro gira ogni mezz''ora su una finestra di novanta minuti, e senza questa ogni puntata passerebbe tre volte.';
