@@ -20,6 +20,11 @@ const consigli = require("../services/consigli");
  *   dire che chi apre il sito dal telefono di qualcun altro trova un
  *   muro invece di casa.
  *
+ *   ECCEZIONE (26/11/2026): le pagine PERSONALI degli altri — profilo,
+ *   commenti, confronto, l'elenco dei soprannomi — le vede chi è entrato.
+ *   Chi passa senza entrare vede «casa»: il feed e la pagina del
+ *   proprietario. Vedi `neganoLeAltrui`.
+ *
  *   SCRIVERE lo dice solo il token. Un numero nell'indirizzo non deve
  *   poter mettere un cuore o rispondere al posto di un altro.
  *
@@ -66,6 +71,40 @@ async function perNickname(nickname) {
   );
 
   return rows[0] || null;
+}
+
+/**
+ * Chi ha un accesso valido, adesso.
+ *
+ * Il token firmato non basta per chi non è il proprietario: se la persona è
+ * stata disattivata o ha cambiato la password dopo l'emissione, `ancoraAttivo`
+ * lo dice (è la stessa prova di `requireAuth`). Sulle rotte pubbliche il
+ * token non blocca nessuno, ma conta per decidere cosa si vede.
+ */
+async function entrato(req) {
+  if (!req.user) return false;
+  if (req.user.proprietario) return true;
+
+  return utenti.ancoraAttivo(req.user.id, req.user.iat);
+}
+
+/**
+ * Le pagine degli altri le vede chi è entrato (26/11/2026).
+ *
+ * Il soprannome è facile da indovinare (`/api/utenti/pubblici` li elenca per
+ * scrivere «Voto Nanaki»), e le pagine personali portano statistiche e
+ * commenti: erano leggibili da chiunque, senza accesso. Ora chi non è entrato
+ * vede solo la pagina del proprietario, che è «casa» — la stessa regola della
+ * biblioteca per chi passa a guardare.
+ *
+ * Si risponde 401 anche per un soprannome che non esiste, prima di dire 404:
+ * altrimenti la differenza fra 404 e 401 direbbe a un estraneo chi c'è.
+ */
+function neganoLeAltrui(res) {
+  return res.status(401).json({
+    error: "Le pagine degli altri le vede chi è entrato.",
+    motivo: "serve_accesso"
+  });
 }
 
 /**
@@ -615,6 +654,8 @@ router.get("/profilo/:nickname", async (req, res) => {
   try {
     const riga = await perNickname(req.params.nickname);
 
+    if (!riga?.proprietario && !(await entrato(req))) return neganoLeAltrui(res);
+
     if (!riga) return res.status(404).json({ error: "Nessuno con questo nome" });
 
     // I fuochi solo qui: la fascia si vede solo su questa pagina, e
@@ -652,6 +693,8 @@ router.get("/profilo/:nickname", async (req, res) => {
 router.get("/commenti/:nickname", async (req, res) => {
   try {
     const riga = await perNickname(req.params.nickname);
+
+    if (!riga?.proprietario && !(await entrato(req))) return neganoLeAltrui(res);
 
     if (!riga) return res.status(404).json({ error: "Nessuno con questo nome" });
 
@@ -713,6 +756,10 @@ router.get("/commenti/:nickname", async (req, res) => {
  */
 router.get("/confronto/:a/:b", async (req, res) => {
   try {
+    // Un confronto è fra due persone: se una delle due è un'altra persona,
+    // serve un accesso. Due volte il proprietario non è un confronto.
+    if (!(await entrato(req))) return neganoLeAltrui(res);
+
     const [a, b] = await Promise.all([perNickname(req.params.a), perNickname(req.params.b)]);
 
     if (!a || !b) return res.status(404).json({ error: "Nessuno con questo nome" });
@@ -746,6 +793,10 @@ router.get("/confronto/:a/:b", async (req, res) => {
  */
 router.get("/chi", async (req, res) => {
   try {
+    // Chi non è entrato vede solo il proprietario: l'elenco di tutti i
+    // soprannomi è la mappa delle pagine che non può aprire.
+    const soloProprietario = (await entrato(req)) ? "" : "AND u.proprietario";
+
     const { rows } = await pool.query(
       `
       SELECT ${ASPETTO},
@@ -754,7 +805,7 @@ router.get("/chi", async (req, res) => {
                WHERE vis.utente_id = u.id)                                AS serie,
              (SELECT COUNT(*) FROM episodi_visti ev WHERE ev.utente_id = u.id) AS episodi
         FROM utenti u
-       WHERE u.stato = 'attivo'
+       WHERE u.stato = 'attivo' ${soloProprietario}
        ORDER BY u.proprietario DESC, u.creato_il ASC
       `
     );

@@ -16,14 +16,31 @@
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 
+// Un segreto solo per questa prova, PRIMA che `services/auth` lo legga: serve a
+// firmare i token di chi «è entrato» nelle prove delle pagine degli altri.
+process.env.JWT_SECRET = "x".repeat(48);
+
 // Il pool finto va infilato PRIMA che le rotte lo richiedano: dopo
 // sarebbe già nella cache dei moduli, e i router parlerebbero col
 // database vero.
 const Module = require("module");
 const caricaVero = Module._load;
 
+const NANAKI = { id: 2, nickname: "Nanaki", colore: "menta", proprietario: false, creato_il: new Date() };
+const NICER = { id: 1, nickname: "Nicer", colore: "ottone", proprietario: true, creato_il: new Date() };
+
 const finto = {
-  query: async (sql) => {
+  query: async (sql, params) => {
+    // Un soprannome «Nanaki» è una persona che NON è il proprietario.
+    if (/FROM utenti u\s+WHERE lower\(u\.nickname\)/i.test(sql)) {
+      return { rows: [String(params?.[0]).toLowerCase() === "nanaki" ? NANAKI : NICER] };
+    }
+
+    // L'elenco dei soprannomi: con `AND u.proprietario` solo il proprietario.
+    if (/COUNT\(DISTINCT/i.test(sql)) {
+      return { rows: /AND u\.proprietario/.test(sql) ? [NICER] : [NICER, NANAKI] };
+    }
+
     // `FROM utenti` e non `utenti`: senza lo spazio finale questo
     // ramo rispondeva anche alle letture di `utenti_striscione`,
     // consegnando una riga di persone al posto di un'immagine.
@@ -49,6 +66,11 @@ Module._load = function (richiesta, genitore, ...resto) {
 };
 
 const express = require("express");
+const jwt = require("jsonwebtoken");
+
+// Chi «è entrato»: un token firmato per Nanaki (id 2, non proprietario). Il
+// pool finto lo dà per attivo (`ancoraAttivo` trova la riga).
+const TOKEN = jwt.sign({ id: 2, nickname: "Nanaki", proprietario: false }, process.env.JWT_SECRET, { expiresIn: "1h" });
 
 const app = express();
 
@@ -73,9 +95,33 @@ const PROVE = [
   ["GET", "/api/cineforum?utente=1&quanti=5", null, 200, "il feed di una persona"],
   ["GET", "/api/cineforum/chi", null, 200, "chi c'è"],
   ["GET", "/api/cineforum/io", null, 200, "chi sono"],
-  ["GET", "/api/cineforum/profilo/Nicer", null, 200, "una pagina personale"],
-  ["GET", "/api/cineforum/commenti/Nicer", null, 200, "i commenti di qualcuno"],
-  ["GET", "/api/cineforum/confronto/Nicer/Nanaki", null, 400, "confronto con sé stessi"],
+  ["GET", "/api/cineforum/profilo/Nicer", null, 200, "la pagina del proprietario, a un visitatore"],
+  ["GET", "/api/cineforum/commenti/Nicer", null, 200, "i commenti del proprietario, a un visitatore"],
+
+  // Le pagine degli altri (26/11/2026): le vede solo chi è entrato. A un
+  // visitatore 401, e 401 anche per un nome che non esiste, così la
+  // differenza fra 401 e 404 non dice chi c'è.
+  ["GET", "/api/cineforum/profilo/Nanaki", null, 401, "la pagina di un altro, senza accesso"],
+  ["GET", "/api/cineforum/commenti/Nanaki", null, 401, "i commenti di un altro, senza accesso"],
+  ["GET", "/api/cineforum/confronto/Nicer/Nanaki", null, 401, "un confronto, senza accesso"],
+  ["GET", "/api/cineforum/profilo/Nanaki", null, 200, "la pagina di un altro, entrando", { token: true }],
+  ["GET", "/api/cineforum/commenti/Nanaki", null, 200, "i commenti di un altro, entrando", { token: true }],
+  ["GET", "/api/cineforum/confronto/Nicer/Nicer", null, 400, "confronto con sé stessi, entrando", { token: true }],
+  [
+    "GET", "/api/cineforum/chi", null, 200, "chi c'è, per un visitatore: solo il proprietario", {
+      controlla: (j) => j.length === 1 && j[0].nickname === "Nicer"
+    }
+  ],
+  [
+    "GET", "/api/cineforum/chi", null, 200, "chi c'è, per chi è entrato: tutti", {
+      token: true,
+      controlla: (j) => j.length === 2
+    }
+  ],
+  // Un token che non regge (firmato con un altro segreto) vale come nessun token.
+  [
+    "GET", "/api/cineforum/profilo/Nanaki", null, 401, "un token falso", { token: "falso" }
+  ],
   ["POST", "/api/cineforum/messaggi", { testo: "ciao" }, 401, "scrivere senza token"],
   ["POST", "/api/cineforum/cuore", { chiave: "giornata:1:2026-08-22" }, 401, "cuore senza token"],
   ["POST", "/api/cineforum/risposte", { chiave: "messaggio:1", testo: "x" }, 401, "rispondere senza token"],
@@ -115,14 +161,23 @@ const server = app.listen(0, async () => {
   const porta = server.address().port;
   let male = 0;
 
-  for (const [metodo, indirizzo, corpo, atteso, cosa] of PROVE) {
+  for (const [metodo, indirizzo, corpo, atteso, cosa, opzioni = {}] of PROVE) {
+    const intestazioni = corpo ? { "Content-Type": "application/json" } : {};
+
+    if (opzioni.token === true) intestazioni.Authorization = `Bearer ${TOKEN}`;
+    if (opzioni.token === "falso") {
+      intestazioni.Authorization = `Bearer ${jwt.sign({ id: 2 }, "un-altro-segreto-lungo-abbastanza-per-firmare")}`;
+    }
+
     const res = await fetch(`http://localhost:${porta}${indirizzo}`, {
       method: metodo,
-      headers: corpo ? { "Content-Type": "application/json" } : {},
+      headers: intestazioni,
       body: corpo ? JSON.stringify(corpo) : undefined
     });
 
-    const ok = res.status === atteso;
+    let ok = res.status === atteso;
+
+    if (ok && opzioni.controlla) ok = Boolean(opzioni.controlla(await res.json().catch(() => null)));
 
     if (!ok) male += 1;
 
