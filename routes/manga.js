@@ -966,13 +966,15 @@ router.post("/uscite/aggiorna", richiedeSegretoCron, async (req, res) => {
 /**
  * GET /api/manga/copertine-volumi — la copertina di ogni volume, per chi
  * guarda: `{ base, copertine: { [idSerie]: { [numero]: percorso } } }`.
- * Pubblica come la collezione; cambia di rado, quindi il browser la tiene un'ora.
+ * Pubblica come la collezione. Il browser la tiene cinque minuti: con un'ora una copertina
+ * appena scritta dal giro (Rent a Girlfriend 35, 26/11/2026) restava invisibile sul telefono,
+ * e il frontend la richiede quando l'app torna in primo piano proprio dopo cinque minuti.
  */
 router.get("/copertine-volumi", async (req, res) => {
   try {
     const esito = await require("../services/copertineVolumi").tutte(pool);
 
-    res.set("Cache-Control", "public, max-age=3600");
+    res.set("Cache-Control", "public, max-age=300");
 
     return res.json(esito);
   } catch (err) {
