@@ -368,13 +368,23 @@ async function idProprietario() {
  * piedi il sito per chi lo guarda senza entrare: la biblioteca è di
  * Carmine, e da fuori si vedono le sue letture come è sempre stato.
  *
+ * ⚠️ `?utente=` vale solo per chi ha un accesso (un token firmato). Prima
+ * valeva per chiunque: bastava conoscere un numero per leggere voti,
+ * preferiti e stato di ogni serie di un'altra persona, senza entrare.
+ * Chi non è entrato lo vede ignorato e riceve la biblioteca del
+ * proprietario, come se non l'avesse scritto.
+ *
+ * `fidato` è per le rotte che hanno già un'altra prova di chi chiede, e
+ * oggi è una sola: il feed del calendario, che i programmi di calendario
+ * leggono senza intestazioni e che si apre col token segreto `?t=`.
+ *
  * Vale solo in LETTURA. Chi scrive lo dice il token e nient'altro:
  * l'indirizzo è roba che chiunque può cambiare.
  */
-async function utenteLetto(req) {
+async function utenteLetto(req, { fidato = false } = {}) {
   const richiesto = Number(req.query?.utente);
 
-  if (Number.isInteger(richiesto) && richiesto > 0) return richiesto;
+  if (Number.isInteger(richiesto) && richiesto > 0 && (fidato || req.user)) return richiesto;
 
   if (req.user?.id) return Number(req.user.id);
 
