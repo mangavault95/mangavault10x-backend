@@ -51,7 +51,8 @@ router.get("/uscite.ics", limiteCalendario, async (req, res) => {
     // Un mese indietro (per non perdere ciò che è uscito da poco) e tre avanti.
     const uscite = await usciteTra(pool, { dopo: piuGiorni(oggi, -30), fino: piuGiorni(oggi, 90), soloMie: true });
 
-    const utenteId = await utenteLetto(req);
+    // Il token `?t=` verificato qui sopra è la prova: `?utente=` vale anche senza accesso.
+    const utenteId = await utenteLetto(req, { fidato: true });
     const { rows: episodi } = await pool.query(
       `SELECT e.anime_id, e.numero, e.uscita_italia, e.piattaforma, a.titolo AS serie
          FROM anime_episodi e
