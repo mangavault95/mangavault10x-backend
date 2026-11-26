@@ -26,6 +26,7 @@ module.exports = [
   ["/api/esporta", require("./esporta")],
   ["/api/calendario", require("./calendario")],
   ["/api/rassegna", require("./rassegna")],
+  ["/api/push", require("./push")],
   ["/api/isbn", require("./isbn")],
   ["/api/animeclick", require("./animeclick")],
   // La piazza della videoteca: quello che hanno fatto tutti, i messaggi

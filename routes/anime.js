@@ -1687,7 +1687,8 @@ router.post("/uscite/avvisa", richiedeSegretoCron, async (req, res) => {
 
     console.log(
       `📺 Avvisi (${tipo}${prova ? ", a vuoto" : ""}): ${esito.inviati} messaggi a ${esito.persone} ` +
-        `persone su ${esito.trovate} puntate` + (esito.falliti ? ` — ${esito.falliti} falliti` : "")
+        `persone su ${esito.trovate} puntate` + (esito.falliti ? ` — ${esito.falliti} falliti` : "") +
+        (esito.push ? ` · push: ${esito.push.inviati ?? 0} a ${esito.push.persone ?? 0} persone` : "")
     );
 
     return res.json({ success: true, ...esito });
