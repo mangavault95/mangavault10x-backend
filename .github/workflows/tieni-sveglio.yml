@@ -1,0 +1,57 @@
+name: Tieni sveglio il server
+
+# Il backend sta sul piano gratuito di Render: dopo circa quindici minuti
+# senza richieste si addormenta, e la prima richiesta dopo il sonno aspetta
+# che si svegli — cinque, sei secondi in cui la Home mostra «il server si sta
+# svegliando». Questo giro lo tiene sveglio nelle ore in cui il sito si usa.
+#
+# PERCHÉ NON BASTA «AVVISI USCITE»
+#
+#   `avvisi-uscite.yml` gira ogni mezz'ora e nel suo commento dice che tiene
+#   sveglio Render. Non è vero fino in fondo: fra un giro e l'altro passano
+#   trenta minuti, e il cron di GitHub ritarda (cinque, venti minuti sono
+#   normali), mentre il sonno comincia a quindici. Il server dorme per metà
+#   del tempo. Qui il giro è ogni dieci minuti, che sta sotto i quindici anche
+#   con un ritardo.
+#
+# GLI ORARI
+#
+#   Il cron di GitHub è in UTC e non conosce l'ora legale. La fascia d'uso è
+#   17:00-24:00 in Italia: sono le 16-23 UTC d'inverno e le 15-22 d'estate.
+#   Si prendono le 15-22 UTC, quindi d'inverno 16:00-23:59 e d'estate
+#   17:00-00:59: un'ora di troppo da una parte o dall'altra, che costa un
+#   giro di `curl` e non richiede di cambiare il file a ogni cambio d'ora.
+#
+# COSA CHIAMA
+#
+#   `/health`: risponde `{ ok: true }` senza toccare il database e senza
+#   segreti. Se il server dorme, la prima chiamata lo sveglia (da qui il
+#   tempo massimo largo e i tentativi).
+#
+# SE FALLISCE
+#
+#   Non fa fallire il giro: un server giù manderebbe una mail di GitHub ogni
+#   dieci minuti, e ad accorgersene ci pensano già gli altri flussi. Scrive un
+#   avviso nel riepilogo.
+#
+# Costo: zero. Actions è illimitato sui repository pubblici. Su Render un
+# servizio gratuito sveglio sette-otto ore al giorno sta ben dentro le ore
+# mensili del piano.
+on:
+  schedule:
+    - cron: "*/10 15-22 * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Chiama /health
+        run: |
+          if curl -fsS --max-time 90 --retry 2 --retry-delay 5 --retry-all-errors \
+            "https://mangavault10x-api.onrender.com/health"; then
+            echo
+          else
+            echo "::warning::Il server non ha risposto a /health"
+          fi
