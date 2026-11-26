@@ -27,7 +27,7 @@
     "prova-pagine-animeclick": "node scripts/prova-pagine-animeclick.js",
     "prova-scarica-pagine": "node scripts/prova-scarica-pagine.mjs",
     "prova-login-tetti": "node scripts/prova-login-tetti.js",
-    "prova-reset-password": "node scripts/prova-reset-password.js && node scripts/prova-utente-chiuso.js"
+    "prova-reset-password": "node scripts/prova-reset-password.js"
   },
   "keywords": [],
   "author": "",
