@@ -56,6 +56,31 @@ jobs:
           UA="MangaVault/1.0 (collezione personale; +https://mangavault10x-frontend.vercel.app)"
           BASE="https://www.animeclick.it/calendario-manga"
 
+          # Una pagina di AnimeClick. Dal 22/11/2026 il sito a volte manda prima a una pagina
+          # pubblicitaria («video intro»: 302 verso /video-intro?r=<pagina>&campaign=N, senza
+          # calendario). Si passa oltre col link «continua» che la pagina stessa offre
+          # (/video-intro/continua?r=…), come chi clicca «salta»; il cookie resta nel barattolo,
+          # così le pagine dopo di solito non la rivedono. Stampa il codice HTTP, o «intro» se
+          # dopo il «continua» si è ancora lì. Stesso giro in copertine-volumi.yml.
+          scarica_ac() {
+            local url="$1" out="$2" esito codice finale continua
+            esito=$(curl -sSL -c ac.cookies -b ac.cookies -o "$out" -w "%{http_code} %{url_effective}" --max-time 40 -A "$UA" \
+              -H "Accept-Language: it-IT,it;q=0.9" "$url") || { echo 000; return; }
+            codice="${esito%% *}"; finale="${esito#* }"
+            case "$finale" in
+              */video-intro\?*)
+                continua="${finale/\/video-intro\?//video-intro/continua?}"
+                echo "   AnimeClick manda alla pagina pubblicitaria: si passa oltre" >&2
+                sleep 3
+                esito=$(curl -sSL -c ac.cookies -b ac.cookies -o "$out" -w "%{http_code} %{url_effective}" --max-time 40 -A "$UA" \
+                  -H "Accept-Language: it-IT,it;q=0.9" -e "$finale" "$continua") || { echo 000; return; }
+                codice="${esito%% *}"; finale="${esito#* }"
+                case "$finale" in */video-intro*) codice=intro;; esac
+                ;;
+            esac
+            echo "$codice"
+          }
+
           # Una chiamata al backend: ritenta una volta, perché il primo giro sveglia Render.
           backend() {
             local metodo="$1" percorso="$2" corpo="${3:-}" uscita codice
@@ -95,7 +120,7 @@ jobs:
             for quando in "" "next-month" "prev-month"; do
               n=$((n+1))
               if [ -n "$quando" ]; then url="$BASE?paging=$quando"; else url="$BASE"; fi
-              codice=$(curl -sS -o "p$n.html" -w "%{http_code}" --max-time 40 -A "$UA" -H "Accept-Language: it-IT,it;q=0.9" "$url") || codice=000
+              codice=$(scarica_ac "$url" "p$n.html")
               if [ "$codice" = "200" ] && grep -q "date-separator" "p$n.html"; then
                 jq --arg q "$quando" --rawfile h "p$n.html" '. + [{quando: (if $q == "" then null else $q end), html: $h}]' pagine.json > t.json && mv t.json pagine.json
                 echo "Pagina ${quando:-corrente}: ok"
