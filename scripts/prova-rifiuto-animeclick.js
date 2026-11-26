@@ -105,6 +105,19 @@ const minuti = (d) => Math.round((d.getTime() - Date.now()) / 60000);
   prova("mentre una vera richiesta resta ferma", true, senzaMarca instanceof ac.RifiutoFonte);
   ac.azzeraFreno();
 
+  // Lo stesso per il calendario che GitHub manda al backend (`registraDaPagine`): il 26/11/2026
+  // un rifiuto preso da Render faceva scartare tre pagine buone, «in pausa dopo un rifiuto».
+  await ac.prendi("https://www.animeclick.it/x", {}, finto(403)).catch(() => {});
+
+  const calendario = `<html><body><div class="calendario-mese"><h2>Novembre 2026</h2></div>
+<div class="col-12 date-separator"><div class="date">26</div><div class="month">novembre</div></div>
+<div class="card panel-evento-calendario"><a href="/edizione/1/-/"><img data-original="/x.jpg"></a>
+<h5>Rent a Girlfriend</h5><h3>Rent a Girlfriend 35</h3><h4>J-POP</h4></div></body></html>`;
+  const letto = await require("../services/usciteManga").registraDaPagine(null, [{ quando: null, html: calendario }], { scrivi: false }).catch((e) => e);
+
+  prova("a freno acceso il calendario mandato da GitHub si legge lo stesso", [false, 1], [letto instanceof Error, letto?.lette]);
+  ac.azzeraFreno();
+
   console.log(falliti ? `\n${falliti} prove NON passano.` : "\nTutto a posto.");
   process.exit(falliti ? 1 : 0);
 })();

@@ -73,6 +73,31 @@ jobs:
           API="https://mangavault10x-api.onrender.com/api/manga/copertine"
           UA="MangaVault/1.0 (collezione personale; +https://mangavault10x-frontend.vercel.app)"
 
+          # Una pagina di AnimeClick. Dal 22/11/2026 il sito a volte manda prima a una pagina
+          # pubblicitaria («video intro»: /video-intro?r=<pagina>&campaign=N, HTTP 200, senza
+          # tabella). Si passa oltre col link «continua» che la pagina stessa offre
+          # (/video-intro/continua?r=…), come chi clicca «salta»; il cookie resta nel barattolo,
+          # così le serie dopo di solito non la rivedono. Stampa il codice HTTP, o «intro» se
+          # dopo il «continua» si è ancora lì.
+          scarica_ac() {
+            local url="$1" out="$2" esito codice finale continua
+            esito=$(curl -sSL -c ac.cookies -b ac.cookies -o "$out" -w "%{http_code} %{url_effective}" --max-time 40 -A "$UA" \
+              -H "Accept-Language: it-IT,it;q=0.9" "$url") || { echo 000; return; }
+            codice="${esito%% *}"; finale="${esito#* }"
+            case "$finale" in
+              */video-intro\?*)
+                continua="${finale/\/video-intro\?//video-intro/continua?}"
+                echo "   AnimeClick manda alla pagina pubblicitaria: si passa oltre" >&2
+                sleep 3
+                esito=$(curl -sSL -c ac.cookies -b ac.cookies -o "$out" -w "%{http_code} %{url_effective}" --max-time 40 -A "$UA" \
+                  -H "Accept-Language: it-IT,it;q=0.9" -e "$finale" "$continua") || { echo 000; return; }
+                codice="${esito%% *}"; finale="${esito#* }"
+                case "$finale" in */video-intro*) codice=intro;; esac
+                ;;
+            esac
+            echo "$codice"
+          }
+
           case "$QUANTI" in ''|*[!0-9]*) QUANTI=20;; esac
 
           # Con un titolo si guarda dentro la lettura: il backend manda anche cosa ha visto il lettore.
@@ -130,8 +155,7 @@ jobs:
           for riga in $(jq -r '.serie[] | "\(.manga_id):\(.animeclick_id)"' elenco.json); do
             id="${riga%%:*}"; ac="${riga##*:}"
 
-            codice=$(curl -sSL -o pagina.html -w "%{http_code}" --max-time 40 -A "$UA" \
-              -H "Accept-Language: it-IT,it;q=0.9" "https://www.animeclick.it/manga/$ac/-/edizioni") || codice=000
+            codice=$(scarica_ac "https://www.animeclick.it/manga/$ac/-/edizioni" pagina.html)
 
             if [ "$codice" = "403" ] || [ "$codice" = "429" ]; then
               echo "AnimeClick ha risposto HTTP $codice alla serie $id: mi fermo qui, senza provare le altre."
@@ -164,6 +188,9 @@ jobs:
               fi
             else
               saltate=$((saltate+1))
+              # La pagina che il lettore non ha capito resta fra gli artifact del giro, per guardarla.
+              [ "$codice" = "200" ] && mkdir -p pagine-non-lette && cp pagina.html "pagine-non-lette/serie-$id-ac-$ac.html"
+              [ "$codice" = "200" ] && echo "   pagina di $(wc -c < pagina.html) byte, titolo: $(grep -o '<title>[^<]*' pagina.html | head -1 | cut -c8-120)"
               echo "Serie $id: non letta (pagina HTTP $codice, backend HTTP $risposta) $(jq -r '.motivo // .error // ""' risposta.json 2>/dev/null | cut -c1-120)"
             fi
 
@@ -174,3 +201,11 @@ jobs:
 
           # Un elenco non vuoto in cui non si è letta nemmeno una serie è un guasto da vedere.
           if [ "$totale" -gt 0 ] && [ "$lette" = "0" ]; then exit 1; fi
+
+      - name: Pagine non lette
+        if: always() && hashFiles('pagine-non-lette/*') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: pagine-non-lette
+          path: pagine-non-lette/
+          retention-days: 14

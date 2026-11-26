@@ -419,6 +419,11 @@ function registraDaPagine(pool, pagine, { scrivi = true } = {}) {
     return new Response(perUrl.get(url), { status: 200 });
   };
 
+  // Niente rete qui: il freno dopo un 403 (in `prendi`) non deve fermare la lettura di pagine
+  // già scaricate. Senza questa marca, un rifiuto preso da Render nell'ultima ora (consigli,
+  // calendario anime…) faceva scartare il calendario arrivato da GitHub.
+  fetchImpl.daPagine = true;
+
   return registraCalendario(pool, { scrivi, fetchImpl });
 }
 
