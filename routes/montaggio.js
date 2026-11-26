@@ -23,6 +23,7 @@ module.exports = [
   ["/api/autore", require("./autore")],
   ["/api/anime", require("./anime")],
   ["/api/mese", require("./mese")],
+  ["/api/settimana", require("./settimana")],
   ["/api/esporta", require("./esporta")],
   ["/api/calendario", require("./calendario")],
   ["/api/rassegna", require("./rassegna")],
