@@ -69,7 +69,17 @@ const DATI_DEL_LETTORE = `
   -- NULL si comporta come FALSE dappertutto tranne che in un
   -- confronto stretto, dove smette di colpo.
   EXISTS (SELECT 1     FROM anime_preferiti pr
-    WHERE pr.anime_id = a.id AND pr.utente_id = $1)              AS preferito
+    WHERE pr.anime_id = a.id AND pr.utente_id = $1)              AS preferito,
+  -- L'ultima volta che chi guarda ha toccato questa serie: l'ultima
+  -- puntata spuntata o, se è più recente, l'ultimo cambio di stato (un
+  -- «Inizia» conta). Serve a mettere in cima «Sto guardando» quello che
+  -- si sta guardando davvero; NULL se non c'è nessuna visione.
+  GREATEST(
+    (SELECT MAX(ev.visto_il) FROM episodi_visti ev
+      WHERE ev.anime_id = a.id AND ev.utente_id = $1),
+    (SELECT v.aggiornata_il  FROM visioni v
+      WHERE v.anime_id = a.id AND v.utente_id = $1)
+  )                                                              AS ultima_attivita
 `;
 
 function numeroValido(grezzo) {
